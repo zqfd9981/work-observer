@@ -1,0 +1,30 @@
+# Python 开发环境与缓存
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# 本地凭据与个性化配置
+.env
+.env.*
+!.env.example
+configs/*.local.*
+
+# 原始资料、运行数据与生成报告
+/data/**
+!/data/**/
+!/data/**/.gitkeep
+/reports/**
+!/reports/**/
+!/reports/**/.gitkeep
+
+# 操作系统临时文件
+.DS_Store
+Thumbs.db
+Desktop.ini
