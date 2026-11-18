@@ -1,0 +1,332 @@
+"""与运行路由和Pydantic入参同步的离线API合同，无外部CDN依赖。"""
+
+import html
+import re
+
+from starlette.responses import HTMLResponse, JSONResponse
+from starlette.routing import Route
+
+
+def openapi(routes):
+    from work_observer.analysis.profiles import PersonalPreferences
+    from work_observer.api.imports import CSVCommitInput, CSVPreviewInput, ImageExtractInput
+    from work_observer.api.operations import (
+        CollectionTaskInput,
+        FollowupInput,
+        ScheduleInput,
+        WatchsetInput,
+    )
+    from work_observer.api.product import (
+        DomainCorrectionInput,
+        MatchInput,
+        ProfileInput,
+        RetrievalInput,
+        RollbackInput,
+        StrategyInput,
+    )
+    from work_observer.api.web import JobQuery, MemoryInput, MemoryRevision, ResearchInput
+    from work_observer.connectors.manual import ManualJD
+
+    models = {
+        ("/api/imports/csv/preview", "POST"): CSVPreviewInput,
+        ("/api/imports/csv/commit", "POST"): CSVCommitInput,
+        ("/api/import-assets/{id}/extract", "POST"): ImageExtractInput,
+        ("/api/import", "POST"): ManualJD,
+        ("/api/research", "POST"): ResearchInput,
+        ("/api/memories", "POST"): MemoryInput,
+        ("/api/memories/{id}/{action}", "POST"): MemoryRevision,
+        ("/api/profiles/{id}", "POST"): ProfileInput,
+        ("/api/profiles/{id}/correction", "POST"): DomainCorrectionInput,
+        ("/api/matches", "POST"): MatchInput,
+        ("/api/preferences", "POST"): PersonalPreferences,
+        ("/api/retrieval", "POST"): RetrievalInput,
+        ("/api/strategies", "POST"): StrategyInput,
+        ("/api/strategies/rollback", "POST"): RollbackInput,
+        ("/api/watchsets", "POST"): WatchsetInput,
+        ("/api/schedules", "POST"): ScheduleInput,
+        ("/api/tasks", "POST"): CollectionTaskInput,
+        ("/api/inbox/followup", "POST"): FollowupInput,
+    }
+    schemas = {
+        "Error": {
+            "type": "object",
+            "required": ["error_code", "message"],
+            "properties": {"error_code": {"type": "string"}, "message": {"type": "string"}},
+        },
+        "Counts": {
+            "type": "object",
+            "properties": {
+                key: {"type": "integer", "minimum": 0}
+                for key in ("scope_total", "matched", "unknown", "excluded", "candidate_details")
+            },
+        },
+        "ResearchRecord": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "state": {
+                    "type": "string",
+                    "enum": ["running", "finished", "failed", "interrupted", "invalidated"],
+                },
+                "created_at": {"type": "string", "format": "date-time"},
+                "result": {
+                    "type": ["object", "null"],
+                    "description": "问题、范围、计划、判断、证据、缺口、轨迹、"
+                    "记忆/策略版本、复盘和用量。",
+                },
+                "resumable": {"type": "boolean"},
+                "audit": {"type": "object"},
+            },
+        },
+    }
+    descriptions = {
+        "jobs": "岗位资料与SQL筛选",
+        "companies": "公司档案",
+        "sources": "招聘原始资料完整性与版本",
+        "research": "有界持久研究、进度、恢复及显式报告保存",
+        "memories": "版本偏好、人工纠正与待采纳知识",
+        "reports": "已存结果与历史有效性",
+        "profiles": "有证据的工作画像、领域及人工纠正",
+        "matches": "显式个人条件逐项匹配与未知原因",
+        "preferences": "结构化条件版本",
+        "retrieval": "别名/范围/历史检索与字面统计",
+        "strategies": "固定评测、显式启用及护栏回退",
+        "operations": "观察任务、时段与更新收件箱",
+        "watchsets": "观察范围配置版本",
+        "schedules": "默认关闭的北京时间观察时段",
+        "tasks": "有限采集任务与执行状态",
+        "inbox": "本地后续问题、已读及处理状态",
+        "public-documents": "已归档公开网页与完整性",
+        "imports": "CSV草稿预览与逐行明确导入",
+        "import-assets": "截图归档、明确同意后的单次视觉草稿及原图核对",
+    }
+    paths = {}
+    for route in routes:
+        if (
+            not isinstance(route, Route)
+            or not route.path.startswith("/api/")
+            or route.path in {"/api/docs", "/api/openapi.json"}
+        ):
+            continue
+        for method in sorted(route.methods - {"HEAD"}):
+            area = route.path.split("/")[2]
+            parameters = [
+                {"in": "path", "name": name, "required": True, "schema": {"type": "string"}}
+                for name in re.findall(r"{(\w+)}", route.path)
+            ]
+            if route.path == "/api/jobs" and method == "GET":
+                parameters.extend(
+                    {"in": "query", "name": key, "required": False, "schema": schema}
+                    for key, schema in JobQuery.model_json_schema()["properties"].items()
+                )
+            if route.path == "/api/search":
+                parameters.extend(
+                    [
+                        {
+                            "in": "query",
+                            "name": "term",
+                            "required": True,
+                            "schema": {"type": "array", "items": {"type": "string"}},
+                            "style": "form",
+                            "explode": True,
+                        },
+                        *[
+                            {"in": "query", "name": key, "schema": {"type": "string"}}
+                            for key in ("city", "company")
+                        ],
+                    ]
+                )
+            if route.path == "/api/memories" and method == "GET":
+                parameters.append(
+                    {
+                        "in": "query",
+                        "name": "history",
+                        "schema": {"type": "string", "enum": ["0", "1"]},
+                    }
+                )
+            response_schema = {"type": "object", "additionalProperties": True}
+            if (
+                route.path
+                in {
+                    "/api/reports",
+                    "/api/companies",
+                    "/api/memories",
+                    "/api/watchsets",
+                    "/api/schedules",
+                    "/api/tasks",
+                    "/api/inbox",
+                    "/api/collection-runs",
+                }
+                and method == "GET"
+            ):
+                response_schema = {"type": "array", "items": {"type": "object"}}
+            if route.path == "/api/research" and method == "GET":
+                response_schema = {"type": "array", "items": {"type": "object"}}
+            elif route.path == "/api/research/{id}" and method == "GET":
+                response_schema = {"$ref": "#/components/schemas/ResearchRecord"}
+            elif route.path == "/api/jobs":
+                response_schema = {
+                    "type": "object",
+                    "properties": {
+                        "counts": {"$ref": "#/components/schemas/Counts"},
+                        "jobs": {"type": "array", "items": {"type": "object"}},
+                        "truncated": {"type": "boolean"},
+                    },
+                }
+            success = (
+                "202"
+                if method == "POST"
+                and (route.path == "/api/research" or route.path.endswith(("/run", "/resume")))
+                else "201"
+                if method == "POST"
+                and route.path
+                in {
+                    "/api/import",
+                    "/api/memories",
+                    "/api/strategies",
+                    "/api/watchsets",
+                    "/api/schedules",
+                    "/api/tasks",
+                    "/api/inbox/followup",
+                    "/api/profiles/{id}/correction",
+                    "/api/import-assets",
+                }
+                else "200"
+            )
+            operation = {
+                "operationId": method.lower()
+                + "_"
+                + re.sub(r"[^a-zA-Z0-9]+", "_", route.path).strip("_"),
+                "summary": descriptions.get(area, "本地资料与状态"),
+                "tags": [area],
+                "parameters": parameters,
+                "security": [{"BearerAuth": []}, {"SessionCookie": []}],
+                "responses": {
+                    success: {
+                        "description": "已接受后台操作"
+                        if success == "202"
+                        else "成功；来源/分析/未知字段保持各自语义",
+                        "content": {"application/json": {"schema": response_schema}},
+                    }
+                },
+            }
+            for status, description in (
+                ("400", "业务参数或当前状态不允许"),
+                ("401", "部署模式未登录"),
+                ("403", "Host、Origin或写操作令牌不符"),
+                ("404", "记录不存在"),
+                ("409", "已有运行、结果未就绪或不可恢复"),
+                ("422", "入参字段/范围/时间格式无效"),
+            ):
+                operation["responses"][status] = {
+                    "description": description,
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/Error"}}
+                    },
+                }
+            model = models.get((route.path, method))
+            if model:
+                schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
+                schemas.update(schema.pop("$defs", {}))
+                schemas[model.__name__] = schema
+                operation["requestBody"] = {
+                    "required": "{action}" not in route.path,
+                    "description": "修订需要content；采纳/撤回无需请求体。"
+                    if "{action}" in route.path
+                    else "只接受已定义字段，不接受认证参数或任意SQL。",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": f"#/components/schemas/{model.__name__}"}
+                        }
+                    },
+                }
+            if route.path == "/api/import-assets" and method == "POST":
+                operation["parameters"].append(
+                    {
+                        "in": "query",
+                        "name": "data_kind",
+                        "schema": {
+                            "type": "string",
+                            "enum": ["user_provided", "synthetic"],
+                            "default": "user_provided",
+                        },
+                    }
+                )
+                operation["requestBody"] = {
+                    "required": True,
+                    "description": "最多5MB的PNG/JPEG/WebP原始字节；"
+                    "只归档，不自动发送模型或入岗位库。",
+                    "content": {
+                        mime: {"schema": {"type": "string", "format": "binary"}}
+                        for mime in ("image/png", "image/jpeg", "image/webp")
+                    },
+                }
+            if route.path == "/api/import-assets/{id}/image":
+                operation["responses"][success]["content"] = {
+                    mime: {"schema": {"type": "string", "format": "binary"}}
+                    for mime in ("image/png", "image/jpeg", "image/webp")
+                }
+            if "/download/" in route.path:
+                operation["responses"][success]["content"] = {
+                    "application/json": {"schema": {"type": "object"}},
+                    "text/markdown": {"schema": {"type": "string"}},
+                }
+            paths.setdefault(route.path, {})[method.lower()] = operation
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "Work Observer API",
+            "version": "0.4.0",
+            "description": "单用户中文研究产品。默认仅本机访问；部署模式需要Bearer或签名会话。"
+            "浏览器写操作另需主页meta中的x-wo-token；Bearer调用无需该CSRF令牌。"
+            "招聘来源暂停不能通过API解除。时间为UTC ISO8601，观察不是发布时间，未知不是符合。",
+        },
+        "paths": paths,
+        "components": {
+            "schemas": schemas,
+            "securitySchemes": {
+                "BearerAuth": {"type": "http", "scheme": "bearer"},
+                "SessionCookie": {"type": "apiKey", "in": "cookie", "name": "wo_session"},
+            },
+        },
+    }
+
+
+def schema_routes():
+    async def specification(request):
+        return JSONResponse(openapi(request.app.routes))
+
+    async def documentation(request):
+        schema = openapi(request.app.routes)
+        rows = []
+        for path, operations in schema["paths"].items():
+            for method, operation in operations.items():
+                rows.append(
+                    "<tr><td>"
+                    + method.upper()
+                    + "</td><td><code>"
+                    + html.escape(path)
+                    + "</code></td><td>"
+                    + html.escape(operation["summary"])
+                    + "</td></tr>"
+                )
+        return HTMLResponse(
+            '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>接口说明 · Work Observer</title><link rel="stylesheet" href="/assets/app.css">'
+            '<main class="panel"><h1>Work Observer 接口说明</h1><p>'
+            + html.escape(schema["info"]["description"])
+            + "</p>"
+            '<p><a href="/">返回工作空间</a> · '
+            '<a href="/api/openapi.json">下载完整OpenAPI合同</a></p>'
+            "<h2>操作合同</h2><p>POST /api/research 返回运行编号后轮询 GET /api/research/{id}；"
+            "中断后显式继续，共用原预算。画像生成是有界等待接口，最多235秒；读取已存画像不调用模型。</p>"
+            "<p>参数详情、JSON Schema及响应状态见OpenAPI文件；源码docs/API合同.md提供完整中文示例。"
+            "公开正文接口只读取已归档记录，不接受任意URL访问。研究、补录和原文不会公网发布。</p>"
+            '<div class="table-scroll"><table><thead><tr><th>方法</th>'
+            "<th>地址</th><th>业务能力</th></tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table></div></main></html>"
+        )
+
+    return [Route("/api/openapi.json", specification), Route("/api/docs", documentation)]

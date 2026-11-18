@@ -1,0 +1,5 @@
+﻿title,company,description,external_id,city,salary,data_kind
+合成演示·AI应用开发,合成演示公司,"非真实招聘，仅用于导入演示。
+使用Python开发业务接口，维护RAG评测集。",synthetic-csv-01,上海,20-30K,synthetic
+合成演示·平台实施,合成演示公司,"非真实招聘，仅用于导入演示。
+配置业务工作流，整理交付与培训资料。",synthetic-csv-02,上海,,synthetic

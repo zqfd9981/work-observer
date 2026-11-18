@@ -1,0 +1,14 @@
+# 复制为 mcp.local.toml。使用现有安装和已有认证，不会自动登录。
+transport = "stdio"
+command = 'C:/path/to/boss-mcp.exe'
+args = ["--boss-bin", "C:/path/to/boss.exe", "--data-dir", "C:/path/to/existing-session", "--platform", "zhipin", "--role", "candidate"]
+timeout_seconds = 90
+
+[env]
+PYTHONIOENCODING = "utf-8"
+PYTHONUTF8 = "1"
+
+# 远程服务可改为以下形式。令牌只从环境变量加载，不写入 TOML。
+# transport = "streamable-http" # 或 sse
+# url = "https://your-service.example/mcp"
+# bearer_token_env = "WO_MCP_TOKEN"

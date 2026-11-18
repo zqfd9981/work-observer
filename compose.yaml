@@ -1,0 +1,19 @@
+services:
+  observer:
+    build: .
+    # 默认仅宿主机访问。公网反向代理与TLS需部署者单独配置。
+    ports:
+      - "127.0.0.1:8765:8765"
+    env_file: .env
+    environment:
+      WO_DATABASE_PATH: /app/data/app.db
+      WO_RAW_DIRECTORY: /app/data/raw
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    restart: unless-stopped
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

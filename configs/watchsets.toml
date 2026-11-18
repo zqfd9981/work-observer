@@ -1,0 +1,9 @@
+# M1 有限手动采集；没有创建定时任务。
+[watchsets.ai-dev]
+source = "boss"
+kind = "fixed"
+query = "Agent"
+city = "上海"
+page_limit = 1
+detail_limit = 2
+request_limit = 3

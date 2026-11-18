@@ -1,0 +1,41 @@
+[project]
+name = "work-observer"
+version = "0.4.0"
+description = "单用户岗位研究Agent：证据、画像、记忆、评测及可部署中文工作台"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "alembic>=1.17,<2",
+    "httpx>=0.28.1,<0.29",
+    "jsonschema>=4.23,<5",
+    "mcp>=1.26,<2",
+    "pydantic>=2.11,<3",
+    "python-dotenv>=1.1,<2",
+    "sqlalchemy>=2.0.58,<2.1",
+    "starlette>=1.10,<2",
+    "typer>=0.16,<1",
+    "uvicorn>=0.54,<1",
+]
+
+[project.scripts]
+work-observer = "work_observer.cli:app"
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "work_observer/_migrations"
+
+[dependency-groups]
+dev = ["pytest>=8.4,<10", "ruff>=0.12,<1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
