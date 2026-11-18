@@ -1,3 +1,5 @@
+> 0.5.0阶段更新（2026-11-19）：已增量实现持久多轮项目与有界调查、分层/冲突/有效期记忆、统一原文检索、领域关系、业务质量审核、领域观察和资料核对。当前仍为Alpha；真实质量复验保留待审与失败，未宣称整体成熟。最新操作、分级证据与剩余实质缺口统一见[持久研究项目与阶段验收](持久研究项目与阶段验收.md)。以下0.4及更早状态按历史阶段理解。
+
 # Work Observer HTTP API 合同
 
 2026 年 11 月 18 日。实现入口为 `api/web.py`、`api/product.py` 与 `api/operations.py`。以下接口复用 CLI 和业务服务，页面可以直接完成对应操作。接口不提供自由 SQL、任意本机文件读取、来源解锁、认证恢复、投递或消息发送。
@@ -143,3 +145,25 @@
 视觉读取失败或未同意不会发送模型；不能据OCR填入未知字段或发布时间。图片人工转录与视觉草稿人工核对分别标`image_manual_review`/`ocr_manual_review`，均不冒充直接平台原文。CSV/API/CLI的资料身份和去重共用原人工导入服务。
 
 研究结果可含`knowledge_candidates`、`strategy_candidate.evaluation`；Agent只能提出本地候选并读取固定反馈，不能直接启用或更改门槛/来源。引用可用本次返回的`citation_key`（E1等），程序只按精确映射回链不可变快照ID，不模糊纠正不存在的引用。
+
+
+## 0.5新增合同
+
+具体字段以运行中的`/api/openapi.json`为准，extra=forbid拒绝未定义字段，所有写入继续同源/令牌保护。
+
+| 路径 | 主要操作 |
+| --- | --- |
+| `/api/projects`、`/{id}` | 创建/查看、PATCH修订范围目标、DELETE忘记整个项目 |
+| `/api/projects/{id}/steps`、`/steps/{step_id}/review` | 带revision追问、调查；accept/wait/retry须说明 |
+| `/api/projects/{id}/run`、`/pause` | 有限执行/暂停；人审与资料等待不自循环 |
+| `/api/retrieval/unified` | 岗位、公文、历史截止与项目范围统一检索 |
+| `/api/knowledge/domains`、`/relations`及`/{id}/review` | 定义版本、关系正反例候选和显式审核 |
+| `/api/knowledge/collection`、`/jobs/{id}/domains` | 完整集合及人工领域纠正 |
+| `/api/quality/runs/{id}`、`/reviews` | 原结果SHA绑定、六维业务核对和逐claim支持性 |
+| `/api/updates/captures`、`/compare`、`/reports/{id}`及`/followup` | 冻结、归因、查看与幂等后续问题 |
+| `/api/data-quality/duplicates/scan`、`/review`、`/reviews` | 只提疑似，关联不删除原资料/改变分母 |
+| `/api/data-quality/screenshot-targets`、`/regions`及`/regions/{id}/withdraw` | 人工bbox、精确正文span与原图SHA |
+
+项目默认36调用/900秒/6轮/4公开请求；硬上限72/1800/12/8，单步12调用/300秒。`source_key`保证上游报告重试、备份恢复后不重复造项目；复用键但目标/范围不同报冲突。过时revision不能覆盖新修改。项目运行须从项目入口恢复。
+
+记忆新增范围/项目/主体/有效期/origin；冲突通过accept/reject明确处理。Agent评审不能人工批准；引用存在/执行结束不是业务质量通过。遗忘恢复未完或报告目录不符时API返回503并不提供派生内容。模型工具无这些HTTP写权限、任意文件/SQL、来源恢复或发布能力。

@@ -1,0 +1,37 @@
+<section id="page-knowledge" class="page" hidden aria-labelledby="knowledge-title">
+  <div class="page-head"><div><div class="eyebrow">EVIDENCE AND EVOLVING KNOWLEDGE</div><h1 id="knowledge-title">领域与证据<span class="heading-dot">.</span></h1><p>统一查阅岗位与公开材料，再审核领域定义、工作关系和反例。</p></div><button class="secondary" id="knowledge-refresh">刷新资料</button></div>
+  <form id="unified-form" class="panel match-form">
+    <h2>查找有来源的材料</h2><div class="form-grid">
+      <label>检索词<input name="terms" required maxlength="1000" placeholder="如：Python、RAG、业务交付"></label>
+      <label>历史截止（北京时间，可选）<input name="as_of" type="datetime-local"></label>
+      <label class="checkbox-line"><input type="checkbox" name="selected_only">只查岗位页已勾选的岗位</label>
+      <label class="checkbox-line"><input type="checkbox" name="aliases" checked>应用已启用的别名</label>
+    </div><p class="form-note">岗位使用当前筛选范围；已归档公开材料独立检索。公开业务介绍不能证明某岗位职责。知识是已采纳的派生认识，不能作为第二份独立来源。</p><button class="primary">检索原文与有效知识</button>
+  </form>
+  <div id="unified-results" class="match-results"></div>
+  <section class="research-history"><div class="section-heading"><h2>领域定义与版本</h2><label class="checkbox-line"><input id="knowledge-history" type="checkbox">显示历史与撤回项</label></div>
+    <details class="panel"><summary>新增、修订、合并或拆分领域</summary><form id="knowledge-domain-form" class="match-form">
+      <input name="domain_key" type="hidden"><input name="previous_id" type="hidden">
+      <div class="form-grid"><label>领域名称<input name="name" required maxlength="100"></label><label>变更方式<select name="change_kind"><option value="create">新增定义</option><option value="revise">修订当前定义（先点已有卡片“修订”）</option><option value="merge">合并关联领域</option><option value="split">从关联领域拆出新领域</option></select></label></div>
+      <label>定义<textarea name="definition" required maxlength="4000" rows="3" placeholder="用具体任务和业务边界说明这个领域"></textarea></label>
+      <div class="form-grid"><label>包括哪些情形<textarea name="inclusion" maxlength="4000" rows="2"></textarea></label><label>不包括或尚未明确的情形<textarea name="exclusion" maxlength="4000" rows="2"></textarea></label></div>
+      <label>关联已有领域（合并、拆分时选择；可多选）<select name="related_ids" multiple size="4"></select></label>
+      <p class="form-note">先保存为候选。采纳新版本后，旧定义及关系保留历史并显示过时；合并、拆分须审核，原岗位分类不会静默迁移。</p>
+      <button class="primary">保存领域候选</button><button class="secondary" type="reset">重新填写</button>
+    </form></details><div id="knowledge-domains" class="memory-grid"></div>
+  </section>
+  <section class="research-history"><h2>有证据的工作关系</h2>
+    <details class="panel"><summary>从检索原文建立关系候选</summary><form id="knowledge-relation-form" class="match-form">
+      <label>采用的领域定义<select name="domain_id" required></select></label>
+      <div class="form-grid"><label>起点类别<select name="source_kind"><option value="task">任务</option><option value="deliverable">交付物</option><option value="responsibility">责任</option><option value="ability">能力</option><option value="tool">工具</option><option value="business">业务背景</option></select></label><label>终点类别<select name="target_kind"><option value="deliverable">交付物</option><option value="ability">能力</option><option value="tool">工具</option><option value="responsibility">责任</option><option value="task">任务</option><option value="business">业务背景</option></select></label></div>
+      <div class="form-grid"><label>起点表述<input name="source_text" required maxlength="500" placeholder="如：维护检索问答服务"></label><label>终点表述<input name="target_text" required maxlength="500" placeholder="如：可上线的问答接口"></label></div>
+      <label>关系<select name="predicate"><option value="produces">产出</option><option value="requires">需要</option><option value="supports">支撑</option><option value="contradicts">反驳</option></select></label>
+      <label>与哪些已有关系冲突（可多选，须逐项审核）<select name="conflict_ids" multiple size="3"></select></label>
+      <p class="form-note">先检索并在原文片段旁选择“支持证据”或“反例”。引用会重新核对；至少一条支持证据。关系仅适用证据覆盖的岗位或公开业务资料，不推广到企业全部岗位。</p>
+      <button class="primary">保存关系候选</button>
+    </form></details><div id="knowledge-relations" class="memory-grid"></div>
+  </section>
+  <section class="research-history"><h2>领域集合与人工纠正</h2><form id="knowledge-collection-form" class="panel match-form"><div class="form-grid"><label>领域定义<select name="domain_id"><option value="">所有领域与未知</option></select></label><label>历史资料截止（北京时间，可选）<input type="datetime-local" name="as_of"></label></div><p class="form-note">按完整筛选范围计数后分页，未知保持单列。截止仅使用当时已取得且目前仍有效的分类依据；不会将今天审核的关系当成过去已知。</p><button class="primary">浏览集合</button></form><div id="knowledge-collection" class="match-results"></div>
+    <details class="panel"><summary>明确纠正一个岗位的领域</summary><form id="knowledge-correction-form" class="match-form"><label>岗位（来自岗位页当前已加载资料）<select name="job_id" required></select></label><label>采用的已审核领域（可多选；全不选表示暂不归类）<select name="domain_ids" multiple size="4"></select></label><label>纠正依据<textarea name="reason" rows="2" required maxlength="1200"></textarea></label><button class="primary">保存人工纠正</button></form></details>
+  </section>
+</section>

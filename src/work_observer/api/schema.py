@@ -8,8 +8,18 @@ from starlette.routing import Route
 
 
 def openapi(routes):
+    from work_observer import __version__
     from work_observer.analysis.profiles import PersonalPreferences
+    from work_observer.api.data_quality import SCHEMA_MODELS as DATA_QUALITY_MODELS
     from work_observer.api.imports import CSVCommitInput, CSVPreviewInput, ImageExtractInput
+    from work_observer.api.knowledge import (
+        DomainCollectionInput,
+        DomainInput,
+        KnowledgeDomainCorrection,
+        KnowledgeReviewInput,
+        RelationInput,
+        UnifiedInput,
+    )
     from work_observer.api.operations import (
         CollectionTaskInput,
         FollowupInput,
@@ -24,10 +34,32 @@ def openapi(routes):
         RollbackInput,
         StrategyInput,
     )
+    from work_observer.api.projects import ProjectInput, ProjectRevision, StepInput, StepReview
+    from work_observer.api.quality import QualityReviewInput
+    from work_observer.api.updates import (
+        UpdateCaptureInput,
+        UpdateCompareInput,
+        UpdateFollowupInput,
+    )
     from work_observer.api.web import JobQuery, MemoryInput, MemoryRevision, ResearchInput
     from work_observer.connectors.manual import ManualJD
 
     models = {
+        ("/api/updates/captures", "POST"): UpdateCaptureInput,
+        ("/api/updates/compare", "POST"): UpdateCompareInput,
+        ("/api/updates/reports/{id}/followup", "POST"): UpdateFollowupInput,
+        ("/api/retrieval/unified", "POST"): UnifiedInput,
+        ("/api/knowledge/domains", "POST"): DomainInput,
+        ("/api/knowledge/domains/{id}/review", "POST"): KnowledgeReviewInput,
+        ("/api/knowledge/relations", "POST"): RelationInput,
+        ("/api/knowledge/relations/{id}/review", "POST"): KnowledgeReviewInput,
+        ("/api/knowledge/collection", "POST"): DomainCollectionInput,
+        ("/api/knowledge/jobs/{id}/domains", "POST"): KnowledgeDomainCorrection,
+        ("/api/quality/runs/{id}/reviews", "POST"): QualityReviewInput,
+        ("/api/projects", "POST"): ProjectInput,
+        ("/api/projects/{id}", "PATCH"): ProjectRevision,
+        ("/api/projects/{id}/steps", "POST"): StepInput,
+        ("/api/projects/{id}/steps/{step_id}/review", "POST"): StepReview,
         ("/api/imports/csv/preview", "POST"): CSVPreviewInput,
         ("/api/imports/csv/commit", "POST"): CSVCommitInput,
         ("/api/import-assets/{id}/extract", "POST"): ImageExtractInput,
@@ -47,6 +79,7 @@ def openapi(routes):
         ("/api/tasks", "POST"): CollectionTaskInput,
         ("/api/inbox/followup", "POST"): FollowupInput,
     }
+    models.update(DATA_QUALITY_MODELS)
     schemas = {
         "Error": {
             "type": "object",
@@ -80,11 +113,16 @@ def openapi(routes):
         },
     }
     descriptions = {
+        "projects": "持久目标与范围、追问澄清、调查队列、审核接续和整项目遗忘",
+        "knowledge": "领域定义版本、工作关系与反例审核、完整集合及人工纠正",
+        "quality": "逐判断语义支持与业务质量核对，区分人工与Agent辅助评审",
+        "updates": "冻结观察面板，分离原文/样本/方法变化与明确个人目标影响",
+        "data-quality": "跨入口疑似重复审核及截图文字精确人工区域引用",
         "jobs": "岗位资料与SQL筛选",
         "companies": "公司档案",
         "sources": "招聘原始资料完整性与版本",
         "research": "有界持久研究、进度、恢复及显式报告保存",
-        "memories": "版本偏好、人工纠正与待采纳知识",
+        "memories": "分层偏好、纠正、知识、假设与方法；有效期、来源和冲突审核",
         "reports": "已存结果与历史有效性",
         "profiles": "有证据的工作画像、领域及人工纠正",
         "matches": "显式个人条件逐项匹配与未知原因",
@@ -231,7 +269,8 @@ def openapi(routes):
                 schemas[model.__name__] = schema
                 operation["requestBody"] = {
                     "required": "{action}" not in route.path,
-                    "description": "修订需要content；采纳/撤回无需请求体。"
+                    "description": "revise修订需要content；activate采纳、withdraw撤回、"
+                    "accept选择冲突值、reject否决冲突值均无需请求体。"
                     if "{action}" in route.path
                     else "只接受已定义字段，不接受认证参数或任意SQL。",
                     "content": {
@@ -276,7 +315,7 @@ def openapi(routes):
         "openapi": "3.1.0",
         "info": {
             "title": "Work Observer API",
-            "version": "0.4.0",
+            "version": __version__,
             "description": "单用户中文研究产品。默认仅本机访问；部署模式需要Bearer或签名会话。"
             "浏览器写操作另需主页meta中的x-wo-token；Bearer调用无需该CSRF令牌。"
             "招聘来源暂停不能通过API解除。时间为UTC ISO8601，观察不是发布时间，未知不是符合。",

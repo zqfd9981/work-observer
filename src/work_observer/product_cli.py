@@ -15,12 +15,15 @@ from work_observer.storage.repository import Repository
 
 
 @contextmanager
-def session(db, env_file):
+def session(db, env_file, reports_dir=Path("reports")):
     settings = Settings.load(env_file)
     path = db or settings.database_path
     repo = Repository(path)
     store = ResearchStore(path.parent / "checkpoints.db", str(path.resolve()))
     try:
+        from work_observer.memory.lifecycle import resume_erasures
+
+        resume_erasures(repo, store, reports_dir)
         yield settings, repo, store
     finally:
         store.close()
@@ -166,6 +169,7 @@ def register(app):
         offline: bool = False,
         execute: bool = False,
         db: Path | None = None,
+        reports_dir: Path = Path("reports"),
         env_file: Path = Path(".env"),
     ):
         """完整业务入口：profiles/match/retrieval/statistics/strategies/inbox/watchsets/tasks/schedules。
@@ -183,9 +187,164 @@ def register(app):
             data = json.loads(file.read_text(encoding="utf-8-sig")) if file else {}
             if not isinstance(data, dict):
                 raise ProbeError("JSON_OBJECT_REQUIRED")
-            with session(db, env_file) as (settings, repo, _):
+            with session(db, env_file, reports_dir) as (settings, repo, store):
                 result = None
-                if area == "profiles":
+                if area == "projects":
+                    from work_observer.api.projects import ProjectInput, StepInput, plan_project
+                    from work_observer.research.projects import ProjectService, execute_project
+
+                    service = ProjectService(store)
+                    if action == "list":
+                        result = service.list()
+                    elif action == "get":
+                        result = service.get(id)
+                        result["usage"] = service.usage(result)
+                    elif action == "forget":
+                        from work_observer.memory.lifecycle import forget_project
+
+                        result = forget_project(repo, store, id, reports_dir)
+                    elif action == "create":
+                        value = ProjectInput.model_validate(data)
+                        for job_id in value.job_ids:
+                            repo.job(job_id)
+                        result = service.create(
+                            **value.model_dump(exclude={"plan_steps", "offline"})
+                        )
+                        if value.plan_steps:
+                            result = plan_project(service, result, value.offline)
+                    elif action == "ask":
+                        result = service.add(id, **StepInput.model_validate(data).model_dump())
+                    elif action == "revise":
+                        from work_observer.api.projects import ProjectRevision
+
+                        value = ProjectRevision.model_validate(data)
+                        for job_id in value.job_ids:
+                            repo.job(job_id)
+                        result = service.revise(id, **value.model_dump())
+                    elif action == "review":
+                        from work_observer.api.projects import StepReview
+
+                        result = service.review(
+                            id,
+                            data["step_id"],
+                            **StepReview.model_validate(
+                                {k: v for k, v in data.items() if k != "step_id"}
+                            ).model_dump(),
+                        )
+                    elif action == "run":
+                        from work_observer.storage.locks import exclusive
+
+                        with exclusive(repo.engine.url.database):
+                            service.recover()
+                            result = asyncio.run(
+                                execute_project(service, id, repo, settings, _lock_held=True)
+                            )
+                elif area == "unified" and action in {"list", "run"}:
+                    from work_observer.api.knowledge import UnifiedInput
+                    from work_observer.retrieval.unified import UnifiedRetrieval
+
+                    result = UnifiedRetrieval(repo).search(
+                        **UnifiedInput.model_validate(
+                            {**data, "terms": term or data.get("terms", [])}
+                        ).model_dump()
+                    )
+                elif area in {"domains", "relations", "domain-collection"}:
+                    from work_observer.api.knowledge import (
+                        DomainCollectionInput,
+                        DomainInput,
+                        KnowledgeReviewInput,
+                        RelationInput,
+                    )
+                    from work_observer.knowledge.service import DomainKnowledgeService
+
+                    service = DomainKnowledgeService(repo)
+                    if area == "domain-collection" and action in {"list", "run"}:
+                        result = service.collection(
+                            **DomainCollectionInput.model_validate(data).model_dump()
+                        )
+                    elif action == "list":
+                        result = (
+                            service.list_domains(include_history=True)
+                            if area == "domains"
+                            else service.list_relations(include_history=True)
+                        )
+                    elif action == "create":
+                        schema, method = (
+                            (DomainInput, service.propose_domain)
+                            if area == "domains"
+                            else (RelationInput, service.propose_relation)
+                        )
+                        result = method(**schema.model_validate(data).model_dump())
+                    elif action == "review":
+                        method = (
+                            service.review_domain if area == "domains" else service.review_relation
+                        )
+                        result = method(
+                            id, **KnowledgeReviewInput.model_validate(data).model_dump()
+                        )
+                elif area == "data-quality":
+                    from work_observer.api.data_quality import (
+                        DuplicateReviewInput,
+                        DuplicateScanInput,
+                        ScreenshotRegionInput,
+                    )
+                    from work_observer.data_quality.service import DataQualityService
+
+                    service = DataQualityService(repo)
+                    if action in {"scan", "list"}:
+                        result = service.duplicates(
+                            **DuplicateScanInput.model_validate(data).model_dump()
+                        )
+                    elif action == "review":
+                        value = DuplicateReviewInput.model_validate(data)
+                        result = service.review_duplicate(**value.model_dump())
+                    elif action == "reviews":
+                        result = service.reviews()
+                    elif action == "targets":
+                        result = service.screenshot_targets()
+                    elif action == "regions":
+                        result = service.regions(job_id=id)
+                    elif action == "region-add":
+                        result = service.create_region(
+                            **ScreenshotRegionInput.model_validate(data).model_dump()
+                        )
+                    elif action == "region-withdraw":
+                        result = service.withdraw_region(id)
+                elif area == "quality":
+                    from work_observer.api.quality import QualityReviewInput
+                    from work_observer.quality.reviews import QualityReviewService
+
+                    service = QualityReviewService(store, repo)
+                    if action == "list":
+                        result = service.overview()
+                    elif action == "packet":
+                        result = service.packet(id)
+                    elif action == "reviews":
+                        result = service.list_run(id)
+                    elif action == "review":
+                        result = service.submit(
+                            id, QualityReviewInput.model_validate(data).model_dump()
+                        )
+                elif area == "updates":
+                    from work_observer.api.updates import UpdateCaptureInput, UpdateCompareInput
+                    from work_observer.reports.domain_updates import DomainUpdateService
+
+                    service = DomainUpdateService(store, repo)
+                    if action == "list":
+                        result = service.list()
+                    elif action == "capture":
+                        result = service.capture(
+                            **UpdateCaptureInput.model_validate(data).model_dump()
+                        )
+                    elif action == "compare":
+                        result = service.compare(
+                            **UpdateCompareInput.model_validate(data).model_dump()
+                        )
+                    elif action == "report":
+                        result = service.report(id)
+                    elif action == "followup":
+                        result = service.followup(id, text or data.get("note", ""))
+                elif area == "profiles":
                     service = ProfileService(repo)
                     if action == "list":
                         result = service.list()
@@ -368,6 +527,8 @@ def register(app):
                 if row["state"] == "finished" or not store.load_checkpoint(id):
                     raise ProbeError("RESEARCH_NOT_RESUMABLE")
                 params = row["input"]
+                if params.get("project_id"):
+                    raise ProbeError("PROJECT_RUN_RESUME_FROM_PROJECT")
                 result = asyncio.run(
                     research(
                         repo,
@@ -398,13 +559,31 @@ def register(app):
         kind: str,
         content: str,
         job_id: str | None = None,
+        scope: str | None = None,
+        project_id: str | None = None,
+        subject: str | None = None,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
+        origin: str = "user",
         db: Path | None = None,
         env_file: Path = Path(".env"),
     ):
-        """保存明确偏好或人工纠正；知识候选请用memory-propose。"""
+        """保存分层偏好、纠正、假设或方法；知识候选请用memory-propose。"""
         try:
             with session(db, env_file) as (_, repo, _):
-                echo(MemoryService(repo).create(kind, content, job_id=job_id))
+                echo(
+                    MemoryService(repo).create(
+                        kind,
+                        content,
+                        job_id=job_id,
+                        scope=scope,
+                        project_id=project_id,
+                        subject=subject,
+                        valid_from=valid_from,
+                        valid_until=valid_until,
+                        origin=origin,
+                    )
+                )
         except Exception as exc:
             collection_error(exc)
 
@@ -417,11 +596,11 @@ def register(app):
         db: Path | None = None,
         env_file: Path = Path(".env"),
     ):
-        """revise更新、withdraw撤回或activate采纳；旧版本保留。"""
+        """revise更新、withdraw撤回、activate采纳；accept/reject审核冲突。"""
         from work_observer.connectors.mcp_probe import ProbeError
 
         try:
-            with session(db, env_file) as (_, repo, store):
+            with session(db, env_file, reports_dir) as (_, repo, store):
                 service = MemoryService(repo)
                 if action == "revise":
                     data = service.revise(id, content)
@@ -429,6 +608,8 @@ def register(app):
                     data = service.withdraw(id)
                 elif action == "activate":
                     data = service.activate(id)
+                elif action in {"accept", "reject"}:
+                    data = service.resolve(id, action)
                 elif action == "forget":
                     from work_observer.memory.lifecycle import forget_personal
 
@@ -464,6 +645,7 @@ def register(app):
                         job_id=job_id,
                         evidence=[evidence[key] for key in claim["evidence_ids"]],
                         source_run_id=run_id,
+                        origin="agent",
                     )
                 )
         except Exception as exc:

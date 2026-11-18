@@ -126,3 +126,8 @@ def require_schema(engine):
         revision = MigrationContext.configure(connection).get_current_revision()
     if revision != ScriptDirectory.from_config(migration_config()).get_current_head():
         raise ProbeError("DATABASE_MIGRATION_REQUIRED")
+
+
+# 独立知识模型使用同一个Base；注册时不读取或改变业务数据。
+from work_observer.data_quality import models as _data_quality_models  # noqa: E402, F401
+from work_observer.knowledge import models as _knowledge_models  # noqa: E402, F401

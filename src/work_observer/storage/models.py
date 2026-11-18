@@ -204,6 +204,13 @@ class MemoryRecord(Base):
     source_run_id: Mapped[str | None]
     created_at: Mapped[str]
     updated_at: Mapped[str]
+    scope: Mapped[str] = mapped_column(default="global", server_default="global")
+    project_id: Mapped[str | None]
+    subject: Mapped[str | None]
+    valid_from: Mapped[str | None]
+    valid_until: Mapped[str | None]
+    origin: Mapped[str] = mapped_column(default="user", server_default="user")
+    conflict_ids: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
 
 
 class MemoryEvent(Base):

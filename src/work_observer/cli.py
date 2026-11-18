@@ -233,6 +233,10 @@ from work_observer.product_cli import register as register_product_commands  # n
 
 register_product_commands(app)
 
+from work_observer.research.worker_cli import register as register_research_worker  # noqa: E402
+
+register_research_worker(app)
+
 
 def execute_collection(watchset, watchsets, db, env_file, bundle=None):
     from work_observer.collection.service import collect

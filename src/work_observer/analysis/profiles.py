@@ -18,13 +18,13 @@ from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
 from work_observer.memory.service import MemoryService
-from work_observer.research.agent import ModelClient, finalize, research, tool
+from work_observer.research.agent import ModelClient, finalize, method_fingerprint, research, tool
 from work_observer.retrieval.catalog import Catalog, Filters
 from work_observer.storage.locks import exclusive
 from work_observer.storage.models import Job, JobAnalysis
 
 ANALYZER_VERSION = "job-profile-v1"
-PROMPT_VERSION = "job-profile-prompt-v2"
+PROMPT_VERSION = "job-profile-prompt-v3-requirements"
 QUESTION = (
     "为该岗位建立工作画像：区分企业业务背景与目标、具体任务、预期交付物、承担责任、"
     "能力、工具六类，说明必备与加分性质。每条均引用招聘原文；未知就列缺口。"
@@ -159,6 +159,8 @@ class ProfileService:
             stale.append("有效偏好、纠正或知识版本已变化")
         if row.analyzer_version != ANALYZER_VERSION or row.prompt_version != PROMPT_VERSION:
             stale.append("画像分析方法已变化")
+        if row.result.get("research_method_sha256") != method_fingerprint():
+            stale.append("采用的研究提示或工具合同已变化")
         strategy = row.result.get("strategy")
         if strategy and any(
             strategy.get(key) != value for key, value in self._strategy_context().items()
@@ -176,6 +178,12 @@ class ProfileService:
         result["effective_domains"] = self._effective_domains(
             result.get("domains", []), current_memory
         )
+        if any(
+            item.get("status") == "user_corrected_stale"
+            for item in result["effective_domains"]
+            if isinstance(item, dict)
+        ):
+            stale.append("人工领域纠正采用的领域定义已替换或失效，请按新定义重新核对。")
         return {
             "id": row.id,
             "job_id": row.job_id,
@@ -245,12 +253,51 @@ class ProfileService:
             else self.memory.create("correction", text, job_id=job_id)
         )
 
-    @staticmethod
-    def _effective_domains(domains, memories):
+    def _effective_domains(self, domains, memories):
         for item in memories:
             if item["kind"] == "correction" and item["content"].startswith(CORRECTION_PREFIX):
                 try:
                     values = json.loads(item["content"][len(CORRECTION_PREFIX) :])
+                    if "definition_ids" in values:
+                        from work_observer.knowledge.models import DomainDefinition
+
+                        identities = values["definition_ids"]
+                        if not isinstance(identities, list) or len(identities) > 10:
+                            continue
+                        corrected = []
+                        with Session(self.repository.engine) as session:
+                            for identity in identities:
+                                if not isinstance(identity, str):
+                                    raise ValueError("invalid domain definition")
+                                definition = session.get(DomainDefinition, identity)
+                                corrected.append(
+                                    {
+                                        "domain": definition.domain_key
+                                        if definition
+                                        else "unknown",
+                                        "label": (
+                                            f"{definition.name}（第 {definition.version} 版）"
+                                            if definition
+                                            else "原领域定义不可用"
+                                        ),
+                                        "definition_id": identity,
+                                        "definition_version": definition.version
+                                        if definition
+                                        else None,
+                                        "definition_status": definition.status
+                                        if definition
+                                        else "missing",
+                                        "status": (
+                                            "user_corrected"
+                                            if definition and definition.status == "active"
+                                            else "user_corrected_stale"
+                                        ),
+                                        "rationale": values["reason"],
+                                        "correction_id": item["id"],
+                                        "evidence_ids": [],
+                                    }
+                                )
+                        return corrected
                     if any(value not in DOMAIN_LABELS for value in values["domains"]):
                         continue
                     return [
@@ -283,6 +330,7 @@ class ProfileService:
                 "job_id": job_id,
                 "analyzer": ANALYZER_VERSION,
                 "prompt": PROMPT_VERSION,
+                "research_method": method_fingerprint(),
                 "model": model_name,
                 "api": settings.model_api,
                 "provider": _digest(settings.model_base_url),

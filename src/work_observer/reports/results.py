@@ -22,10 +22,17 @@ def render(result):
         "",
     ]
     audit = result.get("audit") or {}
-    if audit.get("stale_memory") or audit.get("changed_sources") or audit.get("affected_strategy"):
+    if (
+        audit.get("stale_memory")
+        or audit.get("stale_knowledge")
+        or audit.get("changed_sources")
+        or audit.get("affected_strategy")
+    ):
         lines.extend(["", "## 历史结果有效性提示", ""])
         if audit.get("stale_memory"):
             lines.append("- 本研究采用的偏好、纠正或知识已有更新、撤回或遗忘，请重新核对。")
+        if audit.get("stale_knowledge"):
+            lines.append("- 本研究参考的领域定义或关系已换版、撤回或失效，请按当前口径重新核对。")
         if audit.get("changed_sources"):
             lines.append("- 部分来源或当前岗位版本已有变化；原报告仍按当时材料形成。")
         if audit.get("affected_strategy"):
@@ -202,6 +209,7 @@ def audit_result(result, repository):
     from sqlalchemy.orm import Session
 
     from work_observer.connectors.public_models import PublicDocument
+    from work_observer.memory.service import MemoryService
     from work_observer.storage.models import (
         Job,
         JobObservation,
@@ -212,8 +220,9 @@ def audit_result(result, repository):
     from work_observer.tracking.models import RetrievalStrategy
 
     memory_issues, changed_sources, affected_strategy = [], [], []
+    memory = MemoryService(repository)
     with Session(repository.engine) as session:
-        for item in result.get("memory_used", []):
+        for item in [*result.get("memory_used", []), *result.get("context_memory_used", [])]:
             identity = item.get("id")
             row = session.get(MemoryRecord, identity) if identity else None
             reason = (
@@ -227,6 +236,9 @@ def audit_result(result, repository):
             )
             if reason:
                 memory_issues.append({"id": identity, "reason": reason})
+            elif row:
+                for validity_reason in memory.validity(identity)["reasons"]:
+                    memory_issues.append({"id": identity, "reason": validity_reason})
         for item in result.get("evidence", []):
             reason, valid = None, True
             if item.get("public_document_id"):
@@ -310,9 +322,20 @@ def audit_result(result, repository):
                 ).hexdigest()
                 if fingerprint != strategy["config_sha256"]:
                     affected_strategy.append({"id": identity, "status": "configuration_changed"})
+    from work_observer.knowledge.service import DomainKnowledgeService
+
+    scope = result.get("scope") or {}
+    knowledge_issues = DomainKnowledgeService(repository).audit_dependencies(
+        result.get("knowledge_used", []),
+        job_ids=[item["id"] for item in scope.get("jobs", [])],
+        public_document_ids=scope.get("archived_public_ids", []),
+        project_id=result.get("project_id"),
+    )
     return {
         "stale_memory": bool(memory_issues) or bool(result.get("stale_memory")),
         "memory_issues": memory_issues,
+        "stale_knowledge": bool(knowledge_issues) or bool(result.get("stale_knowledge")),
+        "knowledge_issues": knowledge_issues,
         "changed_sources": changed_sources,
         "affected_strategy": affected_strategy,
     }

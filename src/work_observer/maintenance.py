@@ -14,6 +14,14 @@ from work_observer.storage.database import row_fingerprints
 from work_observer.storage.locks import exclusive
 
 ARCHIVE_TABLES = ("source_documents", "public_documents", "import_assets")
+CHECKPOINT_TABLES = (
+    "research_checkpoints",
+    "research_projects",
+    "quality_reviews",
+    "domain_update_captures",
+    "domain_update_reports",
+    "privacy_erasures",
+)
 
 
 def file_sha(path):
@@ -54,6 +62,29 @@ def backup_workspace(database, destination, reports_dir=Path("reports")):
     if destination.exists():
         raise ProbeError("BACKUP_DESTINATION_EXISTS")
     with exclusive(database, "serve"), exclusive(database), exclusive(database, "collection"):
+        checkpoints = database.parent / "checkpoints.db"
+        if checkpoints.is_file():
+            # 未完成擦除的报告目录必须与本次备份组件一致；只读校验，不改源工作区。
+            signature = hashlib.sha256(str(Path(reports_dir).resolve()).encode("utf-8")).hexdigest()
+            with readonly_database(checkpoints) as checkpoint_db:
+                has_journal = checkpoint_db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='privacy_erasures'"
+                ).fetchone()
+                if has_journal:
+                    for (encoded,) in checkpoint_db.execute(
+                        "SELECT record FROM privacy_erasures WHERE namespace=?", (str(database),)
+                    ):
+                        try:
+                            journal = json.loads(encoded)
+                        except (ValueError, TypeError) as exc:
+                            raise ProbeError("INVALID_BACKUP_CHECKPOINT") from exc
+                        if not isinstance(journal, dict):
+                            raise ProbeError("INVALID_BACKUP_CHECKPOINT")
+                        if (
+                            journal.get("completed") is not True
+                            and journal.get("reports_directory_sha256") != signature
+                        ):
+                            raise ProbeError("PRIVACY_REPORT_DIRECTORY_MISMATCH")
         destination.mkdir(parents=True)
         snapshot_database(database, destination / "app.db")
         manifest = {
@@ -81,14 +112,22 @@ def backup_workspace(database, destination, reports_dir=Path("reports")):
                     if not target.exists():
                         shutil.copyfile(source, target)
                     manifest["documents"].append({"table": table, "id": identity, "file": relative})
-        checkpoints = database.parent / "checkpoints.db"
         if checkpoints.is_file():
             snapshot_database(checkpoints, destination / "checkpoints.db")
             # 同目录可能有其他库的研究，仅备份目标业务库的作用域。
-            with closing(sqlite3.connect(destination / "checkpoints.db")) as db, db:
-                db.execute(
-                    "DELETE FROM research_checkpoints WHERE namespace != ?", (str(database),)
-                )
+            with closing(sqlite3.connect(destination / "checkpoints.db")) as db:
+                with db:
+                    tables = {
+                        row[0]
+                        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    }
+                    for table in CHECKPOINT_TABLES:
+                        if table in tables:
+                            db.execute(
+                                f'DELETE FROM "{table}" WHERE namespace != ?', (str(database),)
+                            )
+                # 删除其他作用域后的副本压实，避免空闲页保留无关会话。
+                db.execute("VACUUM")
         for source in Path(reports_dir).glob("*"):
             if source.is_file() and re.fullmatch(r"[a-f0-9]{32}\.(json|md)", source.name):
                 target = destination / "reports" / source.name
@@ -226,6 +265,25 @@ def _validated_manifest(bundle):
     if "checkpoints.db" in files:
         with readonly_database(bundle / "checkpoints.db") as db:
             _plain_database(db)
+            tables = {
+                row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            for table in CHECKPOINT_TABLES[1:]:
+                if table not in tables:
+                    continue
+                for namespace, identity, raw in db.execute(
+                    f'SELECT namespace,id,record FROM "{table}"'
+                ):
+                    try:
+                        record = json.loads(raw)
+                    except (ValueError, TypeError) as exc:
+                        raise ProbeError("INVALID_BACKUP_CHECKPOINT") from exc
+                    if (
+                        namespace != manifest["original_database"]
+                        or not isinstance(record, dict)
+                        or record.get("id") != identity
+                    ):
+                        raise ProbeError("INVALID_BACKUP_CHECKPOINT")
             for namespace, identity, raw in db.execute(
                 "SELECT namespace,id,record FROM research_checkpoints"
             ):
@@ -269,10 +327,15 @@ def restore_workspace(bundle, destination):
     if checkpoints.is_file():
         with closing(sqlite3.connect(checkpoints)) as db, db:
             db.execute("PRAGMA trusted_schema=OFF")
-            db.execute(
-                "UPDATE research_checkpoints SET namespace=? WHERE namespace=?",
-                (str((destination / "app.db").resolve()), manifest["original_database"]),
-            )
+            tables = {
+                row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            for table in CHECKPOINT_TABLES:
+                if table in tables:
+                    db.execute(
+                        f'UPDATE "{table}" SET namespace=? WHERE namespace=?',
+                        (str((destination / "app.db").resolve()), manifest["original_database"]),
+                    )
             # 未完成任务不自动重启，用户查看后才能继续消费预算。
             for identity, raw in db.execute(
                 "SELECT id,record FROM research_checkpoints"
@@ -282,6 +345,32 @@ def restore_workspace(bundle, destination):
                     record["state"] = "interrupted"
                     db.execute(
                         "UPDATE research_checkpoints SET record=? WHERE id=?",
+                        (json.dumps(record, ensure_ascii=False), identity),
+                    )
+            if "research_projects" in tables:
+                for identity, raw in db.execute(
+                    "SELECT id,record FROM research_projects"
+                ).fetchall():
+                    record = json.loads(raw)
+                    for step in record.get("steps", []):
+                        if step["state"] == "running":
+                            step.update(
+                                state="interrupted", stop_reason="restored_explicit_resume_required"
+                            )
+                    db.execute(
+                        "UPDATE research_projects SET record=? WHERE id=?",
+                        (json.dumps(record, ensure_ascii=False), identity),
+                    )
+            if "privacy_erasures" in tables:
+                for identity, raw in db.execute(
+                    "SELECT id,record FROM privacy_erasures"
+                ).fetchall():
+                    record = json.loads(raw)
+                    record["reports_directory_sha256"] = hashlib.sha256(
+                        str((destination / "reports").resolve()).encode("utf-8")
+                    ).hexdigest()
+                    db.execute(
+                        "UPDATE privacy_erasures SET record=? WHERE id=?",
                         (json.dumps(record, ensure_ascii=False), identity),
                     )
     return {

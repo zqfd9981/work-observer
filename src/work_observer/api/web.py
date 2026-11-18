@@ -68,11 +68,17 @@ class ResearchInput(BaseModel):
 
 class MemoryInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: str = Field(pattern="^(preference|correction|knowledge)$")
+    kind: str = Field(pattern="^(preference|correction|knowledge|hypothesis|method)$")
     content: str = Field(default="", max_length=4000)
     job_id: str | None = None
     source_run_id: str | None = None
     claim_index: int | None = Field(default=None, ge=0, le=23)
+    scope: str | None = Field(default=None, pattern="^(global|project|job)$")
+    project_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    subject: str | None = Field(default=None, min_length=1, max_length=200)
+    valid_from: str | None = None
+    valid_until: str | None = None
+    origin: str = Field(default="user", pattern="^(user|agent)$")
 
 
 class MemoryRevision(BaseModel):
@@ -171,6 +177,10 @@ def create_app(
     repository = store = memory = None
 
     def response(data, status=200):
+        from work_observer.api.privacy import result_read_blocked, unavailable
+
+        if result_read_blocked(store):
+            return unavailable()
         return JSONResponse(public(data, credentials), status)
 
     @asynccontextmanager
@@ -185,9 +195,20 @@ def create_app(
                 else settings.database_path.parent / "checkpoints.db",
                 namespace=str(settings.database_path.resolve()),
             )
-            for run in store.list():
-                if run["state"] == "running":
-                    store.save(run["id"], state="interrupted")
+            from work_observer.research.projects import ProjectService
+
+            try:
+                with exclusive(settings.database_path):
+                    for run in store.list():
+                        if run["state"] == "running":
+                            store.save(run["id"], state="interrupted")
+                    ProjectService(store).recover()
+            except ProbeError as exc:
+                if exc.code != "RESEARCH_BUSY":
+                    raise
+            from work_observer.memory.lifecycle import resume_erasures
+
+            resume_erasures(repository, store, reports_dir)
             try:
                 yield
             finally:
@@ -205,15 +226,25 @@ def create_app(
 
     async def index(request):
         html = (ASSETS / "index.html").read_text(encoding="utf-8").replace("__WO_TOKEN__", token)
+        for name in ("knowledge.html", "quality.html", "data-quality.html", "updates.html"):
+            html = html.replace("</main>", (ASSETS / name).read_text(encoding="utf-8") + "</main>")
         return HTMLResponse(html)
 
     async def asset(request):
         name = request.path_params["name"]
-        if name not in {"app.js", "app.css"}:
+        if name not in {
+            "app.js",
+            "projects.js",
+            "knowledge.js",
+            "quality.js",
+            "data-quality.js",
+            "updates.js",
+            "app.css",
+        }:
             return Response(status_code=404)
         return Response(
             (ASSETS / name).read_bytes(),
-            media_type={"app.js": "text/javascript", "app.css": "text/css"}[name],
+            media_type="text/css" if name.endswith(".css") else "text/javascript",
         )
 
     async def overview(request):
@@ -382,12 +413,23 @@ def create_app(
                 for key in ("plan", "trace", "model_calls", "scope")
                 if key in partial
             }
-        data["resumable"] = bool(checkpoint and run["state"] in {"interrupted", "failed"})
+        data["project_id"] = run.get("input", {}).get("project_id")
+        data["resumable"] = bool(
+            checkpoint and run["state"] in {"interrupted", "failed"} and not data["project_id"]
+        )
         data["result"] = audited(data.get("result"))
         return response(data)
 
     async def resume_research(request):
         run = get_run(request.path_params["id"])
+        if run.get("input", {}).get("project_id"):
+            return response(
+                {
+                    "error_code": "PROJECT_RUN_RESUME_FROM_PROJECT",
+                    "message": "请从持续研究项目继续此步骤，以保留项目范围和总预算。",
+                },
+                409,
+            )
         if busy():
             return response({"error_code": "RESEARCH_BUSY", "message": "已有研究正在进行。"}, 409)
         if run["state"] not in {"interrupted", "failed"} or not store.load_checkpoint(run["id"]):
@@ -406,6 +448,9 @@ def create_app(
         identity = request.path_params["id"]
         get_run(identity)
         task = tasks.get(identity)
+        project_id = get_run(identity).get("input", {}).get("project_id")
+        if project_id:
+            task = operation_tasks.get("project:" + project_id)
         if task and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -425,9 +470,27 @@ def create_app(
         return response(get_run(run["id"])["saved"])
 
     def audited(result):
+        from work_observer.quality.reviews import QualityReviewService
         from work_observer.reports.results import audit_result
 
-        return {**result, "audit": audit_result(result, repository)} if result else result
+        if not result:
+            return result
+        business_review = {"status": "pending", "reviewer_kind": None}
+        if result.get("status") == "completed" and result.get("run_id"):
+            try:
+                reviews = QualityReviewService(store, repository).list_run(result["run_id"])
+                latest = next((r for r in reviews if not r["stale_result"]), None)
+                if latest:
+                    business_review = {
+                        key: latest.get(key) for key in ("status", "reviewer_kind", "decision")
+                    }
+            except ProbeError:
+                pass
+        return {
+            **result,
+            "audit": audit_result(result, repository),
+            "business_review": business_review,
+        }
 
     async def forget_memory(request):
         if busy():
@@ -443,11 +506,30 @@ def create_app(
         return response(forget_personal(repository, store, request.path_params["id"], reports_dir))
 
     async def list_memories(request):
-        return response(memory.list(include_history=request.query_params.get("history") == "1"))
+        items = memory.list(include_history=request.query_params.get("history") == "1")
+        project_id = request.query_params.get("project_id")
+        if project_id:
+            items = [
+                item
+                for item in items
+                if item["scope"] != "project" or item["project_id"] == project_id
+            ]
+        return response([{**item, "validity": memory.validity(item["id"])} for item in items])
 
     async def create_memory(request):
         data = MemoryInput.model_validate(await read_json(request))
-        kwargs = {"job_id": data.job_id}
+        kwargs = {
+            key: getattr(data, key)
+            for key in (
+                "job_id",
+                "scope",
+                "project_id",
+                "subject",
+                "valid_from",
+                "valid_until",
+                "origin",
+            )
+        }
         content = data.content
         if data.kind == "knowledge":
             if data.source_run_id is None or data.claim_index is None:
@@ -461,7 +543,9 @@ def create_app(
             content = claim["text"]
             evidence = {item["id"]: item for item in result.get("evidence", [])}
             kwargs.update(
-                evidence=[evidence[key] for key in claim["evidence_ids"]], source_run_id=run["id"]
+                evidence=[evidence[key] for key in claim["evidence_ids"]],
+                source_run_id=run["id"],
+                origin="agent",
             )
         return response(memory.create(data.kind, content, **kwargs), 201)
 
@@ -474,6 +558,8 @@ def create_app(
             return response(memory.withdraw(identity))
         if action == "activate":
             return response(memory.activate(identity))
+        if action in {"accept", "reject"}:
+            return response(memory.resolve(identity, action))
         raise ProbeError("MEMORY_ACTION_DENIED")
 
     async def reports(request):
@@ -546,6 +632,12 @@ def create_app(
                 "RESEARCH_MEMORY_CHANGED_RESTART": (
                     "研究使用的偏好或纠正已变化，请按最新记录开始新研究。"
                 ),
+                "PROJECT_CHANGED_REFRESH": "项目已被其他操作更新，请刷新项目后再保存。",
+                "PROJECT_ROUND_LIMIT": "已达到项目轮次上限。请保留本项目结果，按新目标建立新项目。",
+                "STEP_SCOPE_CHANGED_REPLAN": "目标或范围已修订，请在当前范围新增调查步骤。",
+                "STEP_NEW_ROUND_REQUIRED": "本步没有可恢复的检查点，请补充资料后新增调查轮次。",
+                "STEP_EVIDENCE_REQUIRED": "本步尚未形成带原文引用的模型回答，不能标为已核对完成。",
+                "PROJECT_FORGOTTEN_RESTART": "相关记忆已忘记，项目上下文已清除，请建立新项目。",
             }.get(code, "操作未完成，请核对输入；已有资料不会因此删除。")
         return response({"error_code": code, "message": message}, status)
 
@@ -610,6 +702,54 @@ def create_app(
         )
     )
     routes.extend(schema_routes())
+    from work_observer.api.data_quality import data_quality_routes
+    from work_observer.api.knowledge import knowledge_routes
+    from work_observer.api.projects import project_routes
+    from work_observer.api.quality import quality_routes
+    from work_observer.api.updates import update_routes
+
+    routes.extend(
+        knowledge_routes(
+            repository=lambda: repository, response=response, read_json=read_json, busy=busy
+        )
+    )
+    routes.extend(
+        quality_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+        )
+    )
+    routes.extend(
+        data_quality_routes(
+            repository=lambda: repository, response=response, read_json=read_json, busy=busy
+        )
+    )
+    routes.extend(
+        update_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+        )
+    )
+
+    routes.extend(
+        project_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            settings=settings,
+            model=model,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+            tasks=operation_tasks,
+            reports_dir=reports_dir,
+        )
+    )
     app = Starlette(
         routes=routes,
         lifespan=lifespan,
@@ -621,6 +761,14 @@ def create_app(
         },
     )
     config = deployment_settings(settings)
+    from work_observer.api.privacy import PrivacyRecoveryGuard
+    from work_observer.memory.lifecycle import resume_erasures
+
+    app.add_middleware(
+        PrivacyRecoveryGuard,
+        store=lambda: store,
+        recover=lambda: resume_erasures(repository, store, reports_dir),
+    )
     app.add_middleware(LocalGuard, token=token, public_origin=config[0] if config else "")
     app.add_middleware(DeploymentGuard, settings=settings)
     return app

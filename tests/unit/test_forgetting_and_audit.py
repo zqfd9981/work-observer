@@ -210,6 +210,8 @@ def test_audit_marks_revised_memory_and_later_source_without_destroying_historic
     result = result_for(repo, job_id, [item])
     assert audit_result(result, repo) == {
         "stale_memory": False,
+        "stale_knowledge": False,
+        "knowledge_issues": [],
         "memory_issues": [],
         "changed_sources": [],
         "affected_strategy": [],

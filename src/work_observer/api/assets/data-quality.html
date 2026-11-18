@@ -1,0 +1,16 @@
+<section id="page-data-quality" class="page" hidden aria-labelledby="data-quality-title">
+  <div class="page-head"><div><div class="eyebrow">REVIEW AND EXACT REFERENCES</div><h1 id="data-quality-title">资料核对<span class="heading-dot">.</span></h1><p>审核跨入口疑似重复，并为截图文字建立可回查的人工区域引用。</p></div><button class="secondary" id="data-quality-refresh">刷新记录</button></div>
+  <section class="panel"><h2>疑似重复岗位</h2><p>正文相似或同一已保存链接只形成候选；同标题或同公司不能确认是同一岗位。人工关联保留两份来源、全部历史和不同字段。</p><button class="primary small" id="duplicate-scan">检查本地资料</button><p class="form-note">单次最多扫描300个岗位，展示前50组；结果会明确标示未完整扫描或展示。不会联网获取招聘信息。</p><div id="duplicate-candidates" class="result-list"><p class="form-note">点击检查后查看联合依据及字段冲突。</p></div></section>
+  <details class="panel"><summary>已审核关联</summary><div id="duplicate-reviews"></div></details>
+  <section class="panel"><h2>截图精确区域引用</h2><p>先通过“补充资料”上传截图、核对文字并保存岗位，再刷新此页。选取原图区域，并从已存正文中选择对应文字；坐标是人工核对结果，不是OCR检测结果。</p>
+    <form id="screenshot-region-form"><label>截图与正文版本<select name="target" required><option value="">选择已核对的图片正文</option></select></label>
+      <div id="region-editor" hidden><p class="form-note">在原图上按住并拖动选择区域，也可以输入下面0至1的相对坐标。原图字节保留不变。</p>
+        <div id="region-stage" class="quality-image-stage"><img id="region-image" alt="待人工核对的原始招聘截图" draggable="false" class="quality-region-image"><div id="region-overlay" class="quality-region-overlay" hidden></div></div>
+        <div class="form-grid"><label>左边 x1<input name="x1" type="number" min="0" max="1" step="0.000001" value="0" required></label><label>上边 y1<input name="y1" type="number" min="0" max="1" step="0.000001" value="0" required></label><label>右边 x2<input name="x2" type="number" min="0" max="1" step="0.000001" value="1" required></label><label>下边 y2<input name="y2" type="number" min="0" max="1" step="0.000001" value="1" required></label></div>
+        <label>已核对保存的正文（选择对应文字）<textarea id="region-jd-text" rows="9" readonly></textarea></label><button type="button" id="region-use-selection" class="secondary small">采用正文中选中的文字</button>
+        <div class="form-grid"><label>文字开始位置<input name="start" type="number" min="0" value="0" required></label><label>文字结束位置<input name="end" type="number" min="1" required></label></div><label>逐字核对的引用（最多700字符）<textarea name="quote" rows="4" maxlength="700" required></textarea></label><label>核对说明（可选）<input name="note" maxlength="1200" placeholder="例如：第三段任职条件的前两行"></label><label class="check-label"><input name="reviewed" type="checkbox" required>我已核对原图区域与正文引用，确认文字一致；区域为人工选择。</label><button class="primary small" id="region-save">保存人工区域引用</button>
+      </div><p id="region-feedback" role="status"></p>
+    </form>
+  </section>
+  <section class="panel"><h2>已存截图引用</h2><p class="form-note">每次读取重新检查图片及来源完整性；历史正文和已撤回引用单独标示。</p><div id="screenshot-regions" class="result-list"></div></section>
+</section>

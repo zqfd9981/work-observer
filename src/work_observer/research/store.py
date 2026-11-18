@@ -110,7 +110,9 @@ class ResearchStore:
                 checkpoint = json.loads(encoded_checkpoint) if encoded_checkpoint else {}
                 used = [
                     *(record.get("result") or {}).get("memory_used", []),
+                    *(record.get("result") or {}).get("context_memory_used", []),
                     *(checkpoint.get("result") or {}).get("memory_used", []),
+                    *(checkpoint.get("result") or {}).get("context_memory_used", []),
                 ]
                 if not any(
                     isinstance(item, dict) and item.get("id") in identities for item in used
@@ -138,6 +140,51 @@ class ResearchStore:
                     (json.dumps(minimal, ensure_ascii=False), self.namespace, identity),
                 )
         return {"affected_run_ids": affected, "report_ids": sorted(reports)}
+
+    def invalidate_runs(self, identities):
+        reports = set()
+        with self.lock, self.db:
+            for identity in identities:
+                record = self.get(identity)
+                for source in (record.get("saved") or {}, record.get("result") or {}):
+                    report_id = source.get("report_id")
+                    if isinstance(report_id, str) and re.fullmatch(r"[a-f0-9]{32}", report_id):
+                        reports.add(report_id)
+                minimal = dict(
+                    id=identity,
+                    state="invalidated",
+                    created_at=record.get("created_at"),
+                    updated_at=now(),
+                    input={"question": "相关记忆已忘记，请重新研究"},
+                    result=None,
+                    saved=None,
+                    error_code="MEMORY_FORGOTTEN_RESTART",
+                    stale_memory=True,
+                )
+                self.db.execute(
+                    "UPDATE research_checkpoints SET record=?,checkpoint=NULL "
+                    "WHERE namespace=? AND id=?",
+                    (json.dumps(minimal, ensure_ascii=False), self.namespace, identity),
+                )
+        return {"affected_run_ids": list(identities), "report_ids": sorted(reports)}
+
+    def dependent_runs(self, identities):
+        """派生上下文回链，不把旧报告或领域关系当独立证据。调用方负责闭包。"""
+        identities = set(identities)
+        affected = []
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT id,record,checkpoint FROM research_checkpoints WHERE namespace=?",
+                (self.namespace,),
+            ).fetchall()
+            for identity, encoded, checkpoint in rows:
+                record = json.loads(encoded)
+                saved = json.loads(checkpoint) if checkpoint else {}
+                dependencies = set((record.get("result") or {}).get("continued_from", []))
+                dependencies.update((saved.get("result") or {}).get("continued_from", []))
+                if dependencies & identities:
+                    affected.append(identity)
+        return affected
 
     def close(self):
         with self.lock:
