@@ -195,6 +195,7 @@ def create_app(
                 else settings.database_path.parent / "checkpoints.db",
                 namespace=str(settings.database_path.resolve()),
             )
+            repository.bind_research_store(store)
             from work_observer.research.projects import ProjectService
 
             try:
@@ -203,6 +204,9 @@ def create_app(
                         if run["state"] == "running":
                             store.save(run["id"], state="interrupted")
                     ProjectService(store).recover()
+                    from work_observer.workflow.service import WorkflowService
+
+                    WorkflowService(store, repository).recover(_lock_held=True)
             except ProbeError as exc:
                 if exc.code != "RESEARCH_BUSY":
                     raise
@@ -226,7 +230,14 @@ def create_app(
 
     async def index(request):
         html = (ASSETS / "index.html").read_text(encoding="utf-8").replace("__WO_TOKEN__", token)
-        for name in ("knowledge.html", "quality.html", "data-quality.html", "updates.html"):
+        for name in (
+            "knowledge.html",
+            "quality.html",
+            "data-quality.html",
+            "updates.html",
+            "workflows.html",
+            "trials.html",
+        ):
             html = html.replace("</main>", (ASSETS / name).read_text(encoding="utf-8") + "</main>")
         return HTMLResponse(html)
 
@@ -239,6 +250,8 @@ def create_app(
             "quality.js",
             "data-quality.js",
             "updates.js",
+            "workflows.js",
+            "trials.js",
             "app.css",
         }:
             return Response(status_code=404)
@@ -376,7 +389,7 @@ def create_app(
                 {"error_code": "RESEARCH_BUSY", "message": "已有研究正在进行，请先等待它完成。"},
                 409,
             )
-        run = store.create(data.model_dump(mode="json"))
+        run = store.create(redact(data.model_dump(mode="json"), credentials))
         launch(run["id"], data)
         return response({"id": run["id"], "state": "running"}, 202)
 
@@ -440,7 +453,9 @@ def create_app(
                 },
                 409,
             )
-        data = ResearchInput.model_validate(run["input"])
+        data = ResearchInput.model_validate(
+            {key: value for key, value in run["input"].items() if key in ResearchInput.model_fields}
+        )
         launch(run["id"], data, resume=True)
         return response({"id": run["id"], "state": "running"}, 202)
 
@@ -637,6 +652,16 @@ def create_app(
                 "STEP_SCOPE_CHANGED_REPLAN": "目标或范围已修订，请在当前范围新增调查步骤。",
                 "STEP_NEW_ROUND_REQUIRED": "本步没有可恢复的检查点，请补充资料后新增调查轮次。",
                 "STEP_EVIDENCE_REQUIRED": "本步尚未形成带原文引用的模型回答，不能标为已核对完成。",
+                "NO_NEW_RESEARCH_MATERIAL": (
+                    "当前原文、历史和有效口径没有变化。可提出明确追问；无需反复启动同一调查。"
+                ),
+                "STEP_RESULT_STALE_REFRESH": (
+                    "本步来源或采用的记忆/关系已经变化，请按新资料建立补查后再核对。"
+                ),
+                "STEP_ALREADY_REFRESHED": "本步已有补查，请打开对应新轮次继续。",
+                "RESEARCH_SOURCE_INTEGRITY_FAILED": (
+                    "岗位原始归档缺失或指纹不一致，未把它当作可核验原文发送给模型。请核对原始材料。"
+                ),
                 "PROJECT_FORGOTTEN_RESTART": "相关记忆已忘记，项目上下文已清除，请建立新项目。",
             }.get(code, "操作未完成，请核对输入；已有资料不会因此删除。")
         return response({"error_code": code, "message": message}, status)
@@ -748,6 +773,30 @@ def create_app(
             busy=busy,
             tasks=operation_tasks,
             reports_dir=reports_dir,
+        )
+    )
+    from work_observer.api.trials import trial_routes
+    from work_observer.api.workflows import workflow_routes
+
+    routes.extend(
+        workflow_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            settings=settings,
+            model=model,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+            tasks=operation_tasks,
+        )
+    )
+    routes.extend(
+        trial_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            response=response,
+            read_json=read_json,
+            busy=busy,
         )
     )
     app = Starlette(

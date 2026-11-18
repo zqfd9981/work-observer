@@ -21,7 +21,160 @@ CHECKPOINT_TABLES = (
     "domain_update_captures",
     "domain_update_reports",
     "privacy_erasures",
+    "research_workflows",
+    "retrieval_trials",
+    "retrieval_trial_events",
 )
+TRIAL_FIXED_FILES = {
+    "corpus.db",
+    "manifest.json",
+    "suite.json",
+    "holdout-attempt.json",
+    "holdout-result.json",
+    "baseline-aliases.json",
+}
+
+
+def _trial_filename(name):
+    return name in TRIAL_FIXED_FILES or bool(re.fullmatch(r"candidate-[a-f0-9]{64}\.json", name))
+
+
+def _validate_trial_artifacts(directory, *, include_stage=False):
+    """只验证新固定布局；不改冻结字节，也不把备份验证当成人审通过。"""
+    from work_observer.quality.service import SOURCE_TABLES, digest, load_corpus, load_suite
+    from work_observer.tracking.evaluation import validate_aliases
+
+    if directory.is_symlink() or directory.parent.is_symlink() or not directory.is_dir():
+        raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS")
+    files = [path for path in directory.iterdir() if _trial_filename(path.name)]
+    required = {"corpus.db", "manifest.json"}
+    if not required <= {path.name for path in files} or not len(files) <= 32:
+        raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS")
+    decoded = {}
+    for path in files:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size > (512_000_000 if path.suffix == ".db" else 16_000_000)
+        ):
+            raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS")
+        if path.suffix == ".json":
+            try:
+                decoded[path.name] = json.loads(
+                    path.read_text(encoding="utf-8"), object_pairs_hook=_unique_keys
+                )
+            except (ValueError, UnicodeError) as exc:
+                raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS") from exc
+    corpus = load_corpus(directory)
+    suite = load_suite(directory)[1] if "suite.json" in decoded else None
+    if corpus.get("frozen_table_scope") != "source_only_without_personal_memory_or_access_context":
+        raise ProbeError("TRIAL_BACKUP_REQUIRES_NEW_SOURCE_ONLY_CORPUS")
+    baseline = validate_aliases(decoded.get("baseline-aliases.json", {}))
+    for name, lock in decoded.items():
+        if not name.startswith("candidate-"):
+            continue
+        if (
+            not suite
+            or not isinstance(lock, dict)
+            or set(lock) != {"suite_sha256", "baseline_config_sha256", "candidate_config_sha256"}
+            or any(
+                not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
+                for value in lock.values()
+            )
+            or lock["suite_sha256"] != suite["suite_sha256"]
+            or lock["baseline_config_sha256"] != digest(baseline)
+            or name != "candidate-" + digest(lock) + ".json"
+        ):
+            raise ProbeError("TRIAL_BACKUP_FROZEN_DIGEST_MISMATCH")
+    attempt = decoded.get("holdout-attempt.json")
+    if "holdout-attempt.json" in decoded:
+        if not suite or not isinstance(attempt, dict):
+            raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS")
+        lock = {
+            key: attempt.get(key)
+            for key in ("suite_sha256", "baseline_config_sha256", "candidate_config_sha256")
+        }
+        if decoded.get("candidate-" + digest(lock) + ".json") != lock or not isinstance(
+            attempt.get("started_at"), str
+        ):
+            raise ProbeError("TRIAL_BACKUP_FROZEN_DIGEST_MISMATCH")
+    if "holdout-result.json" in decoded:
+        report = decoded["holdout-result.json"]
+        if not suite or not isinstance(report, dict) or not isinstance(attempt, dict):
+            raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS")
+        candidate = validate_aliases(report.get("candidate_aliases"))
+        lock = {
+            "suite_sha256": suite["suite_sha256"],
+            "baseline_config_sha256": digest(baseline),
+            "candidate_config_sha256": digest(candidate),
+        }
+        if (
+            report.get("corpus_sha256") != corpus["corpus_sha256"]
+            or report.get("phase") != "holdout"
+            or any(report.get(key) != value for key, value in lock.items())
+            or decoded.get("candidate-" + digest(lock) + ".json") != lock
+            or any(attempt.get(key) != value for key, value in lock.items())
+        ):
+            raise ProbeError("TRIAL_BACKUP_FROZEN_DIGEST_MISMATCH")
+    with readonly_database(directory / "corpus.db") as db:
+        _plain_database(db)
+        if db.execute("pragma journal_mode").fetchone()[0] != "delete":
+            raise ProbeError("TRIAL_BACKUP_SINGLE_FILE_CORPUS_REQUIRED")
+        tables = {
+            row[0]
+            for row in db.execute(
+                "select name from sqlite_master where type='table' and name not like 'sqlite_%'"
+            )
+        }
+        if (
+            tables != SOURCE_TABLES
+            or db.execute("select 1 from jobs where access_context!='{}' limit 1").fetchone()
+            or db.execute(
+                "select 1 from job_observations where access_context!='{}' limit 1"
+            ).fetchone()
+            or db.execute("select 1 from source_documents where request!='{}' limit 1").fetchone()
+        ):
+            raise ProbeError("TRIAL_BACKUP_CONTAINS_NON_SOURCE_CONTEXT")
+    stage = (
+        "evaluated"
+        if "holdout-result.json" in decoded
+        else "evaluation_draft"
+        if attempt is not None
+        else "labeled_draft"
+        if suite
+        else "frozen_draft"
+    )
+    names = sorted(path.name for path in files)
+    return (names, stage) if include_stage else names
+
+
+def _backup_trial_artifacts(database, destination, manifest):
+    root = database.parent / "quality-trials"
+    manifest["trial_bundles"] = []
+    manifest["trial_bundle_stages"] = {}
+    manifest["legacy_quality_artifacts"] = (
+        "not_copied; missing legacy artifacts safely revert trials to baseline"
+    )
+    if not root.is_dir():
+        return
+    if root.is_symlink():
+        raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS")
+    directories = [path for path in root.iterdir() if re.fullmatch(r"[a-f0-9]{32}", path.name)]
+    if len(directories) > 100:
+        raise ProbeError("TRIAL_BACKUP_BUNDLE_LIMIT_100")
+    for directory in sorted(directories):
+        if directory.is_symlink() or not directory.is_dir():
+            raise ProbeError("INVALID_TRIAL_BACKUP_ARTIFACTS")
+        files, stage = _validate_trial_artifacts(directory, include_stage=True)
+        target = destination / "quality-trials" / directory.name
+        target.mkdir(parents=True)
+        for name in files:
+            shutil.copyfile(directory / name, target / name)
+        _, copied_stage = _validate_trial_artifacts(target, include_stage=True)
+        if copied_stage != stage:
+            raise ProbeError("TRIAL_BACKUP_STAGE_CHANGED_DURING_COPY")
+        manifest["trial_bundles"].append(directory.name)
+        manifest["trial_bundle_stages"][directory.name] = stage
 
 
 def file_sha(path):
@@ -134,6 +287,7 @@ def backup_workspace(database, destination, reports_dir=Path("reports")):
                 target.parent.mkdir(exist_ok=True)
                 shutil.copyfile(source, target)
                 manifest["reports"].append("reports/" + source.name)
+        _backup_trial_artifacts(database, destination, manifest)
         manifest["files"] = {
             str(path.relative_to(destination)).replace("\\", "/"): file_sha(path)
             for path in destination.rglob("*")
@@ -164,6 +318,8 @@ def _relative_file(value):
         value in {"app.db", "checkpoints.db"}
         or re.fullmatch(r"raw/[a-f0-9]{64}\.json", value)
         or re.fullmatch(r"reports/[a-f0-9]{32}\.(json|md)", value)
+        or re.fullmatch(r"quality-trials/[a-f0-9]{32}/[^/]+", value)
+        and _trial_filename(value.rsplit("/", 1)[1])
     ):
         raise ProbeError("INVALID_BACKUP_PATH")
     return value
@@ -214,6 +370,42 @@ def _validated_manifest(bundle):
         ):
             raise ProbeError("BACKUP_FILE_INTEGRITY_FAILED")
     expected_reports = {name for name in files if name.startswith("reports/")}
+    trial_bundles = manifest.get("trial_bundles", [])
+    actual_trial_files = {name for name in files if name.startswith("quality-trials/")}
+    if (
+        not isinstance(trial_bundles, list)
+        or any(
+            not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{32}", identity)
+            for identity in trial_bundles
+        )
+        or len(trial_bundles) != len(set(trial_bundles))
+        or len(trial_bundles) > 100
+        or {name.split("/")[1] for name in actual_trial_files} != set(trial_bundles)
+    ):
+        raise ProbeError("INVALID_TRIAL_BACKUP_MANIFEST")
+    stages = manifest.get("trial_bundle_stages")
+    if stages is not None and (
+        not isinstance(stages, dict)
+        or set(stages) != set(trial_bundles)
+        or any(
+            not isinstance(stage, str)
+            or stage not in {"frozen_draft", "labeled_draft", "evaluation_draft", "evaluated"}
+            for stage in stages.values()
+        )
+    ):
+        raise ProbeError("INVALID_TRIAL_BACKUP_STAGE")
+    for identity in trial_bundles:
+        directory = bundle / "quality-trials" / identity
+        names, stage = _validate_trial_artifacts(directory, include_stage=True)
+        expected_trial_files = {f"quality-trials/{identity}/{name}" for name in names}
+        if {
+            name for name in actual_trial_files if name.startswith(f"quality-trials/{identity}/")
+        } != expected_trial_files:
+            raise ProbeError("INVALID_TRIAL_BACKUP_MANIFEST")
+        if stages is not None and stages.get(identity) != stage:
+            raise ProbeError("INVALID_TRIAL_BACKUP_STAGE")
+        if stages is None and stage != "evaluated":
+            raise ProbeError("INVALID_TRIAL_BACKUP_STAGE")
     if (
         any(not isinstance(name, str) for name in manifest["reports"])
         or len(manifest["reports"]) != len(set(manifest["reports"]))
@@ -378,6 +570,9 @@ def restore_workspace(bundle, destination):
         "reports_dir": str(destination / "reports"),
         "verified_files": len(manifest["files"]),
         "status": "restored_to_new_directory",
+        "restored_trial_bundles": len(manifest.get("trial_bundles", [])),
+        "restored_trial_bundle_stages": manifest.get("trial_bundle_stages", {}),
+        "trial_artifact_note": "冻结包字节不重定位；legacy旧包未复制，缺失时试用保持或回到基线。",
     }
 
 

@@ -10,7 +10,7 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
@@ -157,6 +157,14 @@ class ProfileService:
             stale.append("岗位正文版本已变化")
         if row.memory_versions != memories:
             stale.append("有效偏好、纠正或知识版本已变化")
+        from work_observer.memory.dependencies import DependencyAudit
+
+        dependency = DependencyAudit(self.repository).result(row.result)
+        if not dependency["eligible"]:
+            stale.append("画像采用的上游记忆、研究或知识依赖已失效")
+        if row.status == "completed" and row.result.get("run_id"):
+            if not DependencyAudit(self.repository).run(row.result["run_id"])["eligible"]:
+                stale.append("画像的权威来源研究已失效或被明确拒绝")
         if row.analyzer_version != ANALYZER_VERSION or row.prompt_version != PROMPT_VERSION:
             stale.append("画像分析方法已变化")
         if row.result.get("research_method_sha256") != method_fingerprint():
@@ -315,7 +323,10 @@ class ProfileService:
                     continue
         return domains
 
-    async def analyze(self, job_id, settings, *, model=None, offline=False):
+    async def analyze(self, job_id, settings, *, model=None, offline=False, _lock_held=False):
+        if _lock_held:
+            async with asyncio.timeout(235):
+                return await self._analyze_locked(job_id, settings, model=model, offline=offline)
         with exclusive(self.repository.engine.url.database, purpose="research"):
             async with asyncio.timeout(235):
                 return await self._analyze_locked(job_id, settings, model=model, offline=offline)
@@ -339,7 +350,15 @@ class ProfileService:
             }
         )
         with Session(self.repository.engine) as session:
-            cached = session.scalar(select(JobAnalysis).where(JobAnalysis.cache_key == key))
+            cached = session.scalar(
+                select(JobAnalysis)
+                .where(
+                    or_(JobAnalysis.cache_key == key, JobAnalysis.cache_key.startswith(key + ":")),
+                    JobAnalysis.status == "completed",
+                )
+                .order_by(JobAnalysis.created_at.desc(), JobAnalysis.id.desc())
+                .limit(1)
+            )
             if cached:
                 output = self._output(cached, cached=True)
                 if not output["stale"]:
@@ -462,7 +481,7 @@ class ProfileService:
         )
         status = result["status"]
         # 失败、离线和补充不完整均允许显式重试；不把失败缓存成成功。
-        cache_key = key if status == "completed" else key + ":" + uuid4().hex
+        cache_key = key if status == "completed" and cached is None else key + ":" + uuid4().hex
         identity = uuid4().hex
         with Session(self.repository.engine) as session, session.begin():
             statement = (

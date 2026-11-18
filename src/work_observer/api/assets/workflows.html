@@ -1,0 +1,12 @@
+<section id="page-workflows" class="page" hidden aria-labelledby="workflows-title">
+  <div class="page-head"><div><div class="eyebrow">FROM MATERIAL TO DAILY RESEARCH</div><h1 id="workflows-title">日常研究流程<span class="heading-dot">.</span></h1><p>选择资料后串行完成必要画像、调查、人工核对与观察更新。</p></div><button class="secondary" id="workflow-refresh">刷新流程</button></div>
+  <form id="workflow-create" class="panel strategy-editor">
+    <h2>保存一个明确流程</h2><p class="form-note">先在岗位页勾选 1～20 个已有或刚导入的岗位。保存只登记目标与预算，不调用模型、不采集招聘来源。</p>
+    <div class="form-grid"><label>名称<input name="title" required maxlength="150" placeholder="如：本周应用开发岗位核对"></label><label>领域口径（可选）<select name="domain_id"><option value="">保持未知与多领域</option></select></label></div>
+    <label>具体研究目标<textarea name="goal" required maxlength="4000" rows="3" placeholder="核对任务、交付物和必备条件，再寻找反例与仍需补充的资料"></textarea></label>
+    <label>观察词项（可选）<input name="terms" maxlength="1000" placeholder="如：Python、RAG、上线；只作字面统计"></label>
+    <label class="checkbox-line"><input name="include_personal" type="checkbox">在观察报告中解释已明确保存的个人条件，不猜测履历或适配分数</label>
+    <div class="form-grid"><label>整个流程累计调用上限<input name="max_calls" type="number" min="24" max="72" value="72" required></label><label>整个流程累计时间预留（秒）<input name="max_seconds" type="number" min="360" max="1800" value="1800" required></label></div>
+    <p class="form-note">先估算新/过时画像与调查所需最坏预算。每份画像最多 9 次调用/235 秒，项目预留 24 次/360 秒；有效缓存可减少预留。范围过大时会要求缩小，保留已完成内容，不重置预算。</p><button class="primary">仅保存流程与估算</button>
+  </form><div id="workflows-list" class="research-history"></div><div id="workflow-detail" class="match-results"></div>
+</section>

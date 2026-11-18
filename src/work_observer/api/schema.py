@@ -34,17 +34,40 @@ def openapi(routes):
         RollbackInput,
         StrategyInput,
     )
-    from work_observer.api.projects import ProjectInput, ProjectRevision, StepInput, StepReview
+    from work_observer.api.projects import (
+        ProjectInput,
+        ProjectRevision,
+        StepInput,
+        StepRefresh,
+        StepReview,
+    )
     from work_observer.api.quality import QualityReviewInput
+    from work_observer.api.trials import (
+        TrialFeedbackInput,
+        TrialReviewInput,
+        TrialRollbackInput,
+        TrialSearchInput,
+        TrialShadowInput,
+    )
     from work_observer.api.updates import (
         UpdateCaptureInput,
         UpdateCompareInput,
         UpdateFollowupInput,
     )
     from work_observer.api.web import JobQuery, MemoryInput, MemoryRevision, ResearchInput
+    from work_observer.api.workflows import WorkflowInput, WorkflowRunInput, WorkflowScopeInput
     from work_observer.connectors.manual import ManualJD
 
     models = {
+        ("/api/workflows", "POST"): WorkflowInput,
+        ("/api/workflows/{id}", "PATCH"): WorkflowScopeInput,
+        ("/api/workflows/{id}/run", "POST"): WorkflowRunInput,
+        ("/api/trials/shadows", "POST"): TrialShadowInput,
+        ("/api/trials/{id}/review", "POST"): TrialReviewInput,
+        ("/api/trials/{id}/search", "POST"): TrialSearchInput,
+        ("/api/trials/{id}/rollback", "POST"): TrialRollbackInput,
+        ("/api/trials/{id}/feedback", "POST"): TrialFeedbackInput,
+        ("/api/projects/{id}/steps/{step_id}/refresh", "POST"): StepRefresh,
         ("/api/updates/captures", "POST"): UpdateCaptureInput,
         ("/api/updates/compare", "POST"): UpdateCompareInput,
         ("/api/updates/reports/{id}/followup", "POST"): UpdateFollowupInput,
@@ -113,6 +136,8 @@ def openapi(routes):
         },
     }
     descriptions = {
+        "workflows": "日常研究的有界画像、持续项目、审核等待、领域观察和变化报告",
+        "trials": "冻结开发查询的旁路比较、独立人审、局部限额检索及自动回退",
         "projects": "持久目标与范围、追问澄清、调查队列、审核接续和整项目遗忘",
         "knowledge": "领域定义版本、工作关系与反例审核、完整集合及人工纠正",
         "quality": "逐判断语义支持与业务质量核对，区分人工与Agent辅助评审",

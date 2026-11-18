@@ -218,10 +218,12 @@ def _cascade(
     from work_observer.knowledge.service import DomainKnowledgeService
     from work_observer.quality.reviews import QualityReviewService
     from work_observer.research.projects import ProjectService
+    from work_observer.workflow.service import WorkflowService
 
     memory = MemoryService(repository)
     _bind_reports_directory(store, operation_id, reports_dir)
     projects = ProjectService(store)
+    workflows = WorkflowService(store, repository)
     journal = _journal(
         store,
         operation_id,
@@ -237,6 +239,26 @@ def _cascade(
     relation_ids = set(journal.get("relation_ids", []))
     pending_memories = set(journal.get("memory_ids", []))
     pending_runs = set(journal.get("run_ids", []))
+    related = workflows.related_runs(pending_runs, pending_memories, affected_projects)
+    pending_runs.update(related["affected_run_ids"])
+    affected_projects.update(related["affected_project_ids"])
+    _journal(
+        store,
+        operation_id,
+        memory_ids=pending_memories,
+        run_ids=pending_runs,
+        project_ids=affected_projects,
+    )
+    # 尚未执行任何模型的关联项目同样可能已有私人目标；不能依赖存在run才擦除。
+    for project_id in affected_projects:
+        project = projects.get(project_id)
+        if any(step["state"] == "running" for step in project.get("steps", [])):
+            pending_runs.update(step["run_id"] for step in project["steps"] if step.get("run_id"))
+        else:
+            pending_runs.update(projects.erase(project_id)["affected_run_ids"])
+        forgotten = memory.forget_project(project_id)
+        pending_memories.update(forgotten["forgotten_memory_ids"])
+        deleted_profiles.update(forgotten.get("deleted_profile_ids", []))
     while pending_memories or pending_runs:
         identities.update(pending_memories)
         pending_runs.update(_runs_using_memories(store, pending_memories))
@@ -245,6 +267,9 @@ def _cascade(
         closure = pending_runs - affected_runs
         while closure:
             old = set(closure)
+            related = workflows.related_runs(closure | affected_runs, identities, affected_projects)
+            closure.update(related["affected_run_ids"])
+            affected_projects.update(related["affected_project_ids"])
             closure.update(store.dependent_runs(sorted(closure | affected_runs)))
             for project in projects.list(all_records=True):
                 if set(s.get("run_id") for s in project.get("steps", [])) & closure:
@@ -265,6 +290,8 @@ def _cascade(
                 break
         closure -= affected_runs
         for project_id in affected_projects:
+            erased = projects.erase(project_id)
+            pending_runs.update(set(erased["affected_run_ids"]) - affected_runs - closure)
             forgotten = memory.forget_project(project_id)
             pending_memories.update(set(forgotten["forgotten_memory_ids"]) - identities)
             deleted_profiles.update(forgotten.get("deleted_profile_ids", []))
@@ -294,7 +321,7 @@ def _cascade(
             deleted_profiles.update(derived.get("deleted_profile_ids", []))
             relations = DomainKnowledgeService(repository).invalidate_research(sorted(closure))
             relation_ids.update(relations.get("invalidated_relation_ids", []))
-        pending_runs = set()
+        pending_runs -= affected_runs
         _journal(
             store,
             operation_id,
@@ -307,10 +334,18 @@ def _cascade(
         )
     notifications = InboxService(repository).invalidate_research(sorted(affected_runs))
     quality = QualityReviewService(store).invalidate(sorted(affected_runs))
+    from work_observer.quality.releases import LocalRetrievalTrialService
+
+    trials = LocalRetrievalTrialService(store, repository).invalidate_research(
+        sorted(affected_runs), sorted(identities)
+    )
     from work_observer.reports.domain_updates import DomainUpdateService
 
     updates = DomainUpdateService(store, repository).invalidate(
         sorted(affected_runs), sorted(identities)
+    )
+    workflow_results = workflows.invalidate(
+        sorted(affected_runs), sorted(identities), sorted(affected_projects)
     )
     if reports_dir.exists():
         for path in reports_dir.glob("*.json"):
@@ -349,6 +384,8 @@ def _cascade(
         "invalidated_relation_ids": sorted(relation_ids),
         **notifications,
         **quality,
+        **trials,
         **updates,
+        "invalidated_workflow_ids": workflow_results["affected_workflow_ids"],
         **deleted,
     }

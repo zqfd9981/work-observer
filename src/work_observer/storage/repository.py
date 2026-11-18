@@ -52,6 +52,16 @@ class Repository:
     def close(self):
         self.engine.dispose()
 
+    def bind_research_store(self, store):
+        """绑定本业务库的权威研究档案；只读资格审计不猜其他库的上下文。"""
+        expected = str(Path(self.engine.url.database).resolve())
+        if store.namespace != expected:
+            raise ProbeError("RESEARCH_NAMESPACE_MISMATCH")
+        self.research_store = store
+        self.research_store_path = Path(store.path).resolve()
+        self.research_namespace = store.namespace
+        return self
+
     def begin_run(self, name, spec, mode, *, kind="collection", transport="mcp"):
         if mode not in {"live", "replay", "manual"}:
             raise ProbeError("INVALID_COLLECTION_MODE")

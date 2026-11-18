@@ -25,6 +25,7 @@ def render(result):
     if (
         audit.get("stale_memory")
         or audit.get("stale_knowledge")
+        or audit.get("stale_dependencies")
         or audit.get("changed_sources")
         or audit.get("affected_strategy")
     ):
@@ -33,6 +34,8 @@ def render(result):
             lines.append("- 本研究采用的偏好、纠正或知识已有更新、撤回或遗忘，请重新核对。")
         if audit.get("stale_knowledge"):
             lines.append("- 本研究参考的领域定义或关系已换版、撤回或失效，请按当前口径重新核对。")
+        if audit.get("stale_dependencies"):
+            lines.append("- 上游研究采用的偏好、纠正或知识已变化，派生认识需要重新核对。")
         if audit.get("changed_sources"):
             lines.append("- 部分来源或当前岗位版本已有变化；原报告仍按当时材料形成。")
         if audit.get("affected_strategy"):
@@ -331,6 +334,9 @@ def audit_result(result, repository):
         public_document_ids=scope.get("archived_public_ids", []),
         project_id=result.get("project_id"),
     )
+    from work_observer.memory.dependencies import DependencyAudit
+
+    dependency_audit = DependencyAudit(repository).result(result)
     return {
         "stale_memory": bool(memory_issues) or bool(result.get("stale_memory")),
         "memory_issues": memory_issues,
@@ -338,4 +344,6 @@ def audit_result(result, repository):
         "knowledge_issues": knowledge_issues,
         "changed_sources": changed_sources,
         "affected_strategy": affected_strategy,
+        "stale_dependencies": not dependency_audit["eligible"],
+        "dependency_issues": dependency_audit["issues"],
     }

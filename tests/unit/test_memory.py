@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.memory.service import MemoryService
+from work_observer.research.store import ResearchStore
 from work_observer.retrieval.catalog import Catalog
 from work_observer.storage.archive import RawArchive
 from work_observer.storage.database import engine_for, migration_config, upgrade
@@ -39,6 +40,29 @@ def memory(tmp_path):
     ]
     yield MemoryService(repository), repository, archive, a, b
     repository.close()
+
+
+@pytest.fixture
+def research_source(memory):
+    _, repository, _, job_id, _ = memory
+    path = repository.engine.url.database
+    from pathlib import Path
+
+    store = ResearchStore(Path(path).parent / "checkpoints.db", str(Path(path).resolve()))
+    repository.bind_research_store(store)
+    run = store.create({"question": "合成知识来源"})
+    store.save(
+        run["id"],
+        state="finished",
+        result={
+            "status": "completed",
+            "scope": Catalog(repository).query(job_ids=[job_id]),
+            "evidence": Catalog(repository).evidence(job_id),
+            "memory_used": [],
+        },
+    )
+    yield run["id"]
+    store.close()
 
 
 def test_user_preference_versions_and_withdrawal_persist(memory):
@@ -71,17 +95,25 @@ def test_correction_scope_and_relevance(memory):
     assert global_correction in service.recall("RAG 要求", [b])
 
 
-def test_knowledge_candidate_accept_revision_and_recall(memory):
+def test_knowledge_candidate_accept_revision_and_recall(memory, research_source):
     service, repository, _, a, b = memory
     evidence = Catalog(repository).evidence(a)
     candidate = service.create(
-        "knowledge", "该岗位需维护 RAG 评估集", job_id=a, evidence=evidence, source_run_id="a" * 32
+        "knowledge",
+        "该岗位需维护 RAG 评估集",
+        job_id=a,
+        evidence=evidence,
+        source_run_id=research_source,
     )
     assert candidate["status"] == "candidate"
     assert not service.recall("RAG", [a])
     assert (
         service.create(
-            "knowledge", candidate["content"], job_id=a, evidence=evidence, source_run_id="a" * 32
+            "knowledge",
+            candidate["content"],
+            job_id=a,
+            evidence=evidence,
+            source_run_id=research_source,
         )["id"]
         == candidate["id"]
     )

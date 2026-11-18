@@ -219,6 +219,7 @@ def test_whole_project_forget_clears_all_memory_kinds_and_cross_project_downstre
                 evidence=Catalog(repo).evidence(job) if kind == "knowledge" else None,
             )
         )
+    scoped = [memory.activate(row["id"]) if row["status"] == "candidate" else row for row in scoped]
     source = completed_run(repo, store, project["id"], job, PRIVATE, memories=scoped)
     derived = memory.create(
         "knowledge", PRIVATE, evidence=Catalog(repo).evidence(job), source_run_id=source["run_id"]

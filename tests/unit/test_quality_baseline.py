@@ -6,6 +6,7 @@ import pytest
 
 from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.memory.service import MemoryService
 from work_observer.quality.service import (
     DIMENSIONS,
     freeze,
@@ -84,6 +85,35 @@ def test_frozen_corpus_rejects_tampering_and_keeps_unknown_publication(corpus):
     path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ProbeError, match="QUALITY_CORPUS_CHANGED"):
         load_corpus(directory)
+
+
+def test_new_source_corpus_does_not_copy_unrelated_memory_or_access_context(tmp_path):
+    database = tmp_path / "source.db"
+    upgrade(database)
+    repo = Repository(database)
+    marker = "synthetic-private-memory-not-for-evaluation"
+    MemoryService(repo).create("preference", marker)
+    import_jd(
+        repo,
+        RawArchive(tmp_path / "raw"),
+        ManualJD(title="合成", company="合成", description="合成岗位正文", data_kind="synthetic"),
+    )
+    repo.close()
+    directory = tmp_path / "source-only"
+    manifest = freeze(database, directory)
+    assert manifest["frozen_table_scope"].startswith("source_only")
+    assert marker.encode() not in (directory / "corpus.db").read_bytes()
+    import sqlite3
+
+    with sqlite3.connect(directory / "corpus.db") as connection:
+        assert not connection.execute(
+            "select name from sqlite_master where name='memory_records'"
+        ).fetchall()
+        assert connection.execute("select distinct request from source_documents").fetchall() == [
+            ("{}",)
+        ]
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("select content from memory_records").fetchone()[0] == marker
 
 
 def test_split_and_anchor_are_checked_before_suite_is_locked(corpus):

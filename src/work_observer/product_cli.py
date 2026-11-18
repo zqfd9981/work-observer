@@ -20,6 +20,7 @@ def session(db, env_file, reports_dir=Path("reports")):
     path = db or settings.database_path
     repo = Repository(path)
     store = ResearchStore(path.parent / "checkpoints.db", str(path.resolve()))
+    repo.bind_research_store(store)
     try:
         from work_observer.memory.lifecycle import resume_erasures
 
@@ -227,7 +228,19 @@ def register(app):
                         result = service.review(
                             id,
                             data["step_id"],
+                            repository=repo,
                             **StepReview.model_validate(
+                                {k: v for k, v in data.items() if k != "step_id"}
+                            ).model_dump(),
+                        )
+                    elif action == "refresh":
+                        from work_observer.api.projects import StepRefresh
+
+                        result = service.refresh_waiting(
+                            id,
+                            data["step_id"],
+                            repo,
+                            **StepRefresh.model_validate(
                                 {k: v for k, v in data.items() if k != "step_id"}
                             ).model_dump(),
                         )

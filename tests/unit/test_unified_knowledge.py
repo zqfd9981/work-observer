@@ -91,6 +91,36 @@ def active_domain(repository, key="business_application"):
     return service.review_domain(row["id"], "accept", "隔离测试人工审核动作")
 
 
+def completed_source(repository, store, job):
+    repository.bind_research_store(store)
+    run = store.create({"question": "合成上游研究"})
+    evidence = Catalog(repository).evidence(job)
+    store.save(
+        run["id"],
+        state="finished",
+        result={
+            "run_id": run["id"],
+            "status": "completed",
+            "scope": Catalog(repository).query(job_ids=[job]),
+            "evidence": evidence,
+            "claims": [
+                {
+                    "category": "task",
+                    "requirement": "unspecified",
+                    "basis": "direct",
+                    "text": "合成原文研究",
+                    "evidence_ids": [evidence[0]["id"]],
+                }
+            ],
+            "memory_used": [],
+            "context_memory_used": [],
+            "knowledge_used": [],
+            "continued_from": [],
+        },
+    )
+    return run
+
+
 def test_unified_separates_originals_from_derived_and_counts_before_limit(corpus):
     repository, add, public = corpus
     jobs = [add(str(index)) for index in range(3)]
@@ -274,11 +304,14 @@ def test_relation_public_background_does_not_prove_job_duties(corpus):
     service.review_relation(relation["id"], "accept", "合成审核仅业务背景")
 
 
-def test_relation_stale_on_changed_source_and_forget_scrubs_derived_text(corpus):
+def test_relation_stale_on_changed_source_and_forget_scrubs_derived_text(corpus, tmp_path):
     repository, add, _ = corpus
     job = add("a")
     service = DomainKnowledgeService(repository)
     domain = active_domain(repository)
+    store = ResearchStore(tmp_path / "source-checkpoints.db", str(repository.engine.url.database))
+    source = completed_source(repository, store, job)
+    store.close()
     relation = service.propose_relation(
         domain["id"],
         "task",
@@ -286,12 +319,12 @@ def test_relation_stale_on_changed_source_and_forget_scrubs_derived_text(corpus)
         "tool",
         "Python",
         Catalog(repository).evidence(job),
-        source_run_id="a" * 32,
+        source_run_id=source["id"],
     )
     service.review_relation(relation["id"], "accept", "合成审核")
     add("a", "全新 Java 职责")
     assert service.list_relations()[0]["stale"]
-    invalidated = service.invalidate_research(["a" * 32])
+    invalidated = service.invalidate_research([source["id"]])
     assert invalidated["invalidated_relation_ids"] == [relation["id"]]
     assert not service.list_relations()
     row = service.list_relations(include_history=True)[0]
@@ -694,10 +727,10 @@ def test_domain_agent_records_derived_dependency_and_requires_original_reread(co
     job = add("a")
     store = ResearchStore(tmp_path / "domain-agent.db", str(repository.engine.url.database))
     try:
-        source = store.create({"question": "合成上游研究"})
+        source = completed_source(repository, store, job)
         domain = active_domain(repository)
         relation = reviewed_relation(repository, domain, job, source_run_id=source["id"])
-        run = store.create({"question": "合成领域线索研究"})
+        run = store.create({"question": "Python 任务"})
         result = asyncio.run(
             research(
                 repository,
@@ -741,7 +774,7 @@ def test_domain_agent_resume_rejects_changed_knowledge_before_any_new_model_call
     try:
 
         async def scenario():
-            run = store.create({"question": "合成领域恢复"})
+            run = store.create({"question": "Python 任务"})
             model = DomainToolModel(job, pause=True)
             task = asyncio.create_task(
                 research(

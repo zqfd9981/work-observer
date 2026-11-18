@@ -237,6 +237,10 @@ from work_observer.research.worker_cli import register as register_research_work
 
 register_research_worker(app)
 
+from work_observer.workflow.cli import register as register_workflows  # noqa: E402
+
+register_workflows(app)
+
 
 def execute_collection(watchset, watchsets, db, env_file, bundle=None):
     from work_observer.collection.service import collect

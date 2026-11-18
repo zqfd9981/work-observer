@@ -271,6 +271,16 @@ class DomainKnowledgeService:
     def _validity(self, session, row):
         domain = session.get(DomainDefinition, row.domain_id)
         reasons = []
+        if (
+            row.source_run_id
+            and not self.memory.derived_eligibility(
+                row.source_run_id,
+                job_ids=row.scope.get("job_ids", []),
+                project_id=row.scope.get("project_id"),
+                evidence_ids=[item["id"] for item in [*row.evidence, *row.counterevidence]],
+            )["eligible"]
+        ):
+            reasons.append("来源研究依赖已变化、范围不符或无法核验")
         if domain.status != "active":
             reasons.append("领域定义已替换、撤回或尚未审核")
         # 关系中的领域归属也服从明确的单岗纠正；不让旧图谱绕过人工口径。

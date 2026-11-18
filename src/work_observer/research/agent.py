@@ -400,9 +400,114 @@ async def research(repository, question, settings, *, _lock_held=False, **option
     from work_observer.storage.locks import exclusive
 
     if _lock_held:
-        return await _research(repository, question, settings, **options)
+        return await _persisted_research(repository, question, settings, **options)
     with exclusive(repository.engine.url.database):
-        return await _research(repository, question, settings, **options)
+        return await _persisted_research(repository, question, settings, **options)
+
+
+async def _persisted_research(repository, question, settings, **options):
+    """所有研究产物有权威运行回链；直接服务/画像调用也不能留下不可审计的假UUID。"""
+    from pathlib import Path
+
+    from work_observer.collection.service import error_code
+    from work_observer.research.store import ResearchStore
+
+    if not isinstance(question, str) or not question.strip() or len(question) > 4000:
+        raise ProbeError("INVALID_QUESTION")
+    credentials = [
+        settings.model_api_key.get_secret_value(),
+        settings.tavily_api_key.get_secret_value(),
+        settings.access_token.get_secret_value(),
+    ]
+    question = redact(question, credentials)
+    parameters = redact(
+        dict(
+            question=question,
+            filters=Filters.model_validate(options.get("filters") or {}).model_dump(mode="json"),
+            job_ids=options.get("job_ids"),
+            offline=options.get("offline", False),
+            max_calls=options.get("max_calls", 10),
+            timeout=options.get("timeout", 180),
+            allow_public=options.get("allow_public", False),
+            project_id=options.get("project_id"),
+            allow_proposals=options.get("allow_proposals", True),
+        ),
+        credentials,
+    )
+    own_store = False
+    checkpoint = options.get("checkpoint")
+    if checkpoint:
+        store, identity = checkpoint
+    else:
+        if options.get("resume"):
+            raise ProbeError("RESEARCH_CHECKPOINT_MISSING")
+        store = getattr(repository, "research_store", None)
+        if store is None or getattr(store, "db", None) is None:
+            path = Path(repository.engine.url.database).resolve()
+            store = ResearchStore(
+                getattr(repository, "research_store_path", path.parent / "checkpoints.db"),
+                str(path),
+            )
+            own_store = True
+        else:
+            try:
+                store.db.execute("SELECT 1")
+            except Exception:
+                path = Path(repository.engine.url.database).resolve()
+                store = ResearchStore(
+                    getattr(repository, "research_store_path", path.parent / "checkpoints.db"),
+                    str(path),
+                )
+                own_store = True
+        run = store.create(redact(parameters, credentials))
+        identity = run["id"]
+        options["checkpoint"] = (store, identity)
+    repository.bind_research_store(store)
+    try:
+        store.prepare_execution(
+            identity,
+            parameters,
+            resume=options.get("resume", False),
+            supplied=options.keys(),
+            redactions=credentials,
+        )
+    except Exception:
+        if own_store:
+            store.close()
+            repository.research_store = None
+        raise
+    try:
+        from work_observer.research.materials import material_state
+
+        if options.get("resume"):
+            materials = (store.get(identity).get("progress") or {}).get("materials")
+        else:
+            materials = material_state(
+                repository,
+                question,
+                job_ids=options.get("job_ids"),
+                filters=options.get("filters"),
+                project_id=options.get("project_id"),
+            )
+            store.save(identity, progress={"materials": materials})
+        result = redact(await _research(repository, question, settings, **options), credentials)
+        if materials:
+            result["material_signature"] = materials["signature"]
+            result["material_basis"] = materials["basis"]
+        store.save(identity, state="finished", result=result)
+        return result
+    except asyncio.CancelledError:
+        if store.get(identity)["state"] != "invalidated":
+            store.save(identity, state="interrupted")
+        raise
+    except Exception as exc:
+        if store.get(identity)["state"] != "invalidated":
+            store.save(identity, state="failed", error_code=error_code(exc))
+        raise
+    finally:
+        if own_store:
+            store.close()
+            repository.research_store = None
 
 
 async def _research(
@@ -521,7 +626,7 @@ async def _research(
         inherited = audit_result(
             {"context_memory_used": result.get("context_memory_used", [])}, repository
         )
-        if inherited["stale_memory"]:
+        if inherited["stale_memory"] or inherited.get("stale_dependencies"):
             raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
         return memory.recall(question, list(candidates), project_id=project_id)
 
@@ -704,6 +809,7 @@ async def _research(
                 [
                     settings.model_api_key.get_secret_value(),
                     settings.tavily_api_key.get_secret_value(),
+                    settings.access_token.get_secret_value(),
                 ],
             )
             store.checkpoint(identity, clean)
@@ -730,6 +836,8 @@ async def _research(
                 result["model_calls"] += 1
                 persist(pending=True)
                 outputs, call = await model.turn(history)
+                if recall() != result["memory_used"]:
+                    raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                 usage = getattr(model, "last_usage", {})
                 if usage:
                     result["usage"].append(usage)
@@ -1229,7 +1337,11 @@ async def _research(
     persist()
     return redact(
         result,
-        [settings.model_api_key.get_secret_value(), settings.tavily_api_key.get_secret_value()],
+        [
+            settings.model_api_key.get_secret_value(),
+            settings.tavily_api_key.get_secret_value(),
+            settings.access_token.get_secret_value(),
+        ],
     )
 
 

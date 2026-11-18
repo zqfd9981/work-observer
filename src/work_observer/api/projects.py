@@ -55,6 +55,16 @@ class StepReview(BaseModel):
     note: str = Field(min_length=1, max_length=1000)
 
 
+class StepRefresh(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    note: str = Field(min_length=1, max_length=1000)
+    offline: bool = True
+    allow_public: bool = False
+    max_calls: int = Field(default=10, ge=1, le=12)
+    timeout: int = Field(default=180, ge=1, le=300)
+
+
 def plan_project(service, project, offline=False):
     """固定业务步骤确保有反例和汇总；不把模型文字计划冒充已完成调查。"""
     parents = []
@@ -202,8 +212,31 @@ def project_routes(
         data = StepReview.model_validate(await read_json(request))
         return response(
             service().review(
-                request.path_params["id"], request.path_params["step_id"], **data.model_dump()
+                request.path_params["id"],
+                request.path_params["step_id"],
+                repository=repository(),
+                **data.model_dump(),
             )
+        )
+
+    async def refresh_step(request):
+        data = StepRefresh.model_validate(await read_json(request))
+        if busy():
+            return response(
+                {
+                    "error_code": "RESEARCH_BUSY",
+                    "message": "请先等待或暂停调查，再更新资料后的步骤。",
+                },
+                409,
+            )
+        return response(
+            service().refresh_waiting(
+                request.path_params["id"],
+                request.path_params["step_id"],
+                repository(),
+                **data.model_dump(),
+            ),
+            201,
         )
 
     async def run(request):
@@ -251,6 +284,7 @@ def project_routes(
         Route("/api/projects/{id}", revise, methods=["PATCH"]),
         Route("/api/projects/{id}/steps", add, methods=["POST"]),
         Route("/api/projects/{id}/steps/{step_id}/review", review, methods=["POST"]),
+        Route("/api/projects/{id}/steps/{step_id}/refresh", refresh_step, methods=["POST"]),
         Route("/api/projects/{id}/run", run, methods=["POST"]),
         Route("/api/projects/{id}/pause", pause, methods=["POST"]),
     ]

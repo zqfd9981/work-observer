@@ -118,7 +118,8 @@ def test_backup_restore_rebases_all_archives_reports_and_checkpoint_namespace(wo
         )
         assert read_result(report_id, Path(restored["reports_dir"]))["status"] == "evidence_only"
         store = ResearchStore(destination / "checkpoints.db", str(destination / "app.db"))
-        assert len(store.list()) == 1 and store.get(record_id)["state"] == "interrupted"
+        assert len(store.list()) == 2 and store.get(record_id)["state"] == "interrupted"
+        assert sum(row["state"] == "finished" for row in store.list()) == 1
         assert store.load_checkpoint(record_id)["synthetic"] is True
         store.close()
         with closing(sqlite3.connect(destination / "checkpoints.db")) as db:

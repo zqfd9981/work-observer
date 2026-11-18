@@ -26,6 +26,9 @@ def main():
         "--label-origin", choices=["human", "agent_assisted"], default="agent_assisted"
     )
     command.add_argument("--reviewer")
+    command.add_argument(
+        "--independent-labels", action="store_true", help="人类明确声明标签独立于候选调参"
+    )
     command = sub.add_parser("evaluate", help="同一冻结资料基线/候选配对，不启用策略")
     command.add_argument("directory")
     command.add_argument("aliases")
@@ -49,6 +52,7 @@ def main():
             read_json(args.cases),
             label_origin=args.label_origin,
             reviewer=args.reviewer,
+            independent_labels=args.independent_labels,
         )
         result = {key: value for key, value in suite.items() if key != "cases"}
     elif args.action == "evaluate":

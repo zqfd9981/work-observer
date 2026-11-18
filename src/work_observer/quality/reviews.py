@@ -86,6 +86,7 @@ class QualityReviewService:
                 for key in (
                     "stale_memory",
                     "stale_knowledge",
+                    "stale_dependencies",
                     "changed_sources",
                     "affected_strategy",
                 )
@@ -236,6 +237,7 @@ class QualityReviewService:
                 for key in (
                     "stale_memory",
                     "stale_knowledge",
+                    "stale_dependencies",
                     "changed_sources",
                     "affected_strategy",
                 )

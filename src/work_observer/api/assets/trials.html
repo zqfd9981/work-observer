@@ -1,0 +1,5 @@
+<section id="page-trials" class="page" hidden aria-labelledby="trials-title">
+  <div class="page-head"><div><h1 id="trials-title">有限检索试用<span class="heading-dot">.</span></h1><p>先比较同一资料上的结果，再由你明确授权局部试用。到期、偏移或质量问题会停止候选。</p></div><button id="refresh-trials" class="secondary">刷新试用</button></div>
+  <form id="trial-shadow" class="panel strategy-editor"><h2>旁路比较，不改变默认检索</h2><label>冻结的本地评测包<select id="trial-bundle" name="bundle_id" required></select></label><div id="trial-bundle-info"></div><div id="trial-development-queries"></div><label class="checkbox-line"><input name="use_selected" type="checkbox">只比较岗位页当前勾选的资料（须在冻结资料内，最多20个）</label><div class="form-grid"><label>最多候选检索次数<input name="max_uses" type="number" min="1" max="20" value="5" required></label><label>自现在起有效小时数<input name="expires_hours" type="number" min="1" max="24" value="4" required></label></div><p class="form-note">没有独立人工标签、预留验收结果或明确人审时，始终使用基线。页面不显示预留题，也不能修改题集、门槛、采集权限或系统代码。</p><button class="primary">建立旁路比较</button></form>
+  <div id="trials-list" class="reports-list"></div><div id="trial-detail"></div>
+</section>

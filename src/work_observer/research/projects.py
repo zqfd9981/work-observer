@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from uuid import uuid4
 
 from work_observer.collection.contracts import now
@@ -15,6 +16,38 @@ def step_reservation(step):
         "seconds": 0 if step["offline"] else step["timeout"],
         "public": 4 if step["allow_public"] and not step["offline"] else 0,
     }
+
+
+def completed_steps(record):
+    """审核后的补查可完成原等待事项；旧范围的完成状态不能用于新范围。"""
+    current = record["scope_version"]
+    completed = {
+        s["id"]
+        for s in record["steps"]
+        if s["state"] == "completed" and s["scope_version"] == current
+    }
+    for _ in range(len(record["steps"])):
+        before = len(completed)
+        for step in record["steps"]:
+            if step["scope_version"] == current and step.get("replacement_step_id") in completed:
+                completed.add(step["id"])
+        if len(completed) == before:
+            break
+    return completed
+
+
+def dependency_steps(record, identities):
+    result = set(identities)
+    for _ in range(len(record["steps"])):
+        before = len(result)
+        result.update(
+            s["replacement_step_id"]
+            for s in record["steps"]
+            if s["id"] in result and s.get("replacement_step_id")
+        )
+        if len(result) == before:
+            break
+    return result
 
 
 class ProjectService:
@@ -72,6 +105,10 @@ class ProjectService:
             if any(step["state"] == "running" for step in record.get("steps", [])):
                 raise ProbeError("PROJECT_RUNNING")
             run_ids = set(record.get("erased_run_ids", []))
+            cycle_ids = set(record.get("erased_workflow_cycle_ids", []))
+            source_key = record.get("source_key")
+            if isinstance(source_key, str) and re.fullmatch(r"workflow:[a-f0-9]{32}", source_key):
+                cycle_ids.add(source_key.split(":", 1)[1])
             run_ids.update(step["run_id"] for step in record.get("steps", []) if step.get("run_id"))
             rows = self.store.db.execute(
                 "SELECT id,record,checkpoint FROM research_checkpoints WHERE namespace=?",
@@ -106,6 +143,7 @@ class ProjectService:
                     budget=dict(max_calls=0, max_seconds=0, max_rounds=0, max_public=0),
                     stop_reason="project_forgotten",
                     erased_run_ids=sorted(run_ids),
+                    erased_workflow_cycle_ids=sorted(cycle_ids),
                 )
                 self._write(minimal)
             return {"erased_project_id": identity, "affected_run_ids": sorted(run_ids)}
@@ -281,6 +319,11 @@ class ProjectService:
             parents = list(dict.fromkeys(depends_on or []))
             if any(parent not in {s["id"] for s in record["steps"]} for parent in parents):
                 raise ProbeError("INVALID_STEP_DEPENDENCY")
+            if any(
+                s["id"] in parents and s["scope_version"] != record["scope_version"]
+                for s in record["steps"]
+            ):
+                raise ProbeError("STEP_SCOPE_CHANGED_REPLAN")
             step_id = uuid4().hex
             record["steps"].append(
                 dict(
@@ -310,6 +353,107 @@ class ProjectService:
                     scope_version=record["scope_version"],
                     created_at=now(),
                 )
+            )
+            return self._write(record)
+
+    def refresh_waiting(
+        self,
+        identity,
+        step_id,
+        repository,
+        *,
+        revision,
+        note,
+        offline=False,
+        allow_public=False,
+        max_calls=10,
+        timeout=180,
+    ):
+        """显式补充资料/纠正后新轮调查，原轮预算、历史和审核均保留。"""
+        from work_observer.research.materials import material_state
+
+        if (
+            not isinstance(note, str)
+            or not note.strip()
+            or len(note) > 1000
+            or type(offline) is not bool
+            or type(allow_public) is not bool
+            or not 1 <= max_calls <= 12
+            or not 1 <= timeout <= 300
+        ):
+            raise ProbeError("INVALID_STEP_REFRESH")
+        initial = self.get(identity)
+        self._editable(initial)
+        original = next((s for s in initial["steps"] if s["id"] == step_id), None)
+        if not original:
+            raise ProbeError("STEP_NOT_FOUND")
+        if original["scope_version"] != initial["scope_version"]:
+            raise ProbeError("STEP_SCOPE_CHANGED_REPLAN")
+        # 重复点击不制造新调查，旧步骤只回链已有补查。
+        if original.get("replacement_step_id"):
+            replacement = next(
+                s for s in initial["steps"] if s["id"] == original["replacement_step_id"]
+            )
+            if (
+                replacement.get("refresh_note"),
+                replacement["offline"],
+                replacement["allow_public"],
+                replacement["max_calls"],
+                replacement["timeout"],
+            ) == (note.strip(), offline, allow_public, max_calls, timeout):
+                return initial
+            raise ProbeError("STEP_ALREADY_REFRESHED")
+        self._editable(initial, revision)
+        if original["state"] not in {"waiting_material", "waiting_review", "failed"}:
+            raise ProbeError("STEP_NOT_WAITING_FOR_MATERIAL")
+        material = material_state(
+            repository, original["question"], job_ids=original["job_ids"], project_id=identity
+        )
+        run = self.store.get(original["run_id"]) if original.get("run_id") else {}
+        old = (run.get("result") or {}).get("material_signature") or (
+            (run.get("progress") or {}).get("materials") or {}
+        ).get("signature")
+        if old and material["signature"] == old and not (original["offline"] and not offline):
+            raise ProbeError("NO_NEW_RESEARCH_MATERIAL")
+        with self.store.lock, self.store.db:
+            record = self.get(identity)
+            self._editable(record, revision)
+            if any(s["state"] == "running" for s in record["steps"]):
+                raise ProbeError("PROJECT_RUNNING")
+            if len(record["steps"]) >= record["budget"]["max_rounds"]:
+                raise ProbeError("PROJECT_ROUND_LIMIT")
+            original = next(s for s in record["steps"] if s["id"] == step_id)
+            identity_new = uuid4().hex
+            step = {
+                **original,
+                "id": identity_new,
+                "key": f"refresh:{step_id}:{material['signature']}",
+                "state": "queued",
+                "offline": offline,
+                "allow_public": allow_public,
+                "max_calls": max_calls,
+                "timeout": timeout,
+                "run_id": None,
+                "created_at": now(),
+                "stop_reason": None,
+                "replaces_step_id": step_id,
+                "refresh_note": note.strip(),
+                "refresh_material_signature": material["signature"],
+                "legacy_material_basis": old is None,
+            }
+            for key in ("started_at", "finished_at", "review", "replacement_step_id"):
+                step.pop(key, None)
+            original["replacement_step_id"] = identity_new
+            original["state"] = "superseded"
+            record["steps"].append(step)
+            record["turns"].append(
+                {
+                    "id": identity_new,
+                    "role": "user",
+                    "text": note.strip(),
+                    "scope_version": record["scope_version"],
+                    "created_at": now(),
+                }
             )
             return self._write(record)
 
@@ -345,7 +489,7 @@ class ProjectService:
             self._editable(record)
             if any(s["state"] == "running" for s in record["steps"]):
                 raise ProbeError("PROJECT_RUNNING")
-            completed = {s["id"] for s in record["steps"] if s["state"] == "completed"}
+            completed = completed_steps(record)
             ready = [
                 s
                 for s in record["steps"]
@@ -385,6 +529,10 @@ class ProjectService:
                     if claim_outcome is not None:
                         claim_outcome["stop_reason"] = "project_budget_exhausted"
                     return None
+                if not step["offline"]:
+                    from work_observer.workflow.service import reserve_project_upgrade
+
+                    reserve_project_upgrade(self.store, record)
                 run = dict(
                     id=uuid4().hex,
                     state="running",
@@ -408,6 +556,10 @@ class ProjectService:
                 )
                 step["run_id"] = run["id"]
             else:
+                if not step["offline"]:
+                    from work_observer.workflow.service import reserve_project_upgrade
+
+                    reserve_project_upgrade(self.store, record)
                 run = self.store.get(step["run_id"])
                 run.update(state="running", updated_at=now())
                 self.store.db.execute(
@@ -438,7 +590,7 @@ class ProjectService:
             step.update(state=state, stop_reason=reason, finished_at=now())
             return self._write(record)
 
-    def review(self, identity, step_id, *, revision, action, note):
+    def review(self, identity, step_id, *, revision, action, note, repository=None):
         if action not in {"accept", "wait", "retry"} or not note.strip() or len(note) > 1000:
             raise ProbeError("INVALID_STEP_REVIEW")
         with self.store.lock, self.store.db:
@@ -451,6 +603,21 @@ class ProjectService:
                 raise ProbeError("STEP_SCOPE_CHANGED_REPLAN")
             run = self.store.get(step["run_id"]) if step.get("run_id") else {}
             result = run.get("result") or {}
+            if action == "accept" and repository is not None:
+                from work_observer.reports.results import audit_result
+
+                audit = audit_result(result, repository)
+                if any(
+                    audit.get(key)
+                    for key in (
+                        "stale_memory",
+                        "stale_knowledge",
+                        "stale_dependencies",
+                        "changed_sources",
+                        "affected_strategy",
+                    )
+                ):
+                    raise ProbeError("STEP_RESULT_STALE_REFRESH")
             if action == "accept" and (
                 result.get("status") != "completed" or not result.get("claims")
             ):
@@ -510,6 +677,7 @@ class ProjectService:
         record = self.get(identity)
         self._editable(record)
         allowed = set(step["job_ids"])
+        dependencies = dependency_steps(record, step["depends_on"])
         candidates = []
         for previous in record["steps"]:
             if previous["id"] == step["id"] or previous["state"] not in {
@@ -525,6 +693,7 @@ class ProjectService:
             if (
                 audit["stale_memory"]
                 or audit.get("stale_knowledge")
+                or audit.get("stale_dependencies")
                 or audit["changed_sources"]
                 or audit["affected_strategy"]
             ):
@@ -532,9 +701,9 @@ class ProjectService:
             if not {j["id"] for j in result.get("scope", {}).get("jobs", [])} <= allowed:
                 continue
             score = len(_tokens(step["question"]) & _tokens(previous["question"]))
-            if previous["id"] not in step["depends_on"] and not score:
+            if previous["id"] not in dependencies and not score:
                 continue
-            candidates.append((previous["id"] in step["depends_on"], score, previous, result))
+            candidates.append((previous["id"] in dependencies, score, previous, result))
         candidates.sort(key=lambda value: value[:2], reverse=True)
         context = dict(
             project_id=identity,
@@ -545,6 +714,7 @@ class ProjectService:
             previous_findings=[],
             memory_dependencies=[],
             knowledge_dependencies=[],
+            refresh_note=step.get("refresh_note"),
             selection_note=(
                 "仅选择同范围、仍有效的相关研究；omitted_claims是未放入上下文的判断数，"
                 "未展示不能当作不存在。"

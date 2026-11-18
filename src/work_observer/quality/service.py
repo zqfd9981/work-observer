@@ -1,6 +1,7 @@
 """真实资料质量基线；结构检查与语义审核分离，不自动启用候选。"""
 
 import hashlib
+import inspect
 import json
 import sqlite3
 import time
@@ -15,6 +16,16 @@ from work_observer.retrieval.enhanced import RetrievalService
 from work_observer.tracking.evaluation import validate_aliases
 
 VERSION = "real-research-quality-v1"
+SOURCE_TABLES = {
+    "companies",
+    "jobs",
+    "job_snapshots",
+    "job_observations",
+    "source_documents",
+    "watchsets",
+    "collection_runs",
+    "task_runs",
+}
 DIMENSIONS = (
     "citation_semantics",
     "requirement_classification",
@@ -29,6 +40,11 @@ def digest(value):
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def retrieval_method_digest():
+    with Path(inspect.getfile(RetrievalService)).open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def read_json(path):
@@ -52,10 +68,32 @@ def freeze(database, directory):
     root = Path(directory).resolve()
     root.mkdir(parents=True, exist_ok=False)
     target = root / "corpus.db"
-    with readonly(database) as source, sqlite3.connect(target) as copy:
+    source, copy = readonly(database), sqlite3.connect(target)
+    try:
         source.backup(copy)
+        # 评测只读来源语料，不额外保留用户记忆、派生结论和访问上下文。
+        copy.execute("pragma foreign_keys=off")
+        copy.execute("pragma secure_delete=on")
+        tables = copy.execute(
+            "select name from sqlite_master where type='table' and name not like 'sqlite_%'"
+        ).fetchall()
+        for (table,) in tables:
+            if table not in SOURCE_TABLES:
+                quoted = table.replace('"', '""')
+                copy.execute(f'DROP TABLE "{quoted}"')
+        copy.execute("update jobs set access_context='{}'")
+        copy.execute("update job_observations set access_context='{}'")
+        copy.execute("update source_documents set request='{}'")
+        copy.commit()
+        copy.execute("vacuum")
+        copy.execute("pragma wal_checkpoint(truncate)")
+        if copy.execute("pragma journal_mode=delete").fetchone()[0] != "delete":
+            raise ProbeError("QUALITY_CORPUS_SINGLE_FILE_REQUIRED")
         if copy.execute("pragma integrity_check").fetchone()[0] != "ok":
             raise ProbeError("QUALITY_CORPUS_INTEGRITY_FAILED")
+    finally:
+        copy.close()
+        source.close()
     with readonly(target) as connection:
         connection.row_factory = sqlite3.Row
         documents = []
@@ -106,10 +144,11 @@ def freeze(database, directory):
     manifest = {
         "version": VERSION,
         "created_at": now(),
-        "database_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        "database_sha256": _file_digest(target),
         "scope_total": len(rows),
         "detail_total": len(documents),
         "missing_detail_total": len(rows) - len(documents),
+        "frozen_table_scope": "source_only_without_personal_memory_or_access_context",
         "documents": documents,
         "privacy": "本机私有冻结资料，不提交或公开；旧报告、记忆不是独立证据。",
     }
@@ -124,20 +163,28 @@ def load_corpus(directory):
     identity = manifest.pop("corpus_sha256", None)
     if (
         identity != digest(manifest)
-        or hashlib.sha256((root / "corpus.db").read_bytes()).hexdigest()
-        != manifest["database_sha256"]
+        or _file_digest(root / "corpus.db") != manifest["database_sha256"]
     ):
         raise ProbeError("QUALITY_CORPUS_CHANGED")
     return {**manifest, "corpus_sha256": identity}
 
 
-def lock_suite(directory, cases, *, label_origin="agent_assisted", reviewer=None):
+def _file_digest(path):
+    with Path(path).open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def lock_suite(
+    directory, cases, *, label_origin="agent_assisted", reviewer=None, independent_labels=False
+):
     """锁定问题和分区；人工标签必须由明确人类审核提供。"""
     corpus = load_corpus(directory)
     if label_origin not in {"human", "agent_assisted"}:
         raise ProbeError("QUALITY_LABEL_ORIGIN_REQUIRED")
     if label_origin == "human" and (not isinstance(reviewer, str) or not reviewer.strip()):
         raise ProbeError("QUALITY_HUMAN_REVIEWER_REQUIRED")
+    if type(independent_labels) is not bool or independent_labels and label_origin != "human":
+        raise ProbeError("QUALITY_INDEPENDENT_HUMAN_LABELS_REQUIRED")
     if not isinstance(cases, list) or not 2 <= len(cases) <= 100:
         raise ProbeError("QUALITY_INVALID_CASES")
     documents = {doc["job_id"]: doc for doc in corpus["documents"]}
@@ -182,10 +229,16 @@ def lock_suite(directory, cases, *, label_origin="agent_assisted", reviewer=None
         raise ProbeError("QUALITY_SEPARATE_HOLDOUT_REQUIRED")
     suite = {
         "version": VERSION,
+        "created_at": now(),
         "corpus_sha256": corpus["corpus_sha256"],
         "label_origin": label_origin,
         "reviewer": reviewer,
         "review_status": "reviewed" if label_origin == "human" else "pending_human",
+        "label_independence": {
+            "independent_of_candidate": independent_labels,
+            "declared_by": reviewer if independent_labels else None,
+            "notice": "审核者明确声明标签独立于候选调参；程序不代替身份或标注真实性核验。",
+        },
         "cases": cases,
         "contract": {
             "recall_at_k": 10,
@@ -319,6 +372,7 @@ def paired_evaluation(directory, aliases, *, phase="development", baseline_alias
         status = "accepted_for_human_review"
     report = {
         "version": VERSION,
+        "retrieval_method_sha256": retrieval_method_digest(),
         "created_at": now(),
         "corpus_sha256": corpus["corpus_sha256"],
         "suite_sha256": suite["suite_sha256"],

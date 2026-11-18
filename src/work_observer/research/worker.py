@@ -7,7 +7,7 @@ import time
 from work_observer.collection.service import error_code
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.memory.lifecycle import pending_erasures
-from work_observer.research.projects import execute_project, step_reservation
+from work_observer.research.projects import completed_steps, execute_project, step_reservation
 from work_observer.storage.locks import exclusive
 
 SCAN_LIMIT = 100
@@ -54,7 +54,7 @@ def _recover_scanned(service, records):
 
 
 def _ready(record):
-    completed = {step["id"] for step in record["steps"] if step["state"] == "completed"}
+    completed = completed_steps(record)
     return [
         step
         for step in record["steps"]
@@ -206,7 +206,7 @@ async def run_research_worker(
         records, total = _scan(service, project_id)
         waiting = []
         for record in records:
-            completed = {step["id"] for step in record["steps"] if step["state"] == "completed"}
+            completed = completed_steps(record)
             counts = {
                 key: sum(step["state"] == key for step in record["steps"])
                 for key in ("waiting_review", "waiting_material", "queued", "interrupted", "failed")

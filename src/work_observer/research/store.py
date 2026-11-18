@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.evidence import redact
 
 
 class ResearchStore:
@@ -53,6 +54,30 @@ class ResearchStore:
         if not row:
             raise ProbeError("RESEARCH_NOT_FOUND")
         return json.loads(row[0])
+
+    def prepare_execution(self, identity, parameters, *, resume=False, supplied=(), redactions=()):
+        """运行编号只能绑定一个输入；续接只读原边界，已完成的来源不可被改写。"""
+        with self.lock, self.db:
+            record = self.get(identity)
+            if record["state"] == "invalidated":
+                raise ProbeError("MEMORY_FORGOTTEN_RESTART")
+            previous = record.get("result") or {}
+            if previous.get("status") in {"completed", "evidence_only", "insufficient_evidence"}:
+                raise ProbeError("RESEARCH_RUN_ALREADY_FINISHED")
+            keys = {"question", *supplied} if resume else set(parameters)
+            clean_input = redact(record["input"], redactions)
+            for key in keys & parameters.keys() & clean_input.keys():
+                if clean_input[key] != parameters[key]:
+                    raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
+            if not resume:
+                if previous or record.get("progress") or self.load_checkpoint(identity):
+                    raise ProbeError("RESEARCH_EXISTING_RUN_RESUME_REQUIRED")
+                record.update(input={**clean_input, **parameters}, updated_at=now())
+                self.db.execute(
+                    "UPDATE research_checkpoints SET record=? WHERE namespace=? AND id=?",
+                    (json.dumps(record, ensure_ascii=False), self.namespace, identity),
+                )
+        return record
 
     def list(self, limit=100):
         with self.lock:

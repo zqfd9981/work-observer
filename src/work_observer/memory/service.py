@@ -509,6 +509,13 @@ class MemoryService:
                 raise ProbeError("MEMORY_NOT_A_CANDIDATE")
             if row.kind == "knowledge" or row.evidence:
                 self._validate_evidence(session, row.evidence, row.job_id)
+            if row.source_run_id:
+                from work_observer.memory.dependencies import DependencyAudit
+
+                if not DependencyAudit(self.repository).memory(row.id, ignore_status=True)[
+                    "eligible"
+                ]:
+                    raise ProbeError("MEMORY_DERIVED_DEPENDENCY_STALE")
             if row.status != "active":
                 row.status, row.updated_at = "active", now()
                 self._event(session, row, "accepted_by_user")
@@ -526,6 +533,13 @@ class MemoryService:
             if action == "accept":
                 if row.kind == "knowledge" or row.evidence:
                     self._validate_evidence(session, row.evidence, row.job_id)
+                if row.source_run_id:
+                    from work_observer.memory.dependencies import DependencyAudit
+
+                    if not DependencyAudit(self.repository).memory(row.id, ignore_status=True)[
+                        "eligible"
+                    ]:
+                        raise ProbeError("MEMORY_DERIVED_DEPENDENCY_STALE")
                 # 遍历整组，避免 A-B、B-C 冲突只处理直接邻居。
                 pending, visited = [row.id], set()
                 while pending:
@@ -562,29 +576,46 @@ class MemoryService:
         ]
 
     def validity(self, identity, at=None):
-        """返回当前可核验状态；不会将候选、假设或历史版本升级为事实。"""
-        stamp = _timestamp(at) or now()
-        with Session(self.repository.engine) as session:
-            row = self._get(session, identity)
-            reasons = []
-            if row.status != "active":
-                reasons.append(row.status)
-            if not _valid_at(row, stamp):
-                reasons.append("outside_effective_time")
-            if row.kind == "knowledge" or row.evidence:
-                try:
-                    verified = self._validate_evidence(session, row.evidence, row.job_id)
-                    if not self._sources_current(session, verified):
-                        reasons.append("source_changed")
-                except ProbeError:
-                    reasons.append("source_missing_or_invalid")
-            return {
-                "id": row.id,
-                "eligible": not reasons,
-                "reasons": reasons,
-                "checked_at": stamp,
-                "is_source_evidence": False,
-            }
+        """当前资格和派生依赖；不修改历史采纳状态。"""
+        audited = self.audit(identity, at=at)
+        reasons = list(
+            dict.fromkeys(
+                item["reason"]
+                if item["kind"] == "memory" and item["id"] == identity
+                else "derived_dependency_stale"
+                for item in audited["issues"]
+            )
+        )
+        return {
+            "id": identity,
+            "eligible": audited["eligible"],
+            "reasons": reasons,
+            "dependency_issues": audited["issues"],
+            "checked_at": audited["checked_at"],
+            "is_source_evidence": False,
+        }
+
+    def audit(self, identity, *, version=None, job_ids=None, project_id=None, at=None):
+        from work_observer.memory.dependencies import DependencyAudit
+
+        return DependencyAudit(self.repository, at=at).memory(
+            identity,
+            version=version,
+            job_ids=job_ids,
+            project_id=project_id,
+        )
+
+    def derived_eligibility(
+        self, source_run_id, *, job_ids=None, project_id=None, at=None, evidence_ids=None
+    ):
+        from work_observer.memory.dependencies import DependencyAudit
+
+        return DependencyAudit(self.repository, at=at).run(
+            source_run_id,
+            job_ids=job_ids,
+            project_id=project_id,
+            evidence_ids=evidence_ids,
+        )
 
     def recall(self, question, job_ids, project_id=None, at=None, kinds=None):
         job_ids = set(job_ids or [])
@@ -594,6 +625,9 @@ class MemoryService:
         stamp = _timestamp(at) or now()
         query = _tokens(question)
         selected = []
+        from work_observer.memory.dependencies import DependencyAudit
+
+        auditor = DependencyAudit(self.repository, at=stamp)
         with Session(self.repository.engine) as session:
             rows = session.scalars(
                 select(MemoryRecord)
@@ -609,22 +643,9 @@ class MemoryService:
                     continue
                 if row.job_id and row.job_id not in job_ids:
                     continue
-                if not _valid_at(row, stamp):
+                if not auditor.memory(row.id, job_ids=job_ids, project_id=project_id)["eligible"]:
                     continue
                 overlap = len(query & _tokens(row.content))
-                if row.kind == "knowledge" or row.evidence:
-                    # 旧版本知识保留历史，但不默认为新正文的有效判断。
-                    if any(
-                        item.get("job_id") and item["job_id"] not in job_ids
-                        for item in row.evidence
-                    ):
-                        continue
-                    try:
-                        verified = self._validate_evidence(session, row.evidence, row.job_id)
-                    except ProbeError:
-                        continue
-                    if not self._sources_current(session, verified):
-                        continue
                 if row.kind != "preference" and not row.job_id and not overlap:
                     continue
                 priority = {

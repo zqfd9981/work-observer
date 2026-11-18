@@ -481,10 +481,9 @@ def test_forgetting_cascades_through_research_knowledge_and_notifications(tmp_pa
             return identity, knowledge["id"]
 
         first, knowledge_a = research_and_adopt("Python能力一")
-        client.post(f"/api/memories/{personal['id']}/withdraw", headers=auth)
         second, knowledge_b = research_and_adopt("Python能力二")
         second_result = client.get("/api/research/" + second).json()["result"]
-        assert personal["id"] not in {item["id"] for item in second_result["memory_used"]}
+        assert personal["id"] in {item["id"] for item in second_result["memory_used"]}
         assert knowledge_a in {item["id"] for item in second_result["memory_used"]}
         third = client.post(
             "/api/research", json={"question": "Python能力三", "offline": True}, headers=auth
@@ -497,6 +496,10 @@ def test_forgetting_cascades_through_research_knowledge_and_notifications(tmp_pa
             json={"question": "含个人上下文的派生追问", "source_run_id": second},
             headers=auth,
         )
+        client.post(f"/api/memories/{personal['id']}/withdraw", headers=auth)
+        current_memories = {item["id"]: item for item in client.get("/api/memories").json()}
+        assert not current_memories[knowledge_a]["validity"]["eligible"]
+        assert not current_memories[knowledge_b]["validity"]["eligible"]
         forgotten = client.delete("/api/memories/" + personal["id"], headers=auth).json()
         assert {first, second, third}.issubset(forgotten["affected_run_ids"])
         assert {personal["id"], knowledge_a, knowledge_b}.issubset(forgotten["affected_memory_ids"])

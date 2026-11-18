@@ -211,6 +211,8 @@ def test_audit_marks_revised_memory_and_later_source_without_destroying_historic
     assert audit_result(result, repo) == {
         "stale_memory": False,
         "stale_knowledge": False,
+        "stale_dependencies": False,
+        "dependency_issues": [],
         "knowledge_issues": [],
         "memory_issues": [],
         "changed_sources": [],
