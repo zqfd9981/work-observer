@@ -13,7 +13,7 @@ const requirementLabels = {required:"必备", preferred:"加分", unspecified:"�
 const domainLabels = {business_application:"业务应用开发",agent_platform:"执行平台与 Harness",domain_decision:"领域决策系统",model_serving:"模型与推理部署",configuration_delivery:"平台配置与实施",other:"其他待定义领域"};
 const categoryLabels = {business:"业务背景", deliverable:"交付物", task:"任务", responsibility:"责任", ability:"能力", tool:"工具"};
 const reasonLabels = {VISION_NO_READABLE_TEXT:"未取得可核对的正文，未写入岗位。可对照原图人工填写。",VISION_MODEL_HTTP_ERROR:"当前模型服务未能处理图片，未写入岗位。",INVALID_VISION_DRAFT:"视觉响应不符合草稿格式，未写入岗位。",MODEL_CONFIG_MISSING:"尚未配置模型，可改用仅整理证据模式。",MODEL_AUTH_REQUIRED:"模型服务认证未通过。",MODEL_FORBIDDEN:"当前模型服务权限不足。",MODEL_RATE_LIMIT_OR_QUOTA:"模型服务限流或额度不足，可稍后再试。",MODEL_HTTP_ERROR:"模型服务暂时没有正常响应。",TIMEOUT:"已达到时间上限，研究停止。",model_call_limit:"已达到调用次数上限，研究停止。",no_available_details:"范围内没有可研究的完整正文。"};
-const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
+const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "profile-quality":"完整画像核对", "research-benchmarks":"研究方法核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
 let toastTimer, pollTimer;
 
 function notify(message, error = false) {
@@ -463,6 +463,7 @@ function renderProfile(profile,id) {
   if (result.scope) renderResult(result,$("#profile-result"));
   else $("#profile-result").innerHTML=`<p class="form-note">${e(statusLabels[profile.status] || "画像已读取")}</p>`;
   const root=$("#profile-result");
+  if(profile.id)root.insertAdjacentHTML("beforeend",`<p><button class="secondary" data-profile-quality-open="${e(profile.id)}">核对完整画像、领域与核实问题 ↗</button></p>`);
   root.insertAdjacentHTML("beforeend",`<details class="research-context"><summary>纠正这个岗位的领域归类</summary><form data-domain-form="${e(id)}"><div class="domain-options">${Object.entries(domainLabels).map(([value,label])=>`<label class="checkbox-line"><input type="checkbox" name="domain" value="${e(value)}">${e(label)}</label>`).join("")}</div><label>纠正理由<textarea name="reason" required maxlength="1200" rows="3" placeholder="说明原文为何支持这项纠正。仅影响这个岗位。"></textarea></label><p class="form-note">可不选任何领域以撤销已有归类。人工纠正会保留版本，并优先用于后续画像。</p><button class="secondary" type="submit">保存本岗位领域纠正</button><p class="form-note" data-domain-feedback></p></form></details>`);
   const domains=result.effective_domains || result.domains || [];
   const questions=result.interview_questions || [];
@@ -777,6 +778,8 @@ async function route() {
   if (state.page === "trials") await window.loadTrials?.();
   if (state.page === "knowledge") await window.loadKnowledge?.();
   if (state.page === "quality") await window.loadQuality?.();
+  if (state.page === "profile-quality") await window.loadProfileQuality?.();
+  if (state.page === "research-benchmarks") await window.loadResearchBenchmarks?.();
   if (state.page === "data-quality") await window.loadDataQuality?.();
   if (state.page === "updates") await window.loadUpdates?.();
   if (state.page === "reports") await loadReports();
@@ -982,4 +985,16 @@ document.addEventListener("DOMContentLoaded",async function boot(){
     const current = overview.active_research || sessionStorage.getItem("wo-research");
     if (current) pendingResearch(current);
   } catch (error) {notify(error.message,true);$("#model-status").textContent="本地服务读取失败";}
+});
+
+// 从岗位详情进入整份画像审核，关闭上层对话框后再显示审核页。
+document.addEventListener("click",async event=>{
+  const button=event.target.closest("[data-profile-quality-open]");
+  if(!button || button.closest("#page-profile-quality"))return;
+  try {
+    document.querySelectorAll("dialog[open]").forEach(dialog=>dialog.close());
+    location.hash="profile-quality";
+    await window.loadProfileQuality?.();
+    await window.openProfileQuality?.(button.dataset.profileQualityOpen);
+  } catch(error) {notify(error.message,true);}
 });

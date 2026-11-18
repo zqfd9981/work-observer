@@ -34,6 +34,7 @@ def openapi(routes):
         RollbackInput,
         StrategyInput,
     )
+    from work_observer.api.profile_quality import SCHEMA_MODELS as PROFILE_QUALITY_MODELS
     from work_observer.api.projects import (
         ProjectInput,
         ProjectRevision,
@@ -42,6 +43,7 @@ def openapi(routes):
         StepReview,
     )
     from work_observer.api.quality import QualityReviewInput
+    from work_observer.api.research_benchmarks import SCHEMA_MODELS as BENCHMARK_MODELS
     from work_observer.api.trials import (
         TrialFeedbackInput,
         TrialReviewInput,
@@ -103,6 +105,8 @@ def openapi(routes):
         ("/api/inbox/followup", "POST"): FollowupInput,
     }
     models.update(DATA_QUALITY_MODELS)
+    models.update(PROFILE_QUALITY_MODELS)
+    models.update(BENCHMARK_MODELS)
     schemas = {
         "Error": {
             "type": "object",
@@ -136,6 +140,8 @@ def openapi(routes):
         },
     }
     descriptions = {
+        "profile-quality": "完整画像的原文判断、领域依据及核实问题逐项审核与缓存资格",
+        "research-benchmarks": "冻结业务问题与方法、权威输出登记、匿名核对和同题配对",
         "workflows": "日常研究的有界画像、持续项目、审核等待、领域观察和变化报告",
         "trials": "冻结开发查询的旁路比较、独立人审、局部限额检索及自动回退",
         "projects": "持久目标与范围、追问澄清、调查队列、审核接续和整项目遗忘",

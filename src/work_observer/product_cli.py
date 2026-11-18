@@ -323,6 +323,21 @@ def register(app):
                         )
                     elif action == "region-withdraw":
                         result = service.withdraw_region(id)
+                elif area == "profile-quality":
+                    from work_observer.api.profile_quality import ProfileQualityReviewInput
+                    from work_observer.quality.profile_reviews import ProfileQualityReviewService
+
+                    service = ProfileQualityReviewService(store, repo)
+                    if action == "list":
+                        result = service.overview()
+                    elif action == "packet":
+                        result = service.packet(id)
+                    elif action == "reviews":
+                        result = service.list_reviews(id)
+                    elif action == "review":
+                        result = service.submit(
+                            id, ProfileQualityReviewInput.model_validate(data).model_dump()
+                        )
                 elif area == "quality":
                     from work_observer.api.quality import QualityReviewInput
                     from work_observer.quality.reviews import QualityReviewService

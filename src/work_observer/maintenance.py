@@ -24,6 +24,11 @@ CHECKPOINT_TABLES = (
     "research_workflows",
     "retrieval_trials",
     "retrieval_trial_events",
+    "profile_quality_reviews",
+    "research_benchmarks",
+    "research_benchmark_submissions",
+    "research_benchmark_rounds",
+    "research_benchmark_reviews",
 )
 TRIAL_FIXED_FILES = {
     "corpus.db",
@@ -182,6 +187,48 @@ def file_sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def _benchmark_corpus_files(directory):
+    files = _validate_trial_artifacts(directory)
+    if set(files) != {"corpus.db", "manifest.json"}:
+        raise ProbeError("INVALID_RESEARCH_BENCHMARK_CORPUS")
+    return files
+
+
+def _backup_benchmark_artifacts(database, destination, manifest):
+    """只复制目标namespace已登记的来源语料；问题和评语留在检查点表内。"""
+    manifest["research_benchmark_corpora"] = []
+    checkpoints = destination / "checkpoints.db"
+    if not checkpoints.is_file():
+        return
+    with readonly_database(checkpoints) as db:
+        if not db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_benchmarks'"
+        ).fetchone():
+            return
+        identities = [
+            row[0]
+            for row in db.execute(
+                "SELECT id FROM research_benchmarks WHERE namespace=?", (str(database),)
+            )
+        ]
+    if len(identities) > 100:
+        raise ProbeError("RESEARCH_BENCHMARK_BACKUP_LIMIT_100")
+    root = database.parent / "research-benchmarks"
+    if root.is_symlink():
+        raise ProbeError("INVALID_RESEARCH_BENCHMARK_CORPUS")
+    for identity in sorted(identities):
+        if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{32}", identity):
+            raise ProbeError("INVALID_RESEARCH_BENCHMARK_CORPUS")
+        source = root / identity / "corpus"
+        files = _benchmark_corpus_files(source)
+        target = destination / "research-benchmarks" / identity / "corpus"
+        target.mkdir(parents=True)
+        for name in files:
+            shutil.copyfile(source / name, target / name)
+        _benchmark_corpus_files(target)
+        manifest["research_benchmark_corpora"].append(identity)
+
+
 @contextmanager
 def readonly_database(path):
     with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)) as db:
@@ -288,6 +335,7 @@ def backup_workspace(database, destination, reports_dir=Path("reports")):
                 shutil.copyfile(source, target)
                 manifest["reports"].append("reports/" + source.name)
         _backup_trial_artifacts(database, destination, manifest)
+        _backup_benchmark_artifacts(database, destination, manifest)
         manifest["files"] = {
             str(path.relative_to(destination)).replace("\\", "/"): file_sha(path)
             for path in destination.rglob("*")
@@ -318,6 +366,9 @@ def _relative_file(value):
         value in {"app.db", "checkpoints.db"}
         or re.fullmatch(r"raw/[a-f0-9]{64}\.json", value)
         or re.fullmatch(r"reports/[a-f0-9]{32}\.(json|md)", value)
+        or re.fullmatch(
+            r"research-benchmarks/[a-f0-9]{32}/corpus/(corpus\.db|manifest\.json)", value
+        )
         or re.fullmatch(r"quality-trials/[a-f0-9]{32}/[^/]+", value)
         and _trial_filename(value.rsplit("/", 1)[1])
     ):
@@ -370,6 +421,24 @@ def _validated_manifest(bundle):
         ):
             raise ProbeError("BACKUP_FILE_INTEGRITY_FAILED")
     expected_reports = {name for name in files if name.startswith("reports/")}
+    corpora = manifest.get("research_benchmark_corpora", [])
+    corpus_files = {name for name in files if name.startswith("research-benchmarks/")}
+    if (
+        not isinstance(corpora, list)
+        or len(corpora) > 100
+        or any(
+            not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{32}", key) for key in corpora
+        )
+        or len(corpora) != len(set(corpora))
+        or {name.split("/")[1] for name in corpus_files} != set(corpora)
+    ):
+        raise ProbeError("INVALID_RESEARCH_BENCHMARK_MANIFEST")
+    for identity in corpora:
+        names = _benchmark_corpus_files(bundle / "research-benchmarks" / identity / "corpus")
+        if {name for name in corpus_files if name.split("/")[1] == identity} != {
+            f"research-benchmarks/{identity}/corpus/{name}" for name in names
+        }:
+            raise ProbeError("INVALID_RESEARCH_BENCHMARK_MANIFEST")
     trial_bundles = manifest.get("trial_bundles", [])
     actual_trial_files = {name for name in files if name.startswith("quality-trials/")}
     if (
@@ -572,6 +641,7 @@ def restore_workspace(bundle, destination):
         "status": "restored_to_new_directory",
         "restored_trial_bundles": len(manifest.get("trial_bundles", [])),
         "restored_trial_bundle_stages": manifest.get("trial_bundle_stages", {}),
+        "restored_research_benchmark_corpora": len(manifest.get("research_benchmark_corpora", [])),
         "trial_artifact_note": "冻结包字节不重定位；legacy旧包未复制，缺失时试用保持或回到基线。",
     }
 

@@ -237,6 +237,8 @@ def create_app(
             "updates.html",
             "workflows.html",
             "trials.html",
+            "profile-quality.html",
+            "research-benchmarks.html",
         ):
             html = html.replace("</main>", (ASSETS / name).read_text(encoding="utf-8") + "</main>")
         return HTMLResponse(html)
@@ -252,6 +254,8 @@ def create_app(
             "updates.js",
             "workflows.js",
             "trials.js",
+            "profile-quality.js",
+            "research-benchmarks.js",
             "app.css",
         }:
             return Response(status_code=404)
@@ -792,6 +796,27 @@ def create_app(
     )
     routes.extend(
         trial_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+        )
+    )
+    from work_observer.api.profile_quality import profile_quality_routes
+    from work_observer.api.research_benchmarks import benchmark_routes
+
+    routes.extend(
+        profile_quality_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+        )
+    )
+    routes.extend(
+        benchmark_routes(
             repository=lambda: repository,
             store=lambda: store,
             response=response,

@@ -334,6 +334,25 @@ def _cascade(
         )
     notifications = InboxService(repository).invalidate_research(sorted(affected_runs))
     quality = QualityReviewService(store).invalidate(sorted(affected_runs))
+    from work_observer.quality.profile_reviews import ProfileQualityReviewService
+    from work_observer.quality.research_benchmark import ResearchBenchmarkService
+
+    profile_quality = ProfileQualityReviewService(store, repository).invalidate(
+        run_ids=sorted(affected_runs),
+        profile_ids=sorted(deleted_profiles),
+        memory_ids=sorted(identities),
+    )
+    notifications["affected_notification_ids"] = sorted(
+        set(
+            notifications.get("affected_notification_ids", [])
+            + profile_quality.pop("affected_notification_ids", [])
+        )
+    )
+    benchmark_quality = ResearchBenchmarkService(store, repository).invalidate(
+        run_ids=sorted(affected_runs),
+        project_ids=sorted(affected_projects),
+        memory_ids=sorted(identities),
+    )
     from work_observer.quality.releases import LocalRetrievalTrialService
 
     trials = LocalRetrievalTrialService(store, repository).invalidate_research(
@@ -384,6 +403,8 @@ def _cascade(
         "invalidated_relation_ids": sorted(relation_ids),
         **notifications,
         **quality,
+        **profile_quality,
+        **benchmark_quality,
         **trials,
         **updates,
         "invalidated_workflow_ids": workflow_results["affected_workflow_ids"],

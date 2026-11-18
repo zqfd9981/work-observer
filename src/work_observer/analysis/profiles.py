@@ -153,6 +153,13 @@ class ProfileService:
     def _output(self, row, *, cached=False):
         snapshot_id, current_memory, memories = self._context(row.job_id)
         stale = []
+        from work_observer.quality.profile_reviews import profile_review_state
+
+        profile_review = profile_review_state(self.repository, row.id, row.result)
+        if profile_review["status"] == "rejected":
+            stale.append("完整画像已被人工审核拒绝，需重新分析；基础研究事实另行保留。")
+        if profile_review["status"] == "unavailable":
+            stale.append("完整画像审核记录暂不可核验，请恢复后再使用缓存。")
         if row.snapshot_id != snapshot_id:
             stale.append("岗位正文版本已变化")
         if row.memory_versions != memories:
@@ -204,6 +211,7 @@ class ProfileService:
             "prompt_version": row.prompt_version,
             "model_name": row.model_name,
             "memory_versions": row.memory_versions,
+            "profile_quality_review": profile_review,
             "created_at": row.created_at,
             "result": result,
         }
