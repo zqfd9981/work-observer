@@ -566,6 +566,7 @@ def register(app):
                         job_ids=params.get("job_ids"),
                         checkpoint=(store, id),
                         resume=True,
+                        approach=params.get("approach", "standard"),
                     )
                 )
                 store.save(id, result=result, state="finished")

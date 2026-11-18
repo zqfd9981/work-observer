@@ -6,6 +6,7 @@ import secrets
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -64,6 +65,7 @@ class ResearchInput(BaseModel):
     max_calls: int = Field(default=10, ge=2, le=12)
     timeout: int = Field(default=180, ge=1, le=300)
     allow_public: bool = False
+    approach: Literal["standard", "source_first"] = "standard"
 
 
 class MemoryInput(BaseModel):
@@ -350,6 +352,7 @@ def create_app(
                 resume=resume,
                 memory=memory,
                 allow_public=data.allow_public,
+                approach=data.approach,
             )
             store.save(identity, result=result, state="finished")
             from work_observer.reports.inbox import InboxService

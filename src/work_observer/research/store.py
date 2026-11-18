@@ -66,6 +66,19 @@ class ResearchStore:
                 raise ProbeError("RESEARCH_RUN_ALREADY_FINISHED")
             keys = {"question", *supplied} if resume else set(parameters)
             clean_input = redact(record["input"], redactions)
+            # Historical sealed inputs omitted this field and always used the standard method.
+            original_approach = clean_input.get("approach", "standard")
+            requested_approach = parameters.get("approach", original_approach)
+            if original_approach not in ("standard", "source_first") or (
+                "approach" in keys and requested_approach not in ("standard", "source_first")
+            ):
+                raise ProbeError("RESEARCH_APPROACH_INVALID")
+            if (
+                "approach" in keys
+                and (resume or "approach" in clean_input)
+                and requested_approach != original_approach
+            ):
+                raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
             for key in keys & parameters.keys() & clean_input.keys():
                 if clean_input[key] != parameters[key]:
                     raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")

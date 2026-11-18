@@ -275,8 +275,10 @@ company_identity_status等业务库核验状态、归档完整性和未披露合
 中文输出，结论简洁具体，信息不足写入 gaps。只能通过提供的函数完成回答。"""
 
 
-def method_fingerprint():
-    return hashlib.sha256(
+def method_fingerprint(approach="standard"):
+    if approach not in {"standard", "source_first"}:
+        raise ProbeError("RESEARCH_APPROACH_INVALID")
+    baseline = hashlib.sha256(
         json.dumps(
             {
                 "version": RESEARCH_METHOD_VERSION,
@@ -293,6 +295,27 @@ def method_fingerprint():
             },
             sort_keys=True,
             ensure_ascii=False,
+        ).encode()
+    ).hexdigest()
+    if approach == "standard":
+        return baseline
+    import inspect
+    import sys
+
+    from work_observer.research import source_first, source_views
+
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "baseline": baseline,
+                "version": source_first.VERSION,
+                "implementation": [
+                    "\n".join(inspect.getsource(module).splitlines())
+                    for module in (sys.modules[__name__], source_first, source_views)
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
         ).encode()
     ).hexdigest()
 
@@ -426,6 +449,16 @@ async def _persisted_research(repository, question, settings, **options):
         settings.access_token.get_secret_value(),
     ]
     question = redact(question, credentials)
+    # 恢复以权威输入为准；调用者未重复指定方法时也不能静默降级。
+    if options.get("resume") and options.get("checkpoint"):
+        checkpoint_store, checkpoint_id = options["checkpoint"]
+        original = checkpoint_store.get(checkpoint_id)["input"].get("approach", "standard")
+        options.setdefault("approach", original)
+    approach = options.get("approach", "standard")
+    if approach not in {"standard", "source_first"}:
+        raise ProbeError("RESEARCH_APPROACH_INVALID")
+    if approach == "source_first" and options.get("allow_public", False):
+        raise ProbeError("SOURCE_FIRST_LOCAL_JD_ONLY")
     parameters = redact(
         dict(
             question=question,
@@ -437,6 +470,7 @@ async def _persisted_research(repository, question, settings, **options):
             allow_public=options.get("allow_public", False),
             project_id=options.get("project_id"),
             allow_proposals=options.get("allow_proposals", True),
+            approach=approach,
         ),
         credentials,
     )
@@ -535,6 +569,7 @@ async def _research(
     allow_proposals=True,
     project_id=None,
     conversation_context=None,
+    approach="standard",
 ):
     if not question.strip() or len(question) > 4000:
         raise ProbeError("INVALID_QUESTION")
@@ -584,8 +619,11 @@ async def _research(
     scope["archived_public_truncated"] = archived_public_total > len(archived_public_ids)
     result = {
         "format_version": 1,
-        "research_method_version": RESEARCH_METHOD_VERSION,
-        "research_method_sha256": method_fingerprint(),
+        "research_method_version": RESEARCH_METHOD_VERSION
+        if approach == "standard"
+        else "source-first-v1",
+        "research_method_sha256": method_fingerprint(approach),
+        "approach": approach,
         "requirement_policy": REQUIREMENT_POLICY,
         "run_id": checkpoint[1] if checkpoint else uuid4().hex,
         "created_at": research_created_at,
@@ -725,8 +763,13 @@ async def _research(
     evidence = {}
     queried = False
     required_jobs = {job["id"] for job in scope["jobs"] if job["has_detail"]} if job_ids else set()
+    system = SYSTEM
+    if approach == "source_first":
+        from work_observer.research.source_first import POLICY
+
+        system += POLICY
     history = [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": system},
         {
             "role": "user",
             "content": json.dumps(
@@ -758,6 +801,13 @@ async def _research(
         if not saved or saved.get("version") != 1:
             raise ProbeError("RESEARCH_CHECKPOINT_MISSING")
         result = saved["result"]
+        saved_approach = result.get("approach", "standard")
+        if saved_approach != approach:
+            raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
+        if approach == "source_first" and result.get(
+            "research_method_sha256"
+        ) != method_fingerprint(approach):
+            raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         scope, pool, history = result["scope"], saved["pool"], saved["history"]
         candidates = {job["id"] for job in scope["jobs"]}
         result.setdefault("knowledge_used", [])
@@ -826,8 +876,10 @@ async def _research(
         async with asyncio.timeout(max(0, timeout - elapsed)):
             model = model or ModelClient(settings)
             if isinstance(model, ModelClient):
+                from work_observer.research.source_first import tools as source_first_tools
+
                 model.tools = (
-                    TOOLS
+                    (source_first_tools(TOOLS) if approach == "source_first" else TOOLS)
                     + EXTRA_TOOLS
                     + ([PUBLIC_TOOL, PUBLIC_READ_TOOL] if allow_public else [])
                     + (PROPOSAL_TOOLS if allow_proposals else [])
@@ -953,6 +1005,56 @@ async def _research(
                         raise ProbeError("RESEARCH_SCOPE_VIOLATION")
                     data = {"evidence": pool[arguments["job_id"]][:8]}
                     entry["job_id"] = arguments["job_id"]
+                elif name == "read_source_window" and approach == "source_first":
+                    if (
+                        set(arguments) != {"job_id", "start"}
+                        or arguments["job_id"] not in candidates
+                        or type(arguments["start"]) is not int
+                        or arguments["start"] < 0
+                    ):
+                        raise ProbeError("SOURCE_FIRST_INVALID_READ_WINDOW")
+                    data = {
+                        "evidence": [
+                            row
+                            for row in pool[arguments["job_id"]]
+                            if row["end"] > arguments["start"]
+                        ][:8]
+                    }
+                    entry.update(job_id=arguments["job_id"], start=arguments["start"])
+                elif name == "record_source_findings" and approach == "source_first":
+                    from work_observer.research.source_first import register
+                    from work_observer.research.source_views import build_source_views
+
+                    if not queried:
+                        raise ProbeError("RESEARCH_QUERY_SCOPE_FIRST")
+                    try:
+                        findings = register(
+                            arguments,
+                            build_source_views(list(evidence.values())),
+                            result.get("source_findings", []),
+                            candidates,
+                        )
+                    except (ProbeError, ValidationError) as exc:
+                        data = {
+                            "saved": False,
+                            "error": getattr(exc, "code", "SOURCE_FIRST_INVALID_FINDING"),
+                            "notice": "请在原预算内修正具体分句/岗位/维度绑定；未读全只能待核，"
+                            "未知不能覆盖明示任务；无效批次未改变任何已登记记录。",
+                        }
+                        entry["validation"] = data["error"]
+                    else:
+                        result["source_findings"] = findings
+                        entry["finding_ids"] = [row["id"] for row in arguments["findings"]]
+                        data = {
+                            "saved": True,
+                            "active_findings": [
+                                {key: row[key] for key in ("id", "job_id", "facet", "state")}
+                                for row in findings
+                                if row["active"]
+                            ],
+                            "semantic_approval": False,
+                            "notice": "只核对定位、范围和结构；仍须独立核对概括、否定及角色语义。",
+                        }
                 elif name == "plan_research" and set(arguments) == {"objective", "steps"}:
                     if (
                         not queried
@@ -1232,7 +1334,12 @@ async def _research(
                         raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                     check_knowledge()
                     citation_ids = {item.get("citation_key"): key for key, item in evidence.items()}
-                    answer = Answer.model_validate(arguments)
+                    if approach == "source_first":
+                        from work_observer.research.source_first import SourceAnswer
+
+                        answer = SourceAnswer.model_validate(arguments)
+                    else:
+                        answer = Answer.model_validate(arguments)
                     for claim in answer.claims:
                         claim.evidence_ids = [
                             citation_ids.get(key, key) for key in claim.evidence_ids
@@ -1245,8 +1352,21 @@ async def _research(
                         if (claim.requirement == "required" and preferred_markers(claim.text))
                         or (claim.requirement == "preferred" and required_markers(claim.text))
                     ]
+                    finding_check = None
+                    if approach == "source_first":
+                        from work_observer.research.source_first import check_answer
+
+                        finding_check = check_answer(
+                            answer,
+                            result.get("source_findings", []),
+                            evidence,
+                            required_jobs
+                            or {job["id"] for job in scope["jobs"] if job["has_detail"]},
+                        )
+                        result["source_binding_check"] = finding_check
                     if (
                         not queried
+                        or (finding_check and not finding_check["binding_passed"])
                         or mixed_requirements
                         or not used.issubset(evidence)
                         or not required_jobs.issubset(covered)
@@ -1278,6 +1398,16 @@ async def _research(
                                 "直接职责判断需岗位原文；公开搜索综合内容只能作推测或综合。"
                             ),
                             "query_jobs_required": not queried,
+                            **(
+                                {
+                                    "source_finding_check": finding_check,
+                                    "source_finding_feedback": "逐侧登记原文；未知单独展示，"
+                                    "不得支撑否定职责。跨岗比较同维度、双方引用并用synthesis。"
+                                    "结构通过仍不等于语义通过。",
+                                }
+                                if finding_check
+                                else {}
+                            ),
                             "valid_evidence_ids": [
                                 {
                                     "id": key,
@@ -1326,6 +1456,10 @@ async def _research(
                             "citation_key", f"E{len(evidence) + 1}"
                         )
                         evidence[item["id"]] = item
+                    if approach == "source_first" and "evidence" in data:
+                        from work_observer.research.source_views import build_source_views
+
+                        data["source_view"] = build_source_views(list(evidence.values()))
                 if len(evidence) > 60:
                     raise ProbeError("RESEARCH_EVIDENCE_LIMIT")
                 history.append(

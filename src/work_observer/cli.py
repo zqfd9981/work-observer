@@ -31,6 +31,11 @@ class Target(StrEnum):
     search = "search"
 
 
+class ResearchApproach(StrEnum):
+    standard = "standard"
+    source_first = "source_first"
+
+
 def failure(exc: Exception):
     if isinstance(exc, BaseExceptionGroup):
         return failure(exc.exceptions[0])
@@ -535,6 +540,7 @@ def execute_research(
     max_calls,
     timeout,
     allow_public=False,
+    approach="standard",
 ):
     from work_observer.reports.results import render, save_result
     from work_observer.research.agent import research
@@ -559,6 +565,7 @@ def execute_research(
             "max_calls": max_calls,
             "timeout": timeout,
             "allow_public": allow_public,
+            "approach": approach,
         }
         run = store.create(parameters)
         result = asyncio.run(
@@ -573,6 +580,7 @@ def execute_research(
                 timeout=timeout,
                 checkpoint=(store, run["id"]),
                 allow_public=allow_public,
+                approach=approach,
             )
         )
         store.save(run["id"], state="finished", result=result)
@@ -621,6 +629,9 @@ def research_question(
     db: Path | None = None,
     env_file: Path = Path(".env"),
     allow_public: bool = typer.Option(False, help="允许必要的公开搜索，最多两次；不访问招聘来源"),
+    approach: Annotated[
+        ResearchApproach, typer.Option(help="standard为标准方法；source_first为来源维度约束试验")
+    ] = ResearchApproach.standard,
 ):
     """一个有数量与时间预算的研究 Agent；不会访问招聘网站或改写岗位。"""
     execute_research(
@@ -638,6 +649,7 @@ def research_question(
         max_calls,
         timeout,
         allow_public,
+        approach.value,
     )
 
 

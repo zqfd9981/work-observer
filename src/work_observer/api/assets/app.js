@@ -15,6 +15,10 @@ const categoryLabels = {business:"业务背景", deliverable:"交付物", task:"
 const reasonLabels = {VISION_NO_READABLE_TEXT:"未取得可核对的正文，未写入岗位。可对照原图人工填写。",VISION_MODEL_HTTP_ERROR:"当前模型服务未能处理图片，未写入岗位。",INVALID_VISION_DRAFT:"视觉响应不符合草稿格式，未写入岗位。",MODEL_CONFIG_MISSING:"尚未配置模型，可改用仅整理证据模式。",MODEL_AUTH_REQUIRED:"模型服务认证未通过。",MODEL_FORBIDDEN:"当前模型服务权限不足。",MODEL_RATE_LIMIT_OR_QUOTA:"模型服务限流或额度不足，可稍后再试。",MODEL_HTTP_ERROR:"模型服务暂时没有正常响应。",TIMEOUT:"已达到时间上限，研究停止。",model_call_limit:"已达到调用次数上限，研究停止。",no_available_details:"范围内没有可研究的完整正文。"};
 const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "profile-quality":"完整画像核对", "research-benchmarks":"研究方法核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
 let toastTimer, pollTimer;
+Object.assign(reasonLabels,{
+  RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED:"这次试验使用的方法已更新，不能混用新旧方法继续原进度。已保留原记录，请开始一次新研究。",
+  SOURCE_FIRST_LOCAL_JD_ONLY:"分项核对试验只使用本地岗位正文。请关闭公开补查，或选择现有研究方法。"
+});
 
 function notify(message, error = false) {
   const toast = $("#toast");
@@ -32,7 +36,7 @@ async function api(path, options = {}) {
   try { data = await response.json(); }
   catch { throw new Error("服务暂时没有返回可读取的数据，请确认本地服务仍在运行。"); }
   if (!response.ok) {
-    const error = new Error(data.message || "操作未完成，请稍后再试。");
+    const error = new Error(reasonLabels[data.error_code] || data.message || "操作未完成，请稍后再试。");
     error.code = data.error_code;
     throw error;
   }
@@ -228,6 +232,59 @@ function updateResearchScope() {
   }
 }
 
+function updateResearchApproach() {
+  const trial = $("#research-approach").value === "source_first";
+  const publicSearch = $("#allow-public");
+  if (trial) publicSearch.checked = false;
+  publicSearch.disabled = trial;
+  $("#research-approach-note").hidden = !trial;
+}
+
+const findingFacets = {work_task:"岗位建设与工作任务",deliverable:"工作产出",personal_coding_share:"个人编码分工",independent_delivery:"独立端到端负责程度",release_authority:"上线决策与责任",runtime_role:"平台运行中的角色",human_control:"人工控制与接管",qualification:"任职资格与强度",tool_usage:"工具使用",business_context:"岗位业务方向"};
+const findingStates = {stated:"登记为原文明示（语义待核）",explicitly_denied:"登记为原文明示否定（语义待核）",not_disclosed:"已读归档正文中未披露（待核实）",unresolved:"尚不能判断（待核实）"};
+
+function renderReviewFindings(packet) {
+  const findings = (packet.source_findings || []).filter(row=>row.active !== false);
+  if (!findings.length) return "";
+  const titles = new Map();
+  const addTitle = source=>{const id=source.job_id || source.id;if(id && source.title && !titles.has(id))titles.set(id,source.title);};
+  (packet.scope?.jobs || []).forEach(addTitle);
+  (packet.frozen_sources || []).forEach(addTitle);
+  (packet.claims || []).forEach(claim=>(claim.citations || []).forEach(addTitle));
+  return `<section class="research-context"><h3>原文分项记录 · 一并核对</h3><p class="form-note">以下是研究登记，明示与否定的解释仍需语义审核，不表示已经核对通过。岗位建设任务、个人分工、独立程度、上线责任与平台运行角色分别核对；流程中的人或Agent不自动等于应聘者。未知不能抹去已披露的原文动作。</p>${[...new Set(findings.map(row=>row.job_id))].map(id=>`<section class="detail-section"><h4>${e(titles.get(id) || "指定岗位 · "+id)}</h4>${[false,true].map(unknown=>{const selected=findings.filter(row=>row.job_id===id && ["not_disclosed","unresolved"].includes(row.state)===unknown);return selected.length?`<h5>${unknown?"待核实的维度（不等于没有该职责）":"有原文分句的登记"}</h5>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet_label || row.facet)}</strong> ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`${cite.context?.length?`<p class="form-note">原文上下文：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>`:""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")}</p>`).join("")}</section>`).join("")}`:"";}).join("")}</section>`).join("")}</section>`;
+}
+
+function renderSourceFindings(result, evidence) {
+  const all = result.source_findings || [];
+  if (!all.length) return "";
+  const jobs = new Map(result.scope.jobs.map(job=>[job.id,job]));
+  const content = [...new Set(all.map(row=>row.job_id))].map(id=>{
+    const job = jobs.get(id);
+    const active = all.filter(row=>row.job_id === id && row.active);
+    const groups = [false,true].map(unknown=>{
+      const selected = active.filter(row=>["not_disclosed","unresolved"].includes(row.state) === unknown);
+      if (!selected.length) return "";
+      return `<h4>${unknown ? "待核实的维度" : "有原文分句的登记"}</h4>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet)}</strong> ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`<blockquote>${e(cite.text)}</blockquote><p class="form-note">原文字符 ${e(cite.start)}–${e(cite.end)} ${evidence.has(cite.evidence_id) ? `<button class="cite" data-cite="${e(cite.evidence_id)}" data-cite-start="${e(cite.start)}" data-cite-end="${e(cite.end)}">${e(evidence.get(cite.evidence_id).label)} · 定位原文 ↗</button>` : "来源待定位"}</p>`).join("")}</section>`).join("")}`;
+    }).join("");
+    return `<section class="detail-section"><h3>${e(job?.title || id)} · ${e(job?.company || "公司待核")}</h3>${groups}</section>`;
+  }).join("");
+  const revisions = all.filter(row=>!row.active);
+  const history = revisions.length ? `<details><summary>分项修订记录 · ${revisions.length} 条历史</summary><p class="form-note">历史保留，不作为活动结论。</p>${revisions.map(row=>{const replacement=all.find(item=>item.id === row.superseded_by);return `<p>${e(row.id)} → ${e(row.superseded_by || "后续记录")} · ${e(findingFacets[row.facet] || row.facet)} · 原状态：${e(findingStates[row.state] || "待核")}<br>修订说明（研究登记，待核）：${e(replacement?.reason || "请核对原始记录")}</p>`;}).join("")}</details>` : "";
+  return `<section class="research-context"><h2>原文分项记录 <small>试验 · 语义待核</small></h2><p class="form-note">这是研究中的分项登记，不是人工审核通过。未知不等于没有职责；模型分析不能覆盖原文动作。</p>${content}${history}</section>`;
+}
+
+function highlightCitation(details, start, end) {
+  const quote = $("blockquote",details);
+  if (!quote) return;
+  const text = quote.textContent;
+  const characters = Array.from(text);
+  const base = Number(details.dataset.evidenceStart);
+  const from = Number(start) - base, to = Number(end) - base;
+  quote.innerHTML = Number.isInteger(from) && Number.isInteger(to) && from >= 0 && to > from && to <= characters.length
+    ? e(characters.slice(0,from).join("")) + "<mark>" + e(characters.slice(from,to).join("")) + "</mark>" + e(characters.slice(to).join(""))
+    : e(text);
+}
+
 function renderResult(result, target, runId = null) {
   const evidence = new Map(result.evidence.map((ev,index)=>[ev.id,{...ev,label:`E${index+1}`}])) ;
   const counts = result.scope.counts;
@@ -237,11 +294,13 @@ function renderResult(result, target, runId = null) {
   target.innerHTML = `<article class="panel result-card"><div class="result-top"><h2>${e(result.mode === "offline" ? "原文证据" : "研究结果")}</h2>${badge(statusLabels[result.status] || result.status,completed ? "" : "amber")}</div><p class="result-question">${e(result.question)}</p><div class="scope-summary"><span>${counts.matched} 个匹配</span>·<span>${counts.unknown} 个条件未知</span>·<span>${counts.candidate_details} 份候选正文</span>·<span>${e(when(result.created_at))}</span></div>
     ${renderResearchContext({...result,run_id:runIdentity})}
     ${renderResearchCandidates(result)}
+    ${renderSourceFindings(result,evidence)}
+    ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
     ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${claim.basis ? badge(({direct:"原文明示",synthesis:"跨材料归纳",inference:"研究推断"})[claim.basis] || claim.basis,"muted") : ""} ${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${runIdentity && result.status === "completed" && claim.evidence_ids.every(id=>evidence.get(id)?.public_document_id || (evidence.get(id)?.document_id && evidence.get(id)?.snapshot_id)) ? `<button class="text-button" data-knowledge-run="${e(runIdentity)}" data-claim-index="${index}">留作知识候选 ＋</button>` : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}
     <div class="gaps"><strong>资料缺口与研究范围</strong><ul>${result.gaps.map(gap=>`<li>${e(gap)}</li>`).join("")}</ul>${!completed ? `<p>结束原因：${e(reasonLabels[result.stop_reason] || "本次未能完成研究，可核对范围后重试；已有资料仍可查看。")}</p>` : ""}</div>
     <details class="detail-section"><summary>本次候选与统计口径</summary><p class="form-note">统计在分页前计算。本次实际研究 ${result.scope.jobs.length} 个候选${result.scope.truncated ? "，候选较多，已截取前 20 个，请收窄范围" : ""}；未知条件不等于符合。</p>${result.scope.jobs.map(job=>`<div class="detail-history"><button class="job-link" data-job="${e(job.id)}">${e(job.title)} · ${e(job.company)}</button>${badge(job.has_detail ? "有正文" : "仅摘要","muted")} ${job.match_status === "unknown" ? badge("条件未知","amber") : ""}</div>`).join("")}</details>
     <div class="result-actions">${reportId ? `${badge("已保存")}<a class="secondary" href="/api/reports/${e(reportId)}/download/md" download>下载 Markdown</a><a class="secondary" href="/api/reports/${e(reportId)}/download/json" download>下载 JSON</a>` : runId ? `<button class="primary" data-save-research="${e(runId)}">保存这次研究</button><small class="form-note">保存问题、范围、结果与原文依据。</small>` : ""}</div>
-    <section class="detail-section"><h3>原文依据 · ${evidence.size} 个片段</h3><p class="form-note">点击结论后的引用可定位片段；也可核对对应原始文档。引用有效不代表模型解释必然正确。</p>${[...evidence.values()].map(ev=>`<details class="evidence-item" data-evidence="${e(ev.id)}"><summary>${e(ev.label)} · ${e(ev.title)} · ${e(ev.company || (ev.source === "public_web" ? "公开资料" : ""))}</summary>${ev.source_note ? `<p class="form-note evidence-source-note">${e(ev.source_note)}</p>` : ""}<blockquote>${e(ev.quote)}</blockquote><div class="evidence-meta">${e(sourceLabel(ev))} · 取得 ${e(when(ev.observed_at))}<br>字符 ${ev.start}–${ev.end}${ev.full_text_length ? ` / 原文 ${ev.full_text_length} 字符` : ""} · 发布时间 ${e(ev.source_published_at ? when(ev.source_published_at) : "未知")}<br>${ev.document_id ? `<button data-source="${e(ev.document_id)}">核对来源文档与内容版本 ↗</button>` : ""}${ev.public_document_id ? `<button data-public-source="${e(ev.public_document_id)}">核对已归档的公开全文 ↗</button><br>` : ""}${safeURL(ev.url) ? `<a href="${e(safeURL(ev.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}</div></details>`).join("")}</section></article>`;
+    <section class="detail-section"><h3>原文依据 · ${evidence.size} 个片段</h3><p class="form-note">点击结论后的引用可定位片段；也可核对对应原始文档。引用有效不代表模型解释必然正确。</p>${[...evidence.values()].map(ev=>`<details class="evidence-item" data-evidence="${e(ev.id)}" data-evidence-start="${e(ev.start)}"><summary>${e(ev.label)} · ${e(ev.title)} · ${e(ev.company || (ev.source === "public_web" ? "公开资料" : ""))}</summary>${ev.source_note ? `<p class="form-note evidence-source-note">${e(ev.source_note)}</p>` : ""}<blockquote>${e(ev.quote)}</blockquote><div class="evidence-meta">${e(sourceLabel(ev))} · 取得 ${e(when(ev.observed_at))}<br>字符 ${ev.start}–${ev.end}${ev.full_text_length ? ` / 原文 ${ev.full_text_length} 字符` : ""} · 发布时间 ${e(ev.source_published_at ? when(ev.source_published_at) : "未知")}<br>${ev.document_id ? `<button data-source="${e(ev.document_id)}">核对来源文档与内容版本 ↗</button>` : ""}${ev.public_document_id ? `<button data-public-source="${e(ev.public_document_id)}">核对已归档的公开全文 ↗</button><br>` : ""}${safeURL(ev.url) ? `<a href="${e(safeURL(ev.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}</div></details>`).join("")}</section></article>`;
 }
 
 function setBusy(busy) {
@@ -287,7 +346,8 @@ async function loadResearchHistory() {
 function renderProgress(run) {
   const result = run.result || run.progress || {};
   const isRunning = run.state === "running";
-  $("#research-output").innerHTML = `<article class="panel result-card" aria-live="polite"><div class="result-top">${isRunning ? `<div class="spinner small-spinner"></div>` : ""}<h2>${e(runLabels[run.state] || "研究记录")}</h2></div><p class="form-note">${isRunning ? "正在确认范围、查阅原文和核对依据。你可以继续查看其他资料。" : run.state === "invalidated" ? "相关个人记录已忘记，受影响的派生结果和检查点已清除。可依据当前记录重新研究。" : "已保留查过的证据与剩余预算。继续时沿用原范围和预算，不重复建立研究。"}</p>${renderResearchContext(result)}<div class="scope-summary">已发起 ${e(result.model_calls || 0)} 次模型调用 · 研究进度自动留存</div><ol class="trace-list">${(result.trace || []).map(item=>`<li>${e(({query_jobs:"确认候选范围",plan_research:"制定研究计划",search_evidence:"检索本地原文",read_job:"查阅岗位正文",search_public_web:"补查公开资料",read_public_document:"读取并归档公开全文",compare_history:"比较历史版本",propose_knowledge:"提出待核对知识",propose_research_memory:"提出待核对假设或方法经验",browse_domain_knowledge:"查阅领域定义与关系线索",search_archived_sources:"统一检索已归档原文",propose_investigation:"提出有完成条件的补查",propose_retrieval_strategy:"提出本地别名候选",evaluate_retrieval_strategy:"运行固定模拟评测",finish_research:"提交结论与核对"})[item.tool] || "核对研究资料")}</li>`).join("")}</ol><div class="result-actions">${isRunning ? `<button class="secondary" data-cancel-run="${e(run.id)}">暂停并保留进度</button>` : run.resumable ? `<button class="primary" data-resume-run="${e(run.id)}">继续这次研究 ↗</button>` : `${run.project_id ? `<button class="primary" data-project-open="${e(run.project_id)}">从研究项目查看和继续 ↗</button>` : `<p class="form-note">没有可继续的检查点，可按原问题开始新研究。</p>`}`}</div></article>`;
+  const friendlyFailure = reasonLabels[run.error_code] || reasonLabels[result.stop_reason];
+  $("#research-output").innerHTML = `<article class="panel result-card" aria-live="polite"><div class="result-top">${isRunning ? `<div class="spinner small-spinner"></div>` : ""}<h2>${e(runLabels[run.state] || "研究记录")}</h2></div><p class="form-note">${isRunning ? "正在确认范围、查阅原文和核对依据。你可以继续查看其他资料。" : run.state === "invalidated" ? "相关个人记录已忘记，受影响的派生结果和检查点已清除。可依据当前记录重新研究。" : "已保留查过的证据与剩余预算。继续时沿用原范围和预算，不重复建立研究。"}</p>${friendlyFailure && !isRunning ? `<p class="form-note" role="status">${e(friendlyFailure)}</p>` : ""}${renderResearchContext(result)}<div class="scope-summary">已发起 ${e(result.model_calls || 0)} 次模型调用 · 研究进度自动留存</div><ol class="trace-list">${(result.trace || []).map(item=>`<li>${e(({query_jobs:"确认候选范围",plan_research:"制定研究计划",search_evidence:"检索本地原文",read_job:"查阅岗位正文",read_source_window:"补读岗位正文片段",record_source_findings:"登记原文分项与未知事项",search_public_web:"补查公开资料",read_public_document:"读取并归档公开全文",compare_history:"比较历史版本",propose_knowledge:"提出待核对知识",propose_research_memory:"提出待核对假设或方法经验",browse_domain_knowledge:"查阅领域定义与关系线索",search_archived_sources:"统一检索已归档原文",propose_investigation:"提出有完成条件的补查",propose_retrieval_strategy:"提出本地别名候选",evaluate_retrieval_strategy:"运行固定模拟评测",finish_research:"提交结论与核对"})[item.tool] || "核对研究资料")}</li>`).join("")}</ol><div class="result-actions">${isRunning ? `<button class="secondary" data-cancel-run="${e(run.id)}">暂停并保留进度</button>` : run.resumable ? `<button class="primary" data-resume-run="${e(run.id)}">继续这次研究 ↗</button>` : `${run.project_id ? `<button class="primary" data-project-open="${e(run.project_id)}">从研究项目查看和继续 ↗</button>` : `<p class="form-note">没有可继续的检查点，可按原问题开始新研究。</p>`}`}</div></article>`;
 }
 
 async function openRun(id) {
@@ -344,11 +404,13 @@ async function startResearch(event) {
   if (state.activeRun) return;
   const question = $("#question").value.trim();
   if (!question) { notify("请先写下研究问题。",true); return; }
+  updateResearchApproach();
   setBusy(true);
   try {
     const run = await api("research",{method:"POST",body:JSON.stringify({question,
       job_ids:state.researchIds || null,filters:state.researchIds ? {} : state.filters,
-      offline:$("#offline").checked,allow_public:$("#allow-public").checked})});
+      offline:$("#offline").checked,allow_public:$("#allow-public").checked,
+      approach:$("#research-approach").value})});
     pendingResearch(run.id);
   } catch (error) { setBusy(false); notify(error.message,true); }
 }
@@ -799,6 +861,7 @@ $("#compare-selected").addEventListener("click",()=>{
 $("#research-filtered").addEventListener("click",()=>{state.researchIds=null;location.hash="research";updateResearchScope();});
 $("#company-form").addEventListener("submit",event=>{event.preventDefault();loadCompanies();});
 $("#research-form").addEventListener("submit",startResearch);
+$("#research-approach").addEventListener("change",updateResearchApproach);
 $("#refresh-research-history").addEventListener("click",loadResearchHistory);
 $("#add-memory").addEventListener("click",()=>showMemory());
 $("#memory-history").addEventListener("change",loadMemories);
@@ -960,7 +1023,7 @@ document.addEventListener("click",async event=>{
   if (element.dataset.cite) {
     const root = element.closest(".result-card");
     const details = $$("[data-evidence]",root).find(item=>item.dataset.evidence === element.dataset.cite);
-    if (details) {details.open=true;details.scrollIntoView({behavior:"smooth",block:"center"});}
+    if (details) {highlightCitation(details,element.dataset.citeStart,element.dataset.citeEnd);details.open=true;details.scrollIntoView({behavior:"smooth",block:"center"});}
   }
   if (element.dataset.saveResearch) {
     element.disabled=true;
@@ -979,6 +1042,7 @@ document.addEventListener("click",async event=>{
 });
 
 document.addEventListener("DOMContentLoaded",async function boot(){
+  updateResearchApproach();
   await route();
   try {
     const overview = await loadOverview();

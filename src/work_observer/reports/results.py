@@ -8,6 +8,82 @@ from uuid import uuid4
 
 from work_observer.connectors.mcp_probe import ProbeError
 
+FINDING_FACETS = {
+    "work_task": "岗位建设与工作任务",
+    "deliverable": "工作产出",
+    "personal_coding_share": "个人编码分工",
+    "independent_delivery": "独立端到端负责程度",
+    "release_authority": "上线决策与责任",
+    "runtime_role": "平台运行中的角色",
+    "human_control": "人工控制与接管",
+    "qualification": "任职资格与强度",
+    "tool_usage": "工具使用",
+    "business_context": "岗位业务方向",
+}
+FINDING_STATES = {
+    "stated": "登记为原文明示（语义待核）",
+    "explicitly_denied": "登记为原文明示否定（语义待核）",
+    "not_disclosed": "已读归档正文中未披露（待核实）",
+    "unresolved": "尚不能判断（待核实）",
+}
+
+
+def _render_source_findings(result, labels):
+    findings = result.get("source_findings", [])
+    if not findings:
+        return []
+    lines = [
+        "",
+        "## 原文分项记录（试验，语义待核）",
+        "",
+        "以下为研究中的分项登记，不是人工审核通过。未知不等于没有职责；模型分析不能覆盖原文动作。",
+    ]
+    jobs = {job["id"]: job for job in result["scope"]["jobs"]}
+    for job_id in dict.fromkeys(row["job_id"] for row in findings):
+        job = jobs.get(job_id, {})
+        lines.extend(["", f"### {job.get('title', job_id)} · {job.get('company', '公司待核')}", ""])
+        active = [row for row in findings if row["job_id"] == job_id and row.get("active")]
+        for unknown in (False, True):
+            selected = [
+                row
+                for row in active
+                if (row["state"] in {"not_disclosed", "unresolved"}) == unknown
+            ]
+            if not selected:
+                continue
+            lines.extend(["#### 待核实的维度" if unknown else "#### 有原文分句的登记", ""])
+            for row in selected:
+                lines.append(
+                    f"- {FINDING_FACETS.get(row['facet'], row['facet'])}："
+                    f"{FINDING_STATES.get(row['state'], '状态待核')}（{row['id']}）"
+                )
+                for cite in row.get("citations", []):
+                    label = labels.get(cite.get("evidence_id"))
+                    reference = f"[{label}](#{label.lower()})" if label else "来源待定位"
+                    lines.extend(
+                        [
+                            f"  - {reference}；原文字符 {cite['start']}–{cite['end']}；"
+                            f"版本 `{cite.get('snapshot_id', '待核')}`",
+                            "",
+                            *["    > " + line for line in cite["text"].splitlines()],
+                            "",
+                        ]
+                    )
+    revisions = [row for row in findings if not row.get("active")]
+    if revisions:
+        lines.extend(["", "### 分项修订记录（历史保留，不作为活动结论）", ""])
+        for row in revisions:
+            replacement = next(
+                (item for item in findings if item["id"] == row.get("superseded_by")), {}
+            )
+            lines.append(
+                f"- {row['id']} → {row.get('superseded_by', '后续记录')}；"
+                f"{FINDING_FACETS.get(row['facet'], row['facet'])}；原状态："
+                f"{FINDING_STATES.get(row['state'], '待核')}；"
+                f"修订说明（研究登记，待核）：{replacement.get('reason', '请核对原始记录')}"
+            )
+    return lines
+
 
 def render(result):
     counts = result["scope"]["counts"]
@@ -53,9 +129,17 @@ def render(result):
             f"- {item['kind']} / 版本 {item['version']}：{item['content']}"
             for item in result["memory_used"]
         )
-    lines.extend(["", "## 判断（模型分析）", ""])
     evidence = {item["id"]: item for item in result["evidence"]}
     labels = {key: f"E{index}" for index, key in enumerate(evidence, 1)}
+    lines.extend(_render_source_findings(result, labels))
+    lines.extend(["", "## 判断（模型分析）", ""])
+    if result.get("source_findings"):
+        lines.extend(
+            [
+                "自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。",
+                "",
+            ]
+        )
     for claim in result["claims"]:
         cites = " ".join(
             f"[{labels[key]}](#{labels[key].lower()})" for key in claim["evidence_ids"]

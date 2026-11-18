@@ -60,6 +60,7 @@ class MethodArm(BaseModel):
     output_type: Literal["research"] = "research"
     method_sha256: str = Field(pattern="^[a-f0-9]{64}$")
     method_version: str = Field(min_length=1, max_length=150)
+    approach: Literal["standard", "source_first"] | None = None
     strategy_sha256: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
     context_sha256: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
 
@@ -462,7 +463,7 @@ class ResearchBenchmarkService:
             {key: row.get(key) for key in ("id", "version")}
             for row in [*result.get("memory_used", []), *result.get("context_memory_used", [])]
         ]
-        return {
+        actual = {
             "output_type": output_type,
             "method_sha256": result.get("research_method_sha256"),
             "method_version": result.get("research_method_version"),
@@ -478,6 +479,10 @@ class ResearchBenchmarkService:
                 }
             ),
         }
+        # 不改旧协议/旧提交的实际方法摘要；新方法显式绑定入口选择。
+        if "approach" in result or "approach" in metadata.get("input", {}):
+            actual["approach"] = result.get("approach", "standard")
+        return actual
 
     @staticmethod
     def _usage(result):
@@ -866,6 +871,10 @@ class ResearchBenchmarkService:
                 "元数据隐藏不保证审核者此前未见过答案。"
             ),
         }
+        if result.get("source_findings"):
+            from work_observer.research.source_first import review_findings
+
+            value["source_findings"] = review_findings(result["source_findings"])
         value["packet_sha256"] = digest(value)
         return value
 

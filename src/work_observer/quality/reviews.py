@@ -92,7 +92,7 @@ class QualityReviewService:
                 )
             )
         )
-        return {
+        packet = {
             "run_id": identity,
             "result_sha256": digest(result),
             "question": result.get("question"),
@@ -112,6 +112,11 @@ class QualityReviewService:
             "reviews": self.list_run(identity, result_sha256=digest(result)),
             "notice": "未审核保持待核对；程序只核对来源与合同，语义由审核者逐条判断。",
         }
+        if result.get("source_findings"):
+            from work_observer.research.source_first import review_findings
+
+            packet["source_findings"] = review_findings(result["source_findings"])
+        return packet
 
     def list_run(self, identity, *, result_sha256=None):
         result = self._result(identity)
