@@ -65,6 +65,11 @@ class ResearchInput(BaseModel):
         max_length=20,
         description="空列表仅使用已归档资料（网页与粘贴原文）",
     )
+    public_document_ids: list[str] | None = Field(
+        default=None,
+        max_length=20,
+        description="限定归档原文ID；null使用全部可用归档，空列表不使用归档",
+    )
     filters: Filters = Field(default_factory=Filters)
     offline: bool = False
     max_calls: int = Field(default=10, ge=2, le=12)
@@ -352,6 +357,7 @@ def create_app(
                 settings,
                 filters=data.filters,
                 job_ids=data.job_ids,
+                public_document_ids=data.public_document_ids,
                 offline=data.offline,
                 max_calls=data.max_calls,
                 timeout=data.timeout,
@@ -400,6 +406,9 @@ def create_app(
 
     async def start_research(request):
         data = ResearchInput.model_validate(await read_json(request))
+        from work_observer.research.document_scope import validate
+
+        validate(repository, data.public_document_ids)
         if data.review_id and not data.review_run_id:
             raise ProbeError("RESEARCH_FEEDBACK_INVALID_RUN")
         if not data.question.strip():
@@ -422,6 +431,7 @@ def create_app(
                 job_ids=data.job_ids,
                 filters=data.filters,
                 review_id=data.review_id,
+                public_document_ids=data.public_document_ids,
             )
             data = data.model_copy(update={"review_id": context["review_id"]})
         run = store.create(redact(data.model_dump(mode="json"), credentials))

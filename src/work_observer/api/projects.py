@@ -19,6 +19,11 @@ class ProjectInput(BaseModel):
     job_ids: list[str] = Field(
         min_length=0, max_length=20, description="空列表仅使用已归档资料（网页与粘贴原文）"
     )
+    public_document_ids: list[str] | None = Field(
+        default=None,
+        max_length=20,
+        description="限定归档原文ID；null使用全部可用归档，空列表不使用归档",
+    )
     max_calls: int = Field(default=36, ge=1, le=72)
     max_seconds: int = Field(default=900, ge=1, le=1800)
     max_rounds: int = Field(default=6, ge=1, le=12)
@@ -30,6 +35,11 @@ class ProjectInput(BaseModel):
 
 class ProjectRevision(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    public_document_ids: list[str] | None = Field(
+        default=None,
+        max_length=20,
+        description="限定归档原文ID；null使用全部可用归档，空列表不使用归档",
+    )
     revision: int = Field(ge=1)
     goal: str = Field(min_length=1, max_length=4000)
     job_ids: list[str] = Field(
@@ -200,6 +210,9 @@ def project_routes(
     async def create(request):
         data = ProjectInput.model_validate(await read_json(request))
         validate_jobs(data.job_ids)
+        from work_observer.research.document_scope import validate
+
+        validate(repository(), data.public_document_ids)
         if data.plan_steps and data.max_rounds < 3:
             raise ProbeError("PROJECT_PLAN_NEEDS_THREE_ROUNDS")
         project = service().create(**data.model_dump(exclude={"plan_steps", "offline"}))
@@ -230,7 +243,12 @@ def project_routes(
     async def revise(request):
         data = ProjectRevision.model_validate(await read_json(request))
         validate_jobs(data.job_ids)
-        return response(service().revise(request.path_params["id"], **data.model_dump()))
+        from work_observer.research.document_scope import validate
+
+        validate(repository(), data.public_document_ids)
+        return response(
+            service().revise(request.path_params["id"], **data.model_dump(exclude_unset=True))
+        )
 
     async def add(request):
         data = StepInput.model_validate(await read_json(request))

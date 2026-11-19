@@ -23,7 +23,16 @@ review_feedback 是用户明确选择的旧结果复核诊断，不是新原文�
 
 
 def load_feedback(
-    store, repository, run_id, *, question, job_ids, filters=None, review_id=None, project_id=None
+    store,
+    repository,
+    run_id,
+    *,
+    question,
+    job_ids,
+    filters=None,
+    review_id=None,
+    project_id=None,
+    public_document_ids=...,
 ):
     from work_observer.quality.reviews import QualityReviewService
 
@@ -39,6 +48,10 @@ def load_feedback(
         validate_source(store, run, project_id)
     elif project_id:
         raise ProbeError("RESEARCH_FEEDBACK_PROJECT_MISMATCH")
+    if public_document_ids is not ... and public_document_ids != run["input"].get(
+        "public_document_ids"
+    ):
+        raise ProbeError("RESEARCH_FEEDBACK_FIXED_LOCAL_SCOPE_REQUIRED")
     original_jobs = sorted(row["id"] for row in result.get("scope", {}).get("jobs", []))
     if (
         not original_jobs
@@ -139,6 +152,7 @@ def repair_preview(store, repository, identity):
         "question": result["question"],
         "job_ids": jobs,
         "filters": filters,
+        "public_document_ids": run["input"].get("public_document_ids"),
         "previous_model_calls": result.get("model_calls", 0),
         "notice": "参考本次复核新建一轮；重读原固定本地岗位。"
         "新预算单独计数，旧答案与额度保留，复核不是事实。",

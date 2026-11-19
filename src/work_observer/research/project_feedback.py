@@ -42,6 +42,7 @@ def validate_execution(store, run_id, parameters):
     keys = (
         "question",
         "job_ids",
+        "public_document_ids",
         "offline",
         "max_calls",
         "timeout",

@@ -159,6 +159,7 @@ class ProjectService:
         max_rounds=6,
         max_public=4,
         source_key=None,
+        public_document_ids=None,
     ):
         if (
             not isinstance(title, str)
@@ -179,6 +180,9 @@ class ProjectService:
             and 0 <= max_public <= 8
         ):
             raise ProbeError("INVALID_PROJECT_BUDGET")
+        from work_observer.research.document_scope import normalize
+
+        public_document_ids = normalize(public_document_ids)
         stamp = now()
         if source_key is not None and (
             not isinstance(source_key, str) or not source_key.strip() or len(source_key) > 200
@@ -194,6 +198,11 @@ class ProjectService:
                     max_seconds=max_seconds,
                     max_rounds=max_rounds,
                     max_public=max_public,
+                    **(
+                        {"public_document_ids": public_document_ids}
+                        if public_document_ids is not None
+                        else {}
+                    ),
                 ),
                 sort_keys=True,
                 ensure_ascii=False,
@@ -211,6 +220,11 @@ class ProjectService:
             title=title.strip(),
             goal=goal.strip(),
             job_ids=list(dict.fromkeys(job_ids)),
+            **(
+                {"public_document_ids": public_document_ids}
+                if public_document_ids is not None
+                else {}
+            ),
             revision=1,
             scope_version=1,
             state="active",
@@ -250,7 +264,11 @@ class ProjectService:
                 raise ProbeError("PROJECT_SOURCE_KEY_CONFLICT")
         return existing
 
-    def revise(self, identity, *, revision, goal, job_ids):
+    def revise(self, identity, *, revision, goal, job_ids, public_document_ids=...):
+        from work_observer.research.document_scope import normalize
+
+        if public_document_ids is not ...:
+            public_document_ids = normalize(public_document_ids)
         with self.store.lock, self.store.db:
             record = self.get(identity)
             self._editable(record, revision)
@@ -263,9 +281,12 @@ class ProjectService:
                     "version": record["scope_version"],
                     "goal": record["goal"],
                     "job_ids": record["job_ids"],
+                    "public_document_ids": record.get("public_document_ids"),
                     "ended_at": now(),
                 }
             )
+            if public_document_ids is not ...:
+                record["public_document_ids"] = public_document_ids
             record.update(
                 goal=goal.strip(),
                 job_ids=list(dict.fromkeys(job_ids)),
@@ -347,6 +368,11 @@ class ProjectService:
                     state="queued",
                     scope_version=record["scope_version"],
                     job_ids=record["job_ids"][:],
+                    **(
+                        {"public_document_ids": record["public_document_ids"]}
+                        if record.get("public_document_ids") is not None
+                        else {}
+                    ),
                     offline=offline,
                     allow_public=allow_public,
                     max_calls=max_calls,
@@ -421,7 +447,11 @@ class ProjectService:
         if original["state"] not in {"waiting_material", "waiting_review", "failed"}:
             raise ProbeError("STEP_NOT_WAITING_FOR_MATERIAL")
         material = material_state(
-            repository, original["question"], job_ids=original["job_ids"], project_id=identity
+            repository,
+            original["question"],
+            job_ids=original["job_ids"],
+            project_id=identity,
+            public_document_ids=original.get("public_document_ids"),
         )
         run = self.store.get(original["run_id"]) if original.get("run_id") else {}
         old = (run.get("result") or {}).get("material_signature") or (
@@ -618,6 +648,11 @@ class ProjectService:
                     input=dict(
                         question=step["question"],
                         job_ids=step["job_ids"],
+                        **(
+                            {"public_document_ids": step["public_document_ids"]}
+                            if step.get("public_document_ids") is not None
+                            else {}
+                        ),
                         offline=step["offline"],
                         max_calls=step["max_calls"],
                         timeout=step["timeout"],
@@ -800,6 +835,13 @@ class ProjectService:
             ):
                 continue
             if not {j["id"] for j in result.get("scope", {}).get("jobs", [])} <= allowed:
+                continue
+            selected_documents = step.get("public_document_ids")
+            if selected_documents is not None and not {
+                ev["public_document_id"]
+                for ev in result.get("evidence", [])
+                if ev.get("public_document_id")
+            } <= set(selected_documents):
                 continue
             eligible.append((previous, result))
             score = len(_tokens(step["question"]) & _tokens(previous["question"]))
@@ -1006,6 +1048,7 @@ async def _execute_project_locked(
                 step["question"],
                 settings,
                 job_ids=step["job_ids"],
+                public_document_ids=step.get("public_document_ids"),
                 offline=step["offline"],
                 max_calls=step["max_calls"],
                 timeout=step["timeout"],

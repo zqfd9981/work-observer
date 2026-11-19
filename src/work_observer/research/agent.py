@@ -628,6 +628,11 @@ async def _persisted_research(repository, question, settings, **options):
         options.setdefault("approach", original)
         original_input = checkpoint_store.get(checkpoint_id)["input"]
         options.setdefault("coverage_mode", original_input.get("coverage_mode", "all"))
+        if "public_document_ids" in options and options[
+            "public_document_ids"
+        ] != original_input.get("public_document_ids"):
+            raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
+        options.setdefault("public_document_ids", original_input.get("public_document_ids"))
         for key in ("review_run_id", "review_id"):
             if key in options and options[key] != original_input.get(key):
                 raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
@@ -669,6 +674,8 @@ async def _persisted_research(repository, question, settings, **options):
         ),
         credentials,
     )
+    if options.get("public_document_ids") is not None:
+        parameters["public_document_ids"] = options["public_document_ids"]
     if options.get("review_run_id"):
         parameters["review_run_id"] = options["review_run_id"]
     own_store = False
@@ -728,6 +735,7 @@ async def _persisted_research(repository, question, settings, **options):
                 filters=options.get("filters"),
                 review_id=selected,
                 project_id=options.get("project_id"),
+                public_document_ids=options.get("public_document_ids"),
             )
             options["review_feedback"] = feedback
             parameters["review_id"] = feedback["review_id"]
@@ -755,6 +763,7 @@ async def _persisted_research(repository, question, settings, **options):
                 job_ids=options.get("job_ids"),
                 filters=options.get("filters"),
                 project_id=options.get("project_id"),
+                public_document_ids=options.get("public_document_ids"),
             )
             store.save(identity, progress={"materials": materials})
         result = redact(await _research(repository, question, settings, **options), credentials)
@@ -784,6 +793,7 @@ async def _research(
     *,
     filters=None,
     job_ids=None,
+    public_document_ids=None,
     offline=False,
     max_calls=10,
     timeout=180,
@@ -809,6 +819,9 @@ async def _research(
         raise ProbeError("INVALID_QUESTION")
     if not 1 <= max_calls <= 12 or not 0 < timeout <= 300:
         raise ProbeError("INVALID_RESEARCH_BUDGET")
+    from work_observer.research.document_scope import validate as validate_documents
+
+    public_document_ids = validate_documents(repository, public_document_ids)
     catalog = Catalog(repository)
     if job_ids is not None:
         job_ids = list(dict.fromkeys(job_ids))
@@ -849,6 +862,9 @@ async def _research(
                 current_public.order_by(versions.c.observed_at.desc(), versions.c.id).limit(500)
             )
         )
+        if public_document_ids is not None:
+            archived_public_ids = public_document_ids
+            archived_public_total = len(public_document_ids)
         work_material_ids = [
             row.id
             for row in session.scalars(
@@ -863,6 +879,8 @@ async def _research(
                     select(PublicDocument).where(PublicDocument.id.in_(archived_public_ids[:20]))
                 )
             ]
+    if public_document_ids is not None:
+        scope["selected_public_document_ids"] = public_document_ids
     scope["archived_public_ids"] = archived_public_ids
     scope["archived_public_total"] = archived_public_total
     scope["archived_public_truncated"] = archived_public_total > len(archived_public_ids)
@@ -995,6 +1013,7 @@ async def _research(
             question,
             list(candidates),
             project_id=project_id,
+            public_document_ids=public_document_ids,
             **({"excluded_runs": [review_feedback["run_id"]]} if review_feedback else {}),
         )
 

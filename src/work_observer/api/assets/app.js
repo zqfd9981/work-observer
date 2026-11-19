@@ -17,6 +17,8 @@ const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究�
 let toastTimer, pollTimer;
 const conversation = {id:null, timer:null, reports:new Map(), notes:[], notesFor:null, renderedId:null};
 Object.assign(reasonLabels,{
+  INVALID_RESEARCH_DOCUMENT_SCOPE:"一次最多选择20份有效的归档资料，请重新选择。",
+  PUBLIC_DOCUMENT_NOT_FOUND:"所选归档资料已不可用，请在资料库中重新选择。",
   RESEARCH_FEEDBACK_UNAVAILABLE:"原研究已不可用或已清除，请重新选择研究。",
   RESEARCH_FEEDBACK_FIXED_LOCAL_SCOPE_REQUIRED:"修正研究须使用原问题、原岗位与筛选；其他范围请另建研究。",
   RESEARCH_FEEDBACK_USE_PROJECT_BUDGET:"这是项目内的研究，请从原项目跟进，保留项目总预算。",
@@ -235,10 +237,30 @@ async function loadCompanies() {
   } catch (error) { root.innerHTML = errorBox(error); }
 }
 
+const selectedResearchDocuments = new Map();
+try {
+  const saved=JSON.parse(sessionStorage.getItem("wo-document-selection") || "[]");
+  if(Array.isArray(saved)) for(const doc of saved.slice(0,20)) if(/^[a-f0-9]{32}$/.test(doc.id) && typeof doc.title==="string") selectedResearchDocuments.set(doc.id,doc.title.slice(0,300));
+} catch {}
+
+function renderSelectedResearchDocuments() {
+  const root=$("#research-document-selection");if(!root)return;
+  root.innerHTML=selectedResearchDocuments.size ? `<p class="form-note">归档原文限定为所选 ${selectedResearchDocuments.size} 份；后续轮次沿用此选择。</p>${[...selectedResearchDocuments].map(([id,title])=>`<button type="button" class="secondary small" data-remove-research-document="${e(id)}">${e(title)} ×</button>`).join(" ")}<button type="button" class="text-button" data-clear-research-documents>改用全部归档资料</button>` : '<p class="form-note">未限定归档原文：研究可从本机全部归档资料中查找。</p>';
+}
+
+function selectResearchDocument(id,title) {
+  if(!/^[a-f0-9]{32}$/.test(id))return false;
+  if(selectedResearchDocuments.size>=20&&!selectedResearchDocuments.has(id)){notify("一次最多选择20份归档资料。",true);return false;}
+  selectedResearchDocuments.set(id,title.slice(0,300));
+  sessionStorage.setItem("wo-document-selection",JSON.stringify([...selectedResearchDocuments].map(([id,title])=>({id,title}))));
+  renderSelectedResearchDocuments();return true;
+}
+
 function updateResearchScope() {
+  renderSelectedResearchDocuments();
   const root = $("#research-scope");
   if ($("#research-source-mode")?.value === "public") {
-    root.innerHTML="<strong>本机已归档资料</strong><br>不读取岗位。网页正文和粘贴工作资料分别标记；每轮冻结已归档资料的当前版本，再按问题查阅；没有正文时会提示补充。";
+    root.innerHTML="<strong>本机已归档资料</strong><br>不读取岗位。网页正文和粘贴工作资料分别标记；按下方归档原文范围查阅；所选资料保留归档版本，没有正文时会提示补充。";
     return;
   }
   if (state.researchIds?.length) {
@@ -546,6 +568,7 @@ async function startResearch(event) {
   try {
     const run = await api("research",{method:"POST",body:JSON.stringify({question,
       job_ids:state.researchIds || null,filters:state.researchIds ? {} : state.filters,
+      ...(selectedResearchDocuments.size?{public_document_ids:[...selectedResearchDocuments.keys()]}:{}),
       offline:$("#offline").checked,allow_public:$("#allow-public").checked,
       approach:$("#research-approach").value})});
     pendingResearch(run.id);
@@ -559,7 +582,7 @@ async function startResearchConversation(question) {
     const publicOnly=$("#research-source-mode")?.value === "public";
     const scope = publicOnly ? [] : state.researchIds?.length ? state.researchIds : (await api("jobs?"+new URLSearchParams({...state.filters,limit:20}))).jobs.map(job=>job.id);
     if (!scope.length && !publicOnly) throw new Error("当前范围没有资料，请先选择或补充岗位资料。");
-    const project = await api("projects",{method:"POST",body:JSON.stringify({title:question.slice(0,100),goal:question,job_ids:scope,max_calls:24,max_seconds:720,max_rounds:6,max_public:$("#allow-public").checked?4:0})});
+    const project = await api("projects",{method:"POST",body:JSON.stringify({title:question.slice(0,100),goal:question,job_ids:scope,...(selectedResearchDocuments.size?{public_document_ids:[...selectedResearchDocuments.keys()]}:{}),max_calls:24,max_seconds:720,max_rounds:6,max_public:$("#allow-public").checked?4:0})});
     conversation.id=project.id;sessionStorage.setItem("wo-conversation",project.id);
     conversation.replyToStepId=null;
     await askResearchConversation(question);
@@ -631,7 +654,7 @@ async function openResearchConversation(id, navigate=true) {
   const allowPublic=same ? $("#conversation-allow-public").checked : project.steps.at(-1)?.allow_public ?? $("#allow-public").checked;
   const exhausted=Boolean(conversationAllocation(project,offline,allowPublic).issue);
   if(project.state==="invalidated"){root.innerHTML=empty("这项研究已忘记","可以从左侧开始新问题。");setBusy(false);return;}
-  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(note.content)}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details></article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
+  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(note.content)}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details></article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
   $("#conversation-offline").addEventListener("change",()=>updateConversationAllocation(project));
   $("#conversation-allow-public").addEventListener("change",()=>updateConversationAllocation(project));
   updateConversationAllocation(project);
@@ -696,6 +719,12 @@ async function archiveConversationDocument(url) {
   const result=await api("public-documents",{method:"POST",body:JSON.stringify({url})});
   const document=result.document;
   if(conversation.id!==targetProject)return result;
+  const project=await api("projects/"+encodeURIComponent(targetProject));
+  if(project.public_document_ids!=null&&!project.public_document_ids.includes(document.id)){
+    if(project.worker_running)throw new Error("网页已归档，请暂停调查后再加入当前研究。");
+    if(project.public_document_ids.length>=20)throw new Error("网页已归档；本研究已选满20份归档资料，请另建研究。");
+    await api("projects/"+project.id,{method:"PATCH",body:JSON.stringify({revision:project.revision,goal:project.goal,job_ids:project.job_ids,public_document_ids:[...project.public_document_ids,document.id]})});
+  }
   $("#conversation-public-status").innerHTML=`<p>已归档：<strong>${e(document.title)}</strong> · ${e(document.full_text_length)}字符</p><button type="button" class="text-button" data-public-source="${e(document.id)}">核对已归档全文 ↗</button><p class="form-note">来源 ${e(document.publisher)}；发布时间未知。${result.truncated?"归档保留全文，后续检索按片段读取。":""}</p>`;
   $("#conversation-question").value="结合刚归档的《"+document.title+"》与岗位原文，当前解释有哪些得到支持，哪些仍缺证据？请分别说明来源和推断边界。";
   return result;
@@ -708,7 +737,8 @@ async function saveWorkMaterial() {
   button.disabled=true;status.textContent="正在保存原文…";
   try{
     const result=await api("work-materials",{method:"POST",body:JSON.stringify({title,text,source_name})});
-    status.innerHTML=`已保存《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看原文 ↗</button> 保存未调用模型；可选择“只研究已归档资料”再提问。`;
+    const selected=selectResearchDocument(result.document.id,result.document.title);
+    status.innerHTML=`已保存《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看原文 ↗</button> ${selected?"已选入下次研究；可选择“只研究已归档资料”再提问。":"当前已选满20份，请先调整研究范围。"} 保存未调用模型。`;
     await loadPublicLibrary();
   }catch(error){status.textContent=error.message;}
   finally{button.disabled=false;}
@@ -722,7 +752,8 @@ async function archiveResearchDocument() {
   button.disabled=true;status.textContent="正在读取并归档正文，最多等待40秒…";
   try{
     const result=await api("public-documents",{method:"POST",body:JSON.stringify({url})});
-    status.innerHTML=`已归档《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看全文 ↗</button> 保存未调用模型，可以继续提问。`;
+    const selected=selectResearchDocument(result.document.id,result.document.title);
+    status.innerHTML=`已归档《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看全文 ↗</button> ${selected?"已选入下次研究，可以继续提问。":"当前已选满20份，请先调整研究范围。"} 保存未调用模型。`;
     await loadPublicLibrary();
   }catch(error){status.textContent=error.message;}
   finally{button.disabled=false;}
@@ -740,15 +771,16 @@ async function loadPublicLibrary(offset=0) {
   try{
     const data=await api("public-documents?"+new URLSearchParams({q,limit:10,offset}));
     if(request!==state.publicLibraryRequest)return;
-    root.innerHTML=data.documents.length ? `<p class="form-note">共 ${e(data.total)} 份归档资料，显示 ${data.offset+1}–${data.offset+data.documents.length}；网页显示最新归档，粘贴资料按次保留。</p>${data.documents.map(doc=>`<article class="detail-history"><h4>${e(doc.title)} ${badge(doc.evidence_kind==="work_material"?"粘贴工作资料":"公开网页","muted")}</h4><p class="form-note">${e(doc.publisher)} · ${e(doc.full_text_length)}字符<br>归档于 ${e(when(doc.observed_at))} · 发布 ${doc.source_published_at?e(when(doc.source_published_at)):"时间未知"}</p>${doc.evidence_kind==="work_material"?'<p class="form-note">来源说明由导入者填写，未经独立核实。</p>':""}${doc.integrity!=="verified"?'<p class="form-note">归档文件缺失或内容已变化，须重新核对。</p>':""}<button type="button" class="text-button" data-public-source="${e(doc.id)}">查看全文 ↗</button><button type="button" class="text-button" data-public-question="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>围绕这份资料提问</button></article>`).join("")}<div class="result-actions">${data.offset>0?`<button type="button" class="secondary small" data-public-library-page="${Math.max(0,data.offset-data.limit)}">上一页</button>`:""}${data.offset+data.documents.length<data.total?`<button type="button" class="secondary small" data-public-library-page="${data.offset+data.limit}">下一页</button>`:""}</div>` : '<p class="form-note">没有找到对应的归档。可调整关键词，或在上方补充公开网页。</p>';
+    root.innerHTML=data.documents.length ? `<p class="form-note">共 ${e(data.total)} 份归档资料，显示 ${data.offset+1}–${data.offset+data.documents.length}；网页显示最新归档，粘贴资料按次保留。</p>${data.documents.map(doc=>`<article class="detail-history"><h4>${e(doc.title)} ${badge(doc.evidence_kind==="work_material"?"粘贴工作资料":"公开网页","muted")}</h4><p class="form-note">${e(doc.publisher)} · ${e(doc.full_text_length)}字符<br>归档于 ${e(when(doc.observed_at))} · 发布 ${doc.source_published_at?e(when(doc.source_published_at)):"时间未知"}</p>${doc.evidence_kind==="work_material"?'<p class="form-note">来源说明由导入者填写，未经独立核实。</p>':""}${doc.integrity!=="verified"?'<p class="form-note">归档文件缺失或内容已变化，须重新核对。</p>':""}<button type="button" class="text-button" data-public-source="${e(doc.id)}">查看全文 ↗</button><button type="button" class="text-button" data-select-research-document="${e(doc.id)}" data-document-title="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>加入研究范围</button><button type="button" class="text-button" data-public-document-id="${e(doc.id)}" data-public-question="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>围绕这份资料提问</button></article>`).join("")}<div class="result-actions">${data.offset>0?`<button type="button" class="secondary small" data-public-library-page="${Math.max(0,data.offset-data.limit)}">上一页</button>`:""}${data.offset+data.documents.length<data.total?`<button type="button" class="secondary small" data-public-library-page="${data.offset+data.limit}">下一页</button>`:""}</div>` : '<p class="form-note">没有找到对应的归档。可调整关键词，或在上方补充公开网页。</p>';
   }catch(error){if(request===state.publicLibraryRequest)root.innerHTML=errorBox(error);}
 }
 
-function preparePublicDocumentQuestion(title) {
+function preparePublicDocumentQuestion(title,id) {
   const input=$("#question"),previous=state.publicQuestionPrefix;
   const draft=previous&&input.value.startsWith(previous)?input.value.slice(previous.length):input.value;
   const prefix="围绕归档文档《"+title+"》：\n";
   if((prefix+draft).length>4000){notify("现有问题已保留，请先精简内容后再加入文档标题。",true);return;}
+  if(id){selectedResearchDocuments.clear();selectResearchDocument(id,title);}
   state.publicQuestionPrefix=prefix;
   $("#research-source-mode").value="public";
   updateResearchScope();updateResearchApproach();
@@ -760,10 +792,18 @@ $("#public-library").addEventListener("toggle",event=>{if(event.target.open)load
 $("#refresh-public-library").addEventListener("click",()=>loadPublicLibrary());
 $("#public-library-query").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();loadPublicLibrary();}});
 document.addEventListener("click",event=>{
+  const add=event.target.closest("[data-select-research-document]");
+  if(add&&!add.disabled){selectResearchDocument(add.dataset.selectResearchDocument,add.dataset.documentTitle);return;}
+  const remove=event.target.closest("[data-remove-research-document]");
+  if(remove || event.target.closest("[data-clear-research-documents]")){
+    if(remove)selectedResearchDocuments.delete(remove.dataset.removeResearchDocument);else selectedResearchDocuments.clear();
+    sessionStorage.setItem("wo-document-selection",JSON.stringify([...selectedResearchDocuments].map(([id,title])=>({id,title}))));
+    renderSelectedResearchDocuments();return;
+  }
   const page=event.target.closest("[data-public-library-page]");
   if(page){loadPublicLibrary(Number(page.dataset.publicLibraryPage));return;}
   const question=event.target.closest("[data-public-question]");
-  if(question&&!question.disabled)preparePublicDocumentQuestion(question.dataset.publicQuestion);
+  if(question&&!question.disabled)preparePublicDocumentQuestion(question.dataset.publicQuestion,question.dataset.publicDocumentId);
 });
 
 document.addEventListener("submit",async event=>{

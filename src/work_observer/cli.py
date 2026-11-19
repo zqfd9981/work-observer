@@ -549,6 +549,7 @@ def execute_research(
     approach="standard",
     review_run_id=None,
     coverage_mode="all",
+    public_document_ids=None,
 ):
     from work_observer.reports.results import render, save_result
     from work_observer.research.agent import research
@@ -576,6 +577,8 @@ def execute_research(
             "approach": approach,
             "coverage_mode": coverage_mode,
         }
+        if public_document_ids is not None:
+            parameters["public_document_ids"] = public_document_ids
         if review_run_id:
             parameters["review_run_id"] = review_run_id
         run = store.create(parameters)
@@ -594,6 +597,7 @@ def execute_research(
                 approach=approach,
                 review_run_id=review_run_id,
                 coverage_mode=coverage_mode,
+                public_document_ids=public_document_ids,
             )
         )
         store.save(run["id"], state="finished", result=result)
@@ -652,6 +656,9 @@ def research_question(
     coverage_mode: Annotated[
         ResearchCoverage, typer.Option(help="all要求逐岗覆盖；question按问题选择必要资料")
     ] = ResearchCoverage.all,
+    document_id: Annotated[
+        list[str] | None, typer.Option(help="限定归档原文ID，可重复指定，最多20份")
+    ] = None,
     public_only: bool = typer.Option(
         False,
         "--materials-only",
@@ -680,6 +687,7 @@ def research_question(
         approach.value,
         review_run_id,
         "question" if public_only else coverage_mode.value,
+        document_id,
     )
 
 

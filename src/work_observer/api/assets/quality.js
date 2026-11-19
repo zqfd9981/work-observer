@@ -55,7 +55,7 @@ document.addEventListener("submit",async event=>{
   const item=qualityPacket?.repair;
   if (!item?.available) return;
   const f=event.target.elements,button=event.target.querySelector("button.primary");
-  const payload={question:item.question,job_ids:item.job_ids,filters:item.filters,review_run_id:item.review_run_id,review_id:item.review_id,approach:"standard",allow_public:false,offline:f.offline.checked,max_calls:Number(f.max_calls.value),timeout:Number(f.timeout.value)};
+  const payload={question:item.question,job_ids:item.job_ids,public_document_ids:item.public_document_ids??null,filters:item.filters,review_run_id:item.review_run_id,review_id:item.review_id,approach:"standard",allow_public:false,offline:f.offline.checked,max_calls:Number(f.max_calls.value),timeout:Number(f.timeout.value)};
   try {button.disabled=true;const started=await api("research",{method:"POST",body:JSON.stringify(payload)});location.hash="#research";await openRun(started.id);notify("新一轮已建立，旧研究与复核保留。");}
   catch(error){button.disabled=false;notify(error.message,true);}
 });

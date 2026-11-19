@@ -90,6 +90,10 @@ class ResearchStore:
                 and requested_approach != original_approach
             ):
                 raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
+            if resume and parameters.get("public_document_ids") != clean_input.get(
+                "public_document_ids"
+            ):
+                raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
             for key in keys & parameters.keys() & clean_input.keys():
                 if clean_input[key] != parameters[key]:
                     raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")

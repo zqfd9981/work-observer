@@ -625,7 +625,16 @@ class MemoryService:
             evidence_ids=evidence_ids,
         )
 
-    def recall(self, question, job_ids, project_id=None, at=None, kinds=None, excluded_runs=()):
+    def recall(
+        self,
+        question,
+        job_ids,
+        project_id=None,
+        at=None,
+        kinds=None,
+        excluded_runs=(),
+        public_document_ids=None,
+    ):
         job_ids = set(job_ids or [])
         kinds = set(kinds) if kinds is not None else KINDS
         if not kinds.issubset(KINDS):
@@ -651,6 +660,17 @@ class MemoryService:
                     continue
                 if row.job_id and row.job_id not in job_ids:
                     continue
+                if public_document_ids is not None:
+                    sources = row.evidence or []
+                    if not sources and row.kind in REVIEWED_KINDS and row.source_run_id:
+                        source_run = auditor._read("research_checkpoints", row.source_run_id) or {}
+                        sources = (source_run.get("result") or {}).get("evidence", [])
+                    if any(
+                        ev.get("public_document_id")
+                        and ev["public_document_id"] not in public_document_ids
+                        for ev in sources
+                    ):
+                        continue
                 if not auditor.memory(row.id, job_ids=job_ids, project_id=project_id)["eligible"]:
                     continue
                 overlap = len(query & _tokens(row.content))
@@ -670,9 +690,22 @@ class MemoryService:
         recalled = [item[3] for item in selected[:8]]
         for item in recalled:
             notices = revision_notices(
-                self.repository, item, at=stamp, project_id=project_id, scoped=True,
+                self.repository,
+                item,
+                at=stamp,
+                project_id=project_id,
+                scoped=True,
                 excluded_runs=excluded_runs,
             )
+            if public_document_ids is not None:
+                notices = [
+                    notice
+                    for notice in notices
+                    if all(
+                        not ref.startswith("publicdoc:") or ref.split(":")[1] in public_document_ids
+                        for ref in notice["evidence_ids"]
+                    )
+                ]
             if notices:
                 item["revision_notices"] = notices
         return recalled

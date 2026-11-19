@@ -20,7 +20,12 @@ def _digest(value):
     ).hexdigest()
 
 
-def material_state(repository, question, *, job_ids=None, filters=None, project_id=None):
+def material_state(
+    repository, question, *, job_ids=None, filters=None, project_id=None, public_document_ids=None
+):
+    from work_observer.research.document_scope import validate
+
+    public_document_ids = validate(repository, public_document_ids)
     from work_observer.research.agent import method_fingerprint
 
     catalog = Catalog(repository)
@@ -54,16 +59,25 @@ def material_state(repository, question, *, job_ids=None, filters=None, project_
         latest_ids = {}
         for row in session.scalars(
             select(PublicDocument)
+            .where(
+                PublicDocument.id.in_(public_document_ids)
+                if public_document_ids is not None
+                else True
+            )
             .order_by(PublicDocument.observed_at.desc(), PublicDocument.id.desc())
             .limit(5000)
         ):
-            if row.final_url not in latest:
-                latest[row.final_url] = {"url": row.final_url, "sha256": row.text_sha256}
-                latest_ids[row.final_url] = row.id
+            source_key = row.id if public_document_ids is not None else row.final_url
+            if source_key not in latest:
+                latest[source_key] = {"url": row.final_url, "sha256": row.text_sha256}
+                latest_ids[source_key] = row.id
             if len(latest) == 500:
                 break
     memories = MemoryService(repository).recall(
-        question, [j["job_id"] for j in jobs], project_id=project_id
+        question,
+        [j["job_id"] for j in jobs],
+        project_id=project_id,
+        public_document_ids=public_document_ids,
     )
     from work_observer.knowledge.service import DomainKnowledgeService
     from work_observer.memory.service import _tokens

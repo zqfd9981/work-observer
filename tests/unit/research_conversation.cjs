@@ -99,11 +99,22 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(!node("#public-library-list").innerHTML.includes("<script>"));
  node("#question").value="我原有的问题";
  const callsBeforeQuestion=context.calls.length;
- await vm.runInContext('preparePublicDocumentQuestion("合成文档")',context);
+ await vm.runInContext('preparePublicDocumentQuestion("合成文档","d".repeat(32))',context);
  assert.ok(node("#question").value.includes("合成文档"));
  assert.ok(node("#question").value.includes("我原有的问题"));
  assert.equal(node("#research-source-mode").value,"public");
  assert.equal(context.calls.length,callsBeforeQuestion); // Selecting a document only drafts a question.
+ assert.equal(JSON.parse(storage.get("wo-document-selection"))[0].id,"d".repeat(32));
+ assert.ok(node("#research-document-selection").innerHTML.includes("限定为所选 1 份"));
+ vm.runInContext('selectResearchDocument("c".repeat(32),"<script>第二份</script>")',context);
+ assert.ok(node("#research-document-selection").innerHTML.includes("&lt;script&gt;第二份"));
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});return path==="projects"?{id:"project-1"}:{id:"project-1",revision:3,worker_running:false};}',context);
+ await vm.runInContext('startResearchConversation("指定两份资料")',context);
+ const selectedProject=JSON.parse(context.calls.filter(c=>c.path==="projects").at(-1).options.body);
+ assert.deepEqual(selectedProject.public_document_ids,["d".repeat(32),"c".repeat(32)]);
+ assert.deepEqual(selectedProject.job_ids,[]);
+
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});return {documents:[],total:0,limit:10,offset:0};}',context);
  node("#public-library-query").value="Graph & API";
  await vm.runInContext('loadPublicLibrary(10)',context);
  const libraryQuery=new URLSearchParams(context.calls.at(-1).path.split("?")[1]);
