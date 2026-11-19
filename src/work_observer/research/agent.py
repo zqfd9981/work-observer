@@ -896,8 +896,32 @@ async def _research(
                 if recall() != result["memory_used"]:
                     raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                 check_knowledge()
+                tool_contract = None
+                if isinstance(model, ModelClient) and approach == "source_first":
+                    from work_observer.research.source_views import build_source_views
+
+                    model.tools = (
+                        source_first_tools(
+                            TOOLS,
+                            scope_jobs=candidates,
+                            views=build_source_views(list(evidence.values())),
+                            findings=result.get("source_findings", []),
+                        )
+                        + EXTRA_TOOLS
+                        + (PROPOSAL_TOOLS if allow_proposals else [])
+                        + ([INVESTIGATION_TOOL] if project_id else [])
+                    )
+                    tool_contract = {
+                        "call": result["model_calls"] + 1,
+                        "sha256": hashlib.sha256(
+                            json.dumps(model.tools, ensure_ascii=False, sort_keys=True).encode()
+                        ).hexdigest(),
+                        "available_tools": [definition["name"] for definition in model.tools],
+                    }
                 if len(json.dumps(history, ensure_ascii=False)) > 180_000:
                     raise ProbeError("RESEARCH_CONTEXT_LIMIT")
+                if tool_contract:
+                    result.setdefault("tool_contracts", []).append(tool_contract)
                 result["model_calls"] += 1
                 persist(pending=True)
                 outputs, call = await model.turn(history)
@@ -1375,7 +1399,11 @@ async def _research(
                     citation_ids = {item.get("citation_key"): key for key, item in evidence.items()}
                     resolution_issues = []
                     if approach == "source_first":
-                        from work_observer.research.source_first import SourceAnswer, resolve_answer
+                        from work_observer.research.source_first import (
+                            SourceAnswer,
+                            resolve_answer,
+                            unit_repair_options,
+                        )
 
                         answer = SourceAnswer.model_validate(arguments)
                     else:
@@ -1417,6 +1445,11 @@ async def _research(
                         )
                         finding_check["claim_resolution_issues"] = resolution_issues
                         finding_check["binding_passed"] &= not resolution_issues
+                        repairs = unit_repair_options(
+                            answer, result.get("source_findings", []), evidence, resolution_issues
+                        )
+                        if repairs:
+                            finding_check["unit_repair_options"] = repairs
                         result["source_binding_check"] = finding_check
                     if (
                         not queried

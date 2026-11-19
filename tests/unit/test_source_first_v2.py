@@ -14,6 +14,7 @@ from work_observer.research.source_first import (
     review_finding_history,
     review_findings,
     tools,
+    unit_repair_options,
 )
 from work_observer.research.source_views import build_source_views
 
@@ -140,6 +141,134 @@ def test_scoped_tool_ids_reject_character_omissions_and_do_not_change_standard_d
     # No-candidate scope must not emit an invalid empty enum; engine scope still applies.
     for definition in tools(TOOLS, scope_jobs=[]):
         Draft202012Validator.check_schema(definition["parameters"])
+
+
+def test_dynamic_contract_only_offers_read_sentences_and_never_uses_an_empty_enum():
+    from jsonschema import Draft202012Validator
+
+    before = deepcopy(TOOLS)
+    empty = tools(TOOLS, scope_jobs={"j1"}, views=build_source_views([]), findings=[])
+    assert not {"finish_research", "record_source_findings"} & {row["name"] for row in empty}
+    _, views = sources("岗位职责：\n负责接口开发。\n任职要求：\n熟悉Python者优先。")
+    limited = build_source_views([], max_sentences=1)
+    assert limited["sentence_count"] == 0
+    available = tools(TOOLS, scope_jobs={"j1"}, views=views, findings=[])
+    register_tool = next(row for row in available if row["name"] == "record_source_findings")
+    props = register_tool["parameters"]["$defs"]["SourceFinding"]["properties"]
+    ids = {row["sentence_id"] for row in sentences(views)}
+    assert props["sentence_ids"]["items"]["enum"] == sorted(ids)
+    validator = Draft202012Validator(props["sentence_ids"])
+    assert validator.is_valid([sorted(ids)[0]])
+    assert not validator.is_valid([sorted(ids)[0][:-1]])
+    assert props["supersedes"]["maxItems"] == 0
+    assert "finish_research" not in {row["name"] for row in available}
+    for definition in (*empty, *available):
+        Draft202012Validator.check_schema(definition["parameters"])
+    assert TOOLS == before
+
+
+def test_dynamic_finish_contract_follows_accepted_active_known_and_unknown_records():
+    from jsonschema import Draft202012Validator
+
+    _, views = sources("岗位职责：\n负责接口开发。")
+    ref = sentences(views)[1]["sentence_id"]
+    registered = register(
+        {
+            "findings": [
+                item(refs=[ref]),
+                item("F2", state="not_disclosed", facet="release_authority"),
+            ]
+        },
+        views,
+        [],
+        {"j1"},
+    )
+    before = deepcopy(registered)
+    definitions = tools(TOOLS, scope_jobs={"j1"}, views=views, findings=registered)
+    finish = next(row for row in definitions if row["name"] == "finish_research")["parameters"]
+    binding = finish["$defs"]["ClaimBinding"]["properties"]
+    assert binding["finding_id"]["enum"] == ["F1"]
+    assert binding["sentence_ids"]["items"]["enum"] == [ref]
+    assert finish["properties"]["unknown_finding_ids"]["items"]["enum"] == ["F2"]
+    assert not Draft202012Validator(binding["finding_id"]).is_valid("F2")
+    assert registered == before
+    revised = register(
+        {"findings": [item("F3", refs=[ref], supersedes=["F1"])]}, views, registered, {"j1"}
+    )
+    new = next(
+        row
+        for row in tools(TOOLS, scope_jobs={"j1"}, views=views, findings=revised)
+        if row["name"] == "finish_research"
+    )["parameters"]
+    assert new["$defs"]["ClaimBinding"]["properties"]["finding_id"]["enum"] == ["F3"]
+    assert not Draft202012Validator(
+        new["$defs"]["ClaimBinding"]["properties"]["finding_id"]
+    ).is_valid("F1")
+    only_known = tools(TOOLS, scope_jobs={"j1"}, views=views, findings=[registered[0]])
+    unknown_field = next(row for row in only_known if row["name"] == "finish_research")[
+        "parameters"
+    ]["properties"]["unknown_finding_ids"]
+    assert unknown_field["maxItems"] == 0
+    assert Draft202012Validator(unknown_field).is_valid([])
+    assert not Draft202012Validator(unknown_field).is_valid(["F2"])
+
+
+def test_dynamic_sentence_choices_respect_display_caps_and_source_conflicts():
+    ev, _ = sources("岗位职责：\n负责接口开发。")
+    limited = build_source_views(list(ev.values()), max_sentences=1)
+    defs = tools(TOOLS, views=limited, findings=[])
+    field = next(row for row in defs if row["name"] == "record_source_findings")["parameters"][
+        "$defs"
+    ]["SourceFinding"]["properties"]["sentence_ids"]
+    assert field["items"]["enum"] == [sentences(limited)[0]["sentence_id"]]
+    assert not limited["all_sentences_shown"]
+    text = "岗位职责：\n负责接口开发。"
+    evidence, _ = sources(text, cuts=[6])
+    list(evidence.values())[-1]["document_sha256"] = "c" * 64
+    conflicted = build_source_views(list(evidence.values()))
+    assert sentences(conflicted) == []
+    assert "record_source_findings" not in {
+        row["name"] for row in tools(TOOLS, views=conflicted, findings=[])
+    }
+
+
+@pytest.mark.parametrize("full_finding", [False, True])
+def test_unit_feedback_distinguishes_missing_registration_from_partial_selection(full_finding):
+    evidence, views = sources("建设与调试" * 180 + "后提交交付文档。", cuts=[700])
+    refs = [row["sentence_id"] for row in sentences(views)]
+    findings = register(
+        {"findings": [item(refs=refs if full_finding else refs[:1])]}, views, [], {"j1"}
+    )
+    proposed = answer([("F1", refs[:1])])
+    before = (deepcopy(proposed.model_dump()), deepcopy(findings), deepcopy(evidence))
+    resolved, issues = resolve_answer(proposed, findings, evidence)
+    options = unit_repair_options(resolved, findings, evidence, issues)
+    assert options["semantic_approval"] is False and not options["truncated"]
+    assert len(options["items"]) == 1
+    choice = options["items"][0]
+    assert choice["available_unit_sentence_ids"] == refs
+    assert choice["missing_from_selection"] == refs[1:]
+    assert choice["missing_from_finding"] == ([] if full_finding else refs[1:])
+    assert choice["action"] == (
+        "bind_full_registered_unit" if full_finding else "revise_finding_then_bind_full_unit"
+    )
+    assert choice["current_unit_fully_read_and_shown"] is True
+    assert (proposed.model_dump(), findings, evidence) == before
+    assert resolve_answer(proposed, findings, evidence)[1] == issues
+
+
+def test_unit_feedback_never_suggests_pieces_from_a_changed_source_identity():
+    evidence, views = sources("建设与调试" * 180 + "后提交交付文档。", cuts=[700])
+    refs = [row["sentence_id"] for row in sentences(views)]
+    findings = register({"findings": [item(refs=refs[:1])]}, views, [], {"j1"})
+    proposed = answer([("F1", refs[:1])])
+    for row in evidence.values():
+        row["document_sha256"] = "c" * 64
+    resolved, issues = resolve_answer(proposed, findings, evidence)
+    choice = unit_repair_options(resolved, findings, evidence, issues)["items"][0]
+    assert choice["available_unit_sentence_ids"] == []
+    assert choice["action"] == "verify_source_and_read_coverage"
+    assert choice["current_unit_fully_read_and_shown"] is False
 
 
 def test_declared_sentence_subset_avoids_unrelated_qualification_without_mutating_text():

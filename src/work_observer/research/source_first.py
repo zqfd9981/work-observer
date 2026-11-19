@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from work_observer.connectors.mcp_probe import ProbeError
 
-VERSION = "source-first-v5"
+VERSION = "source-first-v7"
 FACETS = {
     "work_task": "岗位建设与工作任务",
     "deliverable": "工作产出",
@@ -71,6 +71,7 @@ actor只按原文主体登记，不把Agent执行改为岗位本人执行。
 runtime_role、human_control这六个维度。没有披露的分别记录，不把未知合成否定全部职责。
 本试验仅使用固定本地JD，公开资料研究继续使用standard方法。所有登记、纠错和回答占原调用预算。
 source_view是已读evidence的紧凑分句索引：来源身份按每条evidence_id回查，原文和完整性标记不变。
+引用选项和可用工具随实际阅读与登记更新；只有已保存的已知分项才能用于自由判断，选项合法仍非语义通过。
 登记六维不等于回答问题。完成前回看原问题的每项交付要求；招聘方核实问题、例外和案例准备等
 若被要求须明确回答，具体问句或资料缺口可写gaps，不因未知分项已登记就省略。
 """
@@ -159,7 +160,7 @@ def _strict_schema(schema):
     return schema
 
 
-def tools(base, *, scope_jobs=None):
+def tools(base, *, scope_jobs=None, views=None, findings=None):
     selected = deepcopy(base)
     schema = SourceAnswer.model_json_schema()
     claim_schema = schema["$defs"]["SourceClaim"]
@@ -213,6 +214,42 @@ def tools(base, *, scope_jobs=None):
                 definition["parameters"]["$defs"]["SourceFinding"]["properties"]["job_id"][
                     "enum"
                 ] = allowed.copy()
+    if views is not None and findings is not None:
+        # Choices come from actual read receipts and accepted records only. The
+        # engine still validates job, version, exact text and units. Availability
+        # and enum membership do not establish semantic support.
+        read_ids = sorted(sentence_index(views))
+        active = {row["id"]: row for row in findings if row["active"]}
+        known = {key: row for key, row in active.items() if row["state"] not in _UNKNOWN}
+        unknown = sorted(set(active) - set(known))
+        selected = [
+            definition
+            for definition in selected
+            if not (
+                (definition["name"] == "record_source_findings" and not read_ids)
+                or (definition["name"] == "finish_research" and not known)
+            )
+        ]
+        for definition in selected:
+            schema = definition["parameters"]
+            if definition["name"] == "record_source_findings":
+                fields = schema["$defs"]["SourceFinding"]["properties"]
+                fields["sentence_ids"]["items"]["enum"] = read_ids
+                if active:
+                    fields["supersedes"]["items"]["enum"] = sorted(active)
+                else:
+                    fields["supersedes"]["maxItems"] = 0
+            elif definition["name"] == "finish_research":
+                binding = schema["$defs"]["ClaimBinding"]["properties"]
+                binding["finding_id"]["enum"] = sorted(known)
+                binding["sentence_ids"]["items"]["enum"] = sorted(
+                    {identity for row in known.values() for identity in row["sentence_ids"]}
+                )
+                unknown_field = schema["properties"]["unknown_finding_ids"]
+                if unknown:
+                    unknown_field["items"]["enum"] = unknown
+                else:
+                    unknown_field["maxItems"] = 0
     return selected
 
 
@@ -417,6 +454,113 @@ def _unit_issues(selected, all_citations, *, legacy=False):
         if cursor != end:
             issues.append("sentence_unit_requires_all_parts")
     return list(dict.fromkeys(issues))
+
+
+def unit_repair_options(answer, findings, evidence, issues):
+    """Describe literal missing unit pieces; never repair a finding or a claim.
+
+    A full read unit may span multiple Catalog evidence chunks. Selecting more
+    pieces in a claim cannot add pieces absent from the registered finding.
+    Only offer exact current units whose registered anchors still match the
+    original source identity, text and offsets. No fuzzy lookup or fresh read.
+    """
+    from work_observer.research.source_views import build_source_views
+
+    unit_problems = [row for row in issues if row.get("reason", "").startswith("sentence_unit_")]
+    if not unit_problems:
+        return None
+    current = sentence_index(build_source_views(list(evidence.values())))
+    active = {row["id"]: row for row in findings if row["active"]}
+    repairs, seen = [], set()
+    for problem in unit_problems:
+        index, identity = problem.get("index"), problem.get("finding_id")
+        row = active.get(identity)
+        if not row or type(index) is not int or not 0 <= index < len(answer.claims):
+            continue
+        claim = answer.claims[index]
+        selected = (
+            [
+                ref
+                for binding in claim.bindings
+                if binding.finding_id == identity
+                for ref in binding.sentence_ids
+            ]
+            if claim.bindings
+            else row["sentence_ids"]
+        )
+        for citation in row["citations"]:
+            unit = citation.get("unit_id")
+            if citation["sentence_id"] not in selected or (index, identity, unit) in seen:
+                continue
+            seen.add((index, identity, unit))
+            anchors = [part for part in row["citations"] if part.get("unit_id") == unit]
+            if not _unit_issues(
+                [part for part in anchors if part["sentence_id"] in selected],
+                anchors,
+                legacy=not claim.bindings,
+            ):
+                continue
+            parts = [part for part in current.values() if unit and part.get("unit_id") == unit]
+            matched = all(
+                any(
+                    part["sentence_id"] == anchor["sentence_id"]
+                    and all(
+                        part.get(key) == anchor.get(key)
+                        for key in (*_SOURCE_IDENTITY, "text", "start", "end")
+                    )
+                    for part in parts
+                )
+                for anchor in anchors
+            )
+            if not matched:
+                parts = []
+            available = [
+                part["sentence_id"] for part in sorted(parts, key=lambda part: part["start"])
+            ]
+            complete = bool(parts) and all(
+                part.get("unit_complete_read") and part.get("unit_all_parts_shown")
+                for part in parts
+            )
+            registered = {part["sentence_id"] for part in anchors}
+            missing = [ref for ref in available if ref not in registered]
+            stale_completeness = not all(
+                part.get("unit_complete_read") and part.get("unit_all_parts_shown")
+                for part in anchors
+            )
+            action = (
+                "verify_source_and_read_coverage"
+                if not complete
+                else "verify_reference_limit"
+                if len(available) > 8
+                else "revise_finding_then_bind_full_unit"
+                if missing or stale_completeness
+                else "bind_full_registered_unit"
+            )
+            repairs.append(
+                dict(
+                    index=index,
+                    finding_id=identity,
+                    unit_id=unit,
+                    job_id=row["job_id"],
+                    snapshot_id=citation.get("snapshot_id"),
+                    available_unit_sentence_ids=available,
+                    missing_from_finding=missing,
+                    missing_from_selection=[ref for ref in available if ref not in selected],
+                    current_unit_fully_read_and_shown=complete,
+                    action=action,
+                )
+            )
+    if not repairs:
+        return None
+    return dict(
+        items=repairs[:20],
+        truncated=len(repairs) > 20,
+        semantic_approval=False,
+        notice="若分句缺在已登记分项中，仅改终稿bindings无法补齐："
+        "须用新finding ID、supersedes和理由明确修订，"
+        "再绑定完整单元；若分项已有全单元，只补终稿选择。先核对来源及完整阅读，不能删去限定或自动当作语义通过。"
+        "程序未修改任何分项、判断或预算。",
+    )
 
 
 def resolve_answer(answer, findings, evidence):
