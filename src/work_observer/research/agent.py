@@ -882,7 +882,11 @@ async def _research(
                 from work_observer.research.source_first import tools as source_first_tools
 
                 model.tools = (
-                    (source_first_tools(TOOLS) if approach == "source_first" else TOOLS)
+                    (
+                        source_first_tools(TOOLS, scope_jobs=candidates)
+                        if approach == "source_first"
+                        else TOOLS
+                    )
                     + EXTRA_TOOLS
                     + ([PUBLIC_TOOL, PUBLIC_READ_TOOL] if allow_public else [])
                     + (PROPOSAL_TOOLS if allow_proposals else [])
@@ -1045,6 +1049,23 @@ async def _research(
                             "未知不能覆盖明示任务；无效批次未改变任何已登记记录。",
                         }
                         entry["validation"] = data["error"]
+                        attempted = (
+                            arguments.get("findings", []) if isinstance(arguments, dict) else []
+                        )
+                        invalid_jobs = [
+                            {"finding_id": row.get("id"), "job_id": row["job_id"]}
+                            for row in (attempted if isinstance(attempted, list) else [])
+                            if isinstance(row, dict)
+                            and isinstance(row.get("job_id"), str)
+                            and row["job_id"] not in candidates
+                        ]
+                        if invalid_jobs:
+                            data.update(
+                                invalid_finding_jobs=invalid_jobs[:40],
+                                allowed_job_ids=sorted(candidates),
+                                scope_feedback="请逐字选固定范围的岗位ID后重交整批；本批没有保存，"
+                                "不能引用其中分项。程序不猜测或自动修正ID，修正仍占原预算。",
+                            )
                     else:
                         result["source_findings"] = findings
                         entry["finding_ids"] = [row["id"] for row in arguments["findings"]]
@@ -1437,7 +1458,8 @@ async def _research(
                                     "source_finding_feedback": "事实用bindings选择对应finding的"
                                     "完整分句，程序生成引用，不必拼证据ID。未知维度仅在"
                                     "unknown_finding_ids列ID，不写自由事实。混合已知/未知"
-                                    "请拆开，不能删已知。对比仍同维度+synthesis。"
+                                    "请拆开，不能删已知。跨岗归纳用synthesis或inference，"
+                                    "多维关系不代表同口径可比。"
                                     "结构通过不是语义通过。",
                                 }
                                 if finding_check
@@ -1496,9 +1518,14 @@ async def _research(
                         )
                         evidence[item["id"]] = item
                     if approach == "source_first" and "evidence" in data:
-                        from work_observer.research.source_views import build_source_views
+                        from work_observer.research.source_views import (
+                            build_source_views,
+                            model_source_view,
+                        )
 
-                        data["source_view"] = build_source_views(list(evidence.values()))
+                        data["source_view"] = model_source_view(
+                            build_source_views(list(evidence.values()))
+                        )
                 if len(evidence) > 60:
                     raise ProbeError("RESEARCH_EVIDENCE_LIMIT")
                 history.append(

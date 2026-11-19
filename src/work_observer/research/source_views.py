@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from copy import deepcopy
 
 _SEPARATORS = re.compile(r"[。；！？;!?](?:\r\n|[\r\n])*|\r\n|[\r\n]")
 _SOURCE_FIELDS = ("document_id", "document_sha256", "content_sha256")
@@ -294,3 +295,29 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
     result["sentence_count"] = displayed
     result["accepted_evidence_count"] = sum(len(rows) for rows in grouped.values())
     return result
+
+
+def model_source_view(view):
+    """Compact repeated provenance; original read evidence remains in this run's history.
+
+    This projection is for model transport, never a registration/validation input.
+    Each sentence/context keeps its evidence_id, literal text and offsets. The
+    removed job/version/document fields are available on that exact evidence,
+    not inferred from a group's metadata (which may contain missing identities).
+    Coverage, truncation, boundaries and unit completeness remain unchanged.
+    Return a deep copy: persisted source findings and canonical views retain all
+    original provenance, including absent fields on individual evidence rows.
+    """
+    compact = deepcopy(view)
+    compact["format"] = "source-view-compact-v1"
+    compact["provenance_notice"] = (
+        "分句及标题上下文的来源身份按各自evidence_id回查本研究已读evidence（可在此前阅读响应）；"
+        "原文、位置、完整性与截断标记均保留。分组摘要不能补全单条来源缺失字段。"
+    )
+    for job in compact["jobs"]:
+        for source in job["sources"]:
+            for sentence in source["sentences"]:
+                for span in (sentence, *sentence["context"]):
+                    for field in ("job_id", "snapshot_id", *_SOURCE_FIELDS):
+                        span.pop(field, None)
+    return compact

@@ -114,6 +114,34 @@ def test_strict_tools_require_exposed_fields_but_hide_derived_claim_fields():
     )
 
 
+def test_scoped_tool_ids_reject_character_omissions_and_do_not_change_standard_definitions():
+    from jsonschema import Draft202012Validator
+
+    original = deepcopy(TOOLS)
+    allowed = {"1" * 32, "2" * 32}
+    typo = "2" * 31
+    definitions = tools(TOOLS, scope_jobs=allowed)
+    for definition in definitions:
+        if definition["name"] in {"read_job", "read_source_window"}:
+            field = definition["parameters"]["properties"]["job_id"]
+        elif definition["name"] == "record_source_findings":
+            field = definition["parameters"]["$defs"]["SourceFinding"]["properties"]["job_id"]
+        else:
+            continue
+        assert field["enum"] == sorted(allowed)
+        validator = Draft202012Validator(field)
+        assert all(validator.is_valid(identity) for identity in allowed)
+        assert not validator.is_valid(typo)
+        assert not validator.is_valid("another-job")
+    assert TOOLS == original
+    assert all(
+        "enum" not in item["parameters"].get("properties", {}).get("job_id", {}) for item in TOOLS
+    )
+    # No-candidate scope must not emit an invalid empty enum; engine scope still applies.
+    for definition in tools(TOOLS, scope_jobs=[]):
+        Draft202012Validator.check_schema(definition["parameters"])
+
+
 def test_declared_sentence_subset_avoids_unrelated_qualification_without_mutating_text():
     text = "岗位职责：\n搭建平台。\n任职要求：\n熟悉框架。"
     evidence, views = sources(text, (text.index("任职要求"),))

@@ -1,10 +1,11 @@
 """Literal source localization, independent of models, stores or semantic labels."""
 
 import hashlib
+from copy import deepcopy
 
 import pytest
 
-from work_observer.research.source_views import build_source_views
+from work_observer.research.source_views import build_source_views, model_source_view
 
 
 def evidence(text, *, start=0, end=None, identity="e1", job="j1", snapshot="s1", **extra):
@@ -23,6 +24,80 @@ def evidence(text, *, start=0, end=None, identity="e1", job="j1", snapshot="s1",
 
 def source(view, job_index=0, source_index=0):
     return view["jobs"][job_index]["sources"][source_index]
+
+
+def test_model_projection_deduplicates_only_provenance_and_does_not_mutate_canonical_view():
+    text = "岗位职责：\n负责Python接口开发；任职要求：\n具备调试经验者优先。"
+    rows = [
+        evidence(text, end=20, document_id="doc", document_sha256="a" * 64),
+        evidence(text, start=20, identity="e2"),
+    ]
+    original = build_source_views(rows)
+    before = deepcopy(original)
+    compact = model_source_view(original)
+    assert original == before
+    assert compact["format"] == "source-view-compact-v1"
+    for key in ("coverage", "all_sentences_shown", "truncated", "issues"):
+        assert source(compact)[key] == source(original)[key]
+    actual = {row["id"]: row for row in rows}
+    omitted = ("job_id", "snapshot_id", "document_id", "document_sha256", "content_sha256")
+    for full, projected in zip(
+        source(original)["sentences"], source(compact)["sentences"], strict=True
+    ):
+        assert all(key not in projected for key in omitted)
+        for full_span, small_span in zip(
+            (full, *full["context"]), (projected, *projected["context"]), strict=True
+        ):
+            assert {key: value for key, value in small_span.items() if key != "context"} == {
+                key: value for key, value in full_span.items() if key not in (*omitted, "context")
+            }
+            for key in omitted:
+                assert full_span[key] == (actual[small_span["evidence_id"]].get(key) or None)
+    # Metadata missing from e2 stays missing; source-level metadata must not fill it.
+    assert any(row["document_sha256"] is None for row in source(original)["sentences"])
+    projected["context"].clear()
+    assert original == before
+
+
+@pytest.mark.parametrize("cap", [1, 200])
+def test_model_projection_preserves_missing_ranges_and_qualifier_unit_flags(cap):
+    text = "岗位职责：\n" + "实战经验" * 180 + "者优先。\n负责接口开发。"
+    rows = [evidence(text, end=700)]
+    full = build_source_views(rows, max_sentences=cap)
+    compact = model_source_view(full)
+    assert source(compact)["coverage"]["gaps"] == source(full)["coverage"]["gaps"]
+    assert not source(compact)["coverage"]["fully_read"]
+    assert compact["all_sentences_shown"] == full["all_sentences_shown"]
+    for full_row, small_row in zip(
+        source(full)["sentences"], source(compact)["sentences"], strict=True
+    ):
+        for key in (
+            "sentence_id",
+            "text",
+            "start",
+            "end",
+            "context",
+            "unit_complete_read",
+            "unit_all_parts_shown",
+        ):
+            if key != "context":
+                assert full_row[key] == small_row[key]
+    if cap == 200:
+        assert not source(compact)["sentences"][-1]["unit_complete_read"]
+
+
+def test_model_projection_does_not_recover_citations_from_conflicting_source_metadata():
+    text = "建设平台。审核结果。"
+    full = build_source_views(
+        [
+            evidence(text, end=5, document_sha256="a" * 64),
+            evidence(text, start=5, identity="e2", document_sha256="b" * 64),
+        ]
+    )
+    compact = model_source_view(full)
+    assert source(compact)["sentences"] == []
+    assert source(compact)["issues"] == ["conflicting_document_sha256"]
+    assert compact["all_sentences_shown"] is False
 
 
 def test_exact_unicode_numbering_negative_and_building_sentences_are_not_classified():

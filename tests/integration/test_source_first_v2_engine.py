@@ -14,6 +14,61 @@ SourceModel = source_fixture.SourceModel
 source_workspace = source_fixture.source_workspace
 
 
+def test_current_engine_exposes_exact_scope_enum_and_rejects_a_typo_without_guessing(
+    source_workspace,
+):
+    from work_observer.research.agent import ModelClient
+
+    repo, store, jobs = source_workspace
+    typo = jobs[0][:-1]
+
+    class ScopeModel(ModelClient):
+        def __init__(self):
+            self.delegate = BoundModel()
+            self.last_usage = {}
+
+        async def turn(self, history):
+            definition = next(row for row in self.tools if row["name"] == "record_source_findings")
+            field = definition["parameters"]["$defs"]["SourceFinding"]["properties"]["job_id"]
+            assert field["enum"] == sorted(jobs)
+            outputs, call = await self.delegate.turn(history)
+            if call["name"] == "record_source_findings" and not any(
+                row.get("type") == "function_call_output"
+                and json.loads(row["output"]).get("invalid_finding_jobs")
+                for row in history
+            ):
+                args = json.loads(call["arguments"])
+                args["findings"][0]["job_id"] = typo
+                call["arguments"] = json.dumps(args)
+            return outputs, call
+
+    result = asyncio.run(
+        research(
+            repo,
+            "合成编号纠错",
+            Settings(),
+            job_ids=jobs,
+            approach="source_first",
+            model=ScopeModel(),
+            max_calls=6,
+        )
+    )
+    assert result["status"] == "completed" and result["model_calls"] == 6
+    checkpoint = store.load_checkpoint(result["run_id"])
+    feedback = next(
+        json.loads(row["output"])
+        for row in checkpoint["history"]
+        if row.get("type") == "function_call_output"
+        and json.loads(row["output"]).get("invalid_finding_jobs")
+    )
+    assert feedback["saved"] is False
+    assert feedback["error"] == "SOURCE_FIRST_FINDING_ID_OR_SCOPE"
+    assert feedback["invalid_finding_jobs"] == [{"finding_id": "F1", "job_id": typo}]
+    assert feedback["allowed_job_ids"] == sorted(jobs)
+    assert all(row["job_id"] in jobs for row in result["source_findings"])
+    assert any(typo in row.get("arguments", "") for row in checkpoint["history"])
+
+
 class BoundModel(SourceModel):
     def __init__(self, defect=None):
         super().__init__()
@@ -87,6 +142,30 @@ def test_v2_derives_only_declared_literal_citations_and_keeps_original_words(
     assert len(result["unknown_finding_ids"]) == 10
     assert all(row["actor"] == "job_holder" for row in result["source_findings"])
     saved = store.load_checkpoint(result["run_id"])
+    receipts = [
+        json.loads(row["output"])
+        for row in saved["history"]
+        if row.get("type") == "function_call_output"
+    ]
+    for receipt in receipts:
+        if "source_view" not in receipt:
+            continue
+        assert receipt["source_view"]["format"] == "source-view-compact-v1"
+        assert receipt["evidence"]  # Full provenance remains on the actual read response.
+        for job in receipt["source_view"]["jobs"]:
+            for source in job["sources"]:
+                assert all("job_id" not in row for row in source["sentences"])
+    actual = {row["id"]: row for row in result["evidence"]}
+    for citation in result["claims"][0]["sentence_citations"]:
+        assert citation["job_id"] == actual[citation["evidence_id"]]["job_id"]
+        assert citation["snapshot_id"] == actual[citation["evidence_id"]]["snapshot_id"]
+        assert "document_sha256" in citation
+    if defect:
+        feedback = next(
+            row["source_finding_feedback"] for row in receipts if "source_finding_feedback" in row
+        )
+        assert "同维度+synthesis" not in feedback
+        assert "多维关系不代表同口径可比" in feedback
     final = next(row for row in reversed(saved["history"]) if row.get("name") == "finish_research")
     proposal = json.loads(final["arguments"])
     assert "evidence_ids" not in proposal["claims"][0]

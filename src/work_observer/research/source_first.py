@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from work_observer.connectors.mcp_probe import ProbeError
 
-VERSION = "source-first-v3"
+VERSION = "source-first-v5"
 FACETS = {
     "work_task": "岗位建设与工作任务",
     "deliverable": "工作产出",
@@ -70,6 +70,9 @@ actor只按原文主体登记，不把Agent执行改为岗位本人执行。
 完成前检查每个有正文岗位的work_task、personal_coding_share、independent_delivery、release_authority、
 runtime_role、human_control这六个维度。没有披露的分别记录，不把未知合成否定全部职责。
 本试验仅使用固定本地JD，公开资料研究继续使用standard方法。所有登记、纠错和回答占原调用预算。
+source_view是已读evidence的紧凑分句索引：来源身份按每条evidence_id回查，原文和完整性标记不变。
+登记六维不等于回答问题。完成前回看原问题的每项交付要求；招聘方核实问题、例外和案例准备等
+若被要求须明确回答，具体问句或资料缺口可写gaps，不因未知分项已登记就省略。
 """
 
 Facet = Literal[
@@ -156,7 +159,7 @@ def _strict_schema(schema):
     return schema
 
 
-def tools(base):
+def tools(base, *, scope_jobs=None):
     selected = deepcopy(base)
     schema = SourceAnswer.model_json_schema()
     claim_schema = schema["$defs"]["SourceClaim"]
@@ -199,6 +202,17 @@ def tools(base):
             "strict": True,
         },
     )
+    if scope_jobs:
+        # An exact enum constrains provider output; the engine still independently
+        # enforces the fixed scope. Never fuzzy-match or repair a mistyped ID.
+        allowed = sorted(set(scope_jobs))
+        for definition in selected:
+            if definition["name"] in {"read_job", "read_source_window"}:
+                definition["parameters"]["properties"]["job_id"]["enum"] = allowed.copy()
+            elif definition["name"] == "record_source_findings":
+                definition["parameters"]["$defs"]["SourceFinding"]["properties"]["job_id"][
+                    "enum"
+                ] = allowed.copy()
     return selected
 
 
