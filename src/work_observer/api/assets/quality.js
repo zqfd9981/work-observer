@@ -1,5 +1,10 @@
 "use strict";
 let qualityPacket = null;
+function renderQualityRepair(packet) {
+  const item=packet.repair;
+  if (!item?.available) return "";
+  return `<form id="quality-repair" class="panel strategy-editor"><h3>参考本次复核重新研究</h3><p class="form-note">${e(item.notice)} 前次已调用 ${e(item.previous_model_calls)} 次。当前仅支持原本地岗位范围的直接研究。</p><div class="form-grid"><label>本轮最多调用<input name="max_calls" type="number" min="2" max="12" value="8" required></label><label>本轮秒数上限<input name="timeout" type="number" min="1" max="300" value="240" required></label></div><label><input name="offline" type="checkbox">只预览反馈与证据，不调用模型</label><button class="primary">新建这一轮（预算另计）</button><p class="form-note">使用现有研究方法，复核意见需回查；不会把Agent复核当人审或自动采纳为知识。</p></form>`;
+}
 const qualityDimensions = {citation_semantics:"引用是否支持判断",requirement_classification:"必备、加分与未明确",profile_coverage:"画像与重要遗漏",unknown_handling:"未知及范围边界",counterexamples:"反例和相反证据",question_answered:"原问题是否已回答"};
 const qualityStatus = {pending:"待核对",approved:"人工已核对",rejected:"需要补查",needs_recheck:"来源或记忆已变化，需重新核对"};
 window.loadQuality = async function () {
@@ -15,6 +20,7 @@ async function openQuality(id) {
   const packet=qualityPacket;
   const requirement={required:"必备",preferred:"加分",unspecified:"未明确性质"};
   $("#quality-detail").innerHTML=`<form id="quality-review" class="panel strategy-editor"><h2>${e(packet.question || "研究质量核对")}</h2><p class="form-note">${e(packet.notice)}<br>模型调用 ${packet.usage.model_calls ?? "未知"} 次；耗时 ${packet.usage.elapsed_seconds ?? "未知"} 秒；费用未知。${packet.approve_allowed ? "" : "<br>此结果缺有效判断、存在来源/记忆变化或范围问题，当前不能批准。"}</p>${renderReviewFindings(packet)}<h3>逐条判断与原文</h3>${packet.claims.map(claim=>`<fieldset data-quality-claim="${claim.index}"><legend>判断 ${claim.index+1} · ${e(requirement[claim.requirement] || claim.requirement)}</legend><p class="body-text">${e(claim.text)}</p>${claim.citations.map(cite=>`<details open><summary>${e(cite.title || "原文引用")} · ${e(cite.source || "未知来源")} · ${cite.start ?? "?"}–${cite.end ?? "?"}</summary><blockquote class="body-text">${e(cite.quote || "")}</blockquote><p class="form-note">来源发布时间：${e(cite.source_published_at || "未知")}；取得时间：${e(cite.observed_at || "未知")}<br>版本：${e(cite.snapshot_id || cite.public_document_id || "未归档搜索材料")}；${cite.valid ? "引用来源可识别，语义仍需核对" : "引用缺失或范围无法确认"}</p></details>`).join("")}<div class="form-grid"><label>原文语义<select name="support-${claim.index}"><option value="unknown">尚不能判断</option><option value="supported">原文支持主体、范围与强度</option><option value="unsupported">原文不充分支持</option></select></label><label>要求性质<select name="requirement-${claim.index}"><option value="unknown">尚不能判断</option><option value="correct">必备 / 加分 / 未明确标注正确</option><option value="incorrect">标注需要纠正</option></select></label></div><label>核对理由<input name="claim-note-${claim.index}" maxlength="1200" required placeholder="指出支持或不支持的原文，保留不确定"></label></fieldset>`).join("") || "<p>没有模型判断；不能批准为研究回答。</p>"}<h3>整体业务核对</h3>${Object.entries(qualityDimensions).map(([key,label])=>`<div class="form-grid"><label>${e(label)}<select name="dimension-${key}"><option value="unknown">待核对 / 证据不足</option><option value="pass">本次问题与范围内满足</option><option value="fail">需要修正</option>${!["citation_semantics","question_answered"].includes(key) ? '<option value="not_applicable">本次问题不适用</option>' : ""}</select></label><label>说明<input name="reason-${key}" required maxlength="1200" placeholder="说明依据、重要遗漏或不适用原因"></label></div>`).join("")}<details><summary>原研究记录的信息缺口</summary><ul>${packet.gaps.map(gap=>`<li>${e(gap)}</li>`).join("")}</ul></details><div class="form-grid"><label>审核者<input name="reviewer" required maxlength="100" placeholder="你的名称"></label><label>评审来源<select name="reviewer_kind"><option value="human">我在页面逐项核对原文</option><option value="agent_assisted">整理已有Agent协助评审（不代替人审）</option></select></label><label>处理<select name="decision"><option value="pending">保留待核对</option><option value="reject">拒绝当前回答，加入待补查</option>${packet.approve_allowed ? '<option value="approve">逐项支持且回答问题，人工接受</option>' : ""}</select></label></div><label>总结 / 下一步补查问题<textarea name="note" required maxlength="2000" rows="3" placeholder="拒绝时这段说明会进入待补查；不会自动调用模型或扩大范围"></textarea></label><button class="primary">保存核对</button><p class="form-note">核对记录不是新的独立证据。记忆遗忘会清除关联核对文本和补查通知。</p></form><div class="panel strategy-editor"><h3>已保存的核对</h3>${packet.reviews.length ? packet.reviews.map(review=>`<p><strong>${e(qualityStatus[review.status] || review.status)}</strong> · ${e(review.reviewer)} · ${review.reviewer_kind === "human" ? "人类核对" : "Agent协助评审"}${review.stale_result ? " · 结果已有变化" : ""}<br>${e(review.note)}</p>`).join("") : "<p>尚无核对记录，保持待审。</p>"}</div>`;
+  $("#quality-detail").innerHTML += renderQualityRepair(packet);
 }
 $("#refresh-quality")?.addEventListener("click",()=>loadQuality());
 document.addEventListener("click",event=>{const button=event.target.closest("[data-quality-open]");if(button)openQuality(button.dataset.qualityOpen).catch(error=>notify(error.message,true));});
@@ -30,4 +36,14 @@ document.addEventListener("submit",async event=>{
   catch(error){button.disabled=false;notify(error.message,true);}
 });
 document.addEventListener("click",event=>{if(event.target.closest("[data-forget-memory]")){qualityPacket=null;$("#quality-detail")?.replaceChildren();$("#quality-runs")?.replaceChildren();}});
+document.addEventListener("submit",async event=>{
+  if (event.target.id !== "quality-repair") return;
+  event.preventDefault();
+  const item=qualityPacket?.repair;
+  if (!item?.available) return;
+  const f=event.target.elements,button=event.target.querySelector("button.primary");
+  const payload={question:item.question,job_ids:item.job_ids,filters:item.filters,review_run_id:item.review_run_id,review_id:item.review_id,approach:"standard",allow_public:false,offline:f.offline.checked,max_calls:Number(f.max_calls.value),timeout:Number(f.timeout.value)};
+  try {button.disabled=true;const started=await api("research",{method:"POST",body:JSON.stringify(payload)});location.hash="#research";await openRun(started.id);notify("新一轮已建立，旧研究与复核保留。");}
+  catch(error){button.disabled=false;notify(error.message,true);}
+});
 if(location.hash === "#quality")loadQuality();

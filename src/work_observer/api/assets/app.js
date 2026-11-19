@@ -16,6 +16,13 @@ const reasonLabels = {VISION_NO_READABLE_TEXT:"未取得可核对的正文，未
 const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "profile-quality":"完整画像核对", "research-benchmarks":"研究方法核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
 let toastTimer, pollTimer;
 Object.assign(reasonLabels,{
+  RESEARCH_FEEDBACK_UNAVAILABLE:"原研究已不可用或已清除，请重新选择研究。",
+  RESEARCH_FEEDBACK_FIXED_LOCAL_SCOPE_REQUIRED:"修正研究须使用原问题、原岗位与筛选；其他范围请另建研究。",
+  RESEARCH_FEEDBACK_USE_PROJECT_BUDGET:"这是项目内的研究，请从原项目跟进，保留项目总预算。",
+  RESEARCH_FEEDBACK_STANDARD_ONLY:"参考复核的新一轮使用现有方法和固定本地原文，请关闭公开补查。",
+  RESEARCH_FEEDBACK_REJECTION_REQUIRED:"当前没有绑定本结果的未通过复核，请先逐项核对。",
+  RESEARCH_FEEDBACK_SOURCES_CHANGED:"原研究的资料或记忆已变化，请先按当前资料建立新研究。",
+  RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED:"所选复核或方法已变化，原进度保留；请查看最新复核后明确新建一轮。",
   RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED:"这次试验使用的方法已更新，不能混用新旧方法继续原进度。已保留原记录，请开始一次新研究。",
   SOURCE_FIRST_LOCAL_JD_ONLY:"分项核对试验只使用本地岗位正文。请关闭公开补查，或选择现有研究方法。"
 });
@@ -389,6 +396,12 @@ function safeURL(value) {
   catch { return ""; }
 }
 
+function renderReviewFeedback(result) {
+  const item=result.review_feedback;
+  if (!item) return "";
+  return `<section class="research-context"><h3>本轮参照的复核诊断（不是新证据）</h3><p>${item.reviewer_kind === "human" ? "人类复核意见，仍须回查原文" : "Agent辅助复核，非人审"}。旧答案未放入本轮证据，旧结果与额度保留。</p><p class="body-text">${e(item.note)}</p><details><summary>查看反馈来源与具体缺口</summary><p>原运行 ${e(item.run_id)} · 复核 ${e(item.review_id)}</p>${Object.values(item.dimensions || {}).map(row=>`<p>${e(row.reason)}</p>`).join("")}${(item.claim_issues || []).map(row=>`<p>原判断 ${e(row.index+1)}：${e(row.note)}</p>`).join("")}${item.omitted_claim_reviews ? `<p>另有 ${e(item.omitted_claim_reviews)} 条复核未放入上下文，未展示不等于没有问题。</p>` : ""}</details></section>`;
+}
+
 function renderResearchContext(result) {
   const plan = result.plan;
   const business=result.business_review || {status:"pending"};
@@ -397,7 +410,7 @@ function renderResearchContext(result) {
   const memories = result.memories || result.memory_used || [];
   const audit=result.audit || {};
   const auditNote=audit.stale_memory || audit.stale_knowledge || audit.stale_dependencies || audit.changed_sources?.length || audit.affected_strategy?.length;
-  return `${qualityNote}${auditNote ? `<div class="error-box"><strong>这是需要重新核对的历史结果</strong>${audit.stale_memory ? `<p>研究采用的偏好、知识或纠正已变化或撤回，后续研究会采用当前有效版本。</p>` : ""}${audit.stale_dependencies ? `<p>上游研究所用的偏好、纠正或知识已修订/撤回，这些派生认识需要重新核对。</p>` : ""}${audit.stale_knowledge ? `<p>参考的领域定义或关系已经换版、撤回或失效，需要按当前口径重新核对。</p>` : ""}${audit.changed_sources?.length ? `<p>部分来源已变化或原始文件完整性需要核对。历史引用保留当时版本，不能直接当作当前状态。</p>` : ""}${audit.affected_strategy?.length ? `<p>本次使用的检索方法已变化或回退；原始证据仍独立保留，可按当前策略重新研究。</p>` : ""}</div>` : ""}${plan ? `<details class="research-context" open><summary>研究计划与范围</summary><p>${e(plan.objective || "围绕问题查阅资料")}</p>${plan.steps?.length ? `<ol>${plan.steps.map(step=>`<li>${e(typeof step === "string" ? step : step.description || step.title || "查阅资料")}</li>`).join("")}</ol>` : ""}<p>${e(plan.scope_note || "")}</p></details>` : ""}
+  return `${renderReviewFeedback(result)}${qualityNote}${auditNote ? `<div class="error-box"><strong>这是需要重新核对的历史结果</strong>${audit.stale_memory ? `<p>研究采用的偏好、知识或纠正已变化或撤回，后续研究会采用当前有效版本。</p>` : ""}${audit.stale_dependencies ? `<p>上游研究所用的偏好、纠正或知识已修订/撤回，这些派生认识需要重新核对。</p>` : ""}${audit.stale_knowledge ? `<p>参考的领域定义或关系已经换版、撤回或失效，需要按当前口径重新核对。</p>` : ""}${audit.changed_sources?.length ? `<p>部分来源已变化或原始文件完整性需要核对。历史引用保留当时版本，不能直接当作当前状态。</p>` : ""}${audit.affected_strategy?.length ? `<p>本次使用的检索方法已变化或回退；原始证据仍独立保留，可按当前策略重新研究。</p>` : ""}</div>` : ""}${plan ? `<details class="research-context" open><summary>研究计划与范围</summary><p>${e(plan.objective || "围绕问题查阅资料")}</p>${plan.steps?.length ? `<ol>${plan.steps.map(step=>`<li>${e(typeof step === "string" ? step : step.description || step.title || "查阅资料")}</li>`).join("")}</ol>` : ""}<p>${e(plan.scope_note || "")}</p></details>` : ""}
     ${memories.length ? `<details class="research-context"><summary>本次参考的知识与偏好 · ${memories.length} 条</summary>${memories.map(item=>`<p>${badge(({preference:"偏好",correction:"人工纠正",knowledge:"已采纳知识"})[item.kind] || "已有记录","muted")} ${e(memoryText(item))} <small>第 ${e(item.version || 1)} 版</small></p>`).join("")}<p>以上为研究背景，关键判断仍引用原始材料。</p></details>` : ""}
     ${review ? `<details class="research-context"><summary>程序合同检查与下一步</summary>${(review.checks || []).map(check=>`<p>${badge(check.passed ? "已通过" : "待核对",check.passed ? "" : "amber")} ${e(check.name)}：${e(check.detail || "")}</p>`).join("")}${(review.limitations || []).map(item=>`<p>${e(item)}</p>`).join("")}${review.next_questions?.length ? `<h3>值得继续查的问题</h3><ul>${review.next_questions.map(item=>`<li>${e(item)}${result.run_id ? `<button class="text-button" data-followup-question="${e(item)}" data-followup-run="${e(result.run_id)}">留作待研究问题 ＋</button>` : ""}</li>`).join("")}</ul>` : ""}</details>` : ""}`;
 }

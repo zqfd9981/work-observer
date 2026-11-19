@@ -262,6 +262,24 @@ def render(result):
             f"- {job['title']} · {job['company']} · `{job['id']}` · "
             f"{'有正文' if job['has_detail'] else '仅摘要'} · {job['match_status']}"
         )
+    feedback = result.get("review_feedback")
+    if feedback:
+        lines.extend(
+            [
+                "",
+                "## 本轮参照的复核诊断（不是新证据）",
+                "",
+                "来源："
+                + ("人类复核" if feedback["reviewer_kind"] == "human" else "Agent辅助复核，非人审"),
+                "旧运行 `"
+                + feedback["run_id"]
+                + "`；复核 `"
+                + feedback["review_id"]
+                + "`。旧答案未作为本轮证据。",
+                escape(feedback["note"]),
+                "",
+            ]
+        )
     if result.get("plan"):
         lines.extend(["", "## 调查计划", "", *[f"- {step}" for step in result["plan"]["steps"]]])
     if result.get("memory_used"):

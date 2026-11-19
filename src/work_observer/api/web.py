@@ -66,6 +66,8 @@ class ResearchInput(BaseModel):
     timeout: int = Field(default=180, ge=1, le=300)
     allow_public: bool = False
     approach: Literal["standard", "source_first"] = "standard"
+    review_run_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    review_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class MemoryInput(BaseModel):
@@ -353,6 +355,8 @@ def create_app(
                 memory=memory,
                 allow_public=data.allow_public,
                 approach=data.approach,
+                review_run_id=data.review_run_id,
+                review_id=data.review_id,
             )
             store.save(identity, result=result, state="finished")
             from work_observer.reports.inbox import InboxService
@@ -389,6 +393,8 @@ def create_app(
 
     async def start_research(request):
         data = ResearchInput.model_validate(await read_json(request))
+        if data.review_id and not data.review_run_id:
+            raise ProbeError("RESEARCH_FEEDBACK_INVALID_RUN")
         if not data.question.strip():
             raise ProbeError("INVALID_QUESTION")
         if busy():
@@ -396,6 +402,21 @@ def create_app(
                 {"error_code": "RESEARCH_BUSY", "message": "已有研究正在进行，请先等待它完成。"},
                 409,
             )
+        if data.review_run_id:
+            from work_observer.quality.feedback import load_feedback
+
+            if data.approach != "standard" or data.allow_public:
+                raise ProbeError("RESEARCH_FEEDBACK_STANDARD_ONLY")
+            context = load_feedback(
+                store,
+                repository,
+                data.review_run_id,
+                question=data.question,
+                job_ids=data.job_ids,
+                filters=data.filters,
+                review_id=data.review_id,
+            )
+            data = data.model_copy(update={"review_id": context["review_id"]})
         run = store.create(redact(data.model_dump(mode="json"), credentials))
         launch(run["id"], data)
         return response({"id": run["id"], "state": "running"}, 202)

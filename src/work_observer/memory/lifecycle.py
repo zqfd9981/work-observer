@@ -379,6 +379,7 @@ def _cascade(
                 identities & {item.get("id") for item in used if isinstance(item, dict)}
                 or result.get("run_id") in affected_runs
                 or set(result.get("continued_from", [])) & affected_runs
+                or set(result.get("feedback_from", [])) & affected_runs
                 or result.get("project_id") in affected_projects
             ):
                 report_ids.add(path.stem)

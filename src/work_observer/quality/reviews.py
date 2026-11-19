@@ -122,6 +122,9 @@ class QualityReviewService:
             history = review_finding_history(result["source_findings"])
             if history:
                 packet["source_finding_history"] = history
+        from work_observer.quality.feedback import repair_preview
+
+        packet["repair"] = repair_preview(self.store, self.repository, identity)
         return packet
 
     def list_run(self, identity, *, result_sha256=None):

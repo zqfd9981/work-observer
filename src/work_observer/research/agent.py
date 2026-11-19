@@ -275,7 +275,7 @@ company_identity_status等业务库核验状态、归档完整性和未披露合
 中文输出，结论简洁具体，信息不足写入 gaps。只能通过提供的函数完成回答。"""
 
 
-def method_fingerprint(approach="standard"):
+def method_fingerprint(approach="standard", *, review_feedback=False):
     if approach not in {"standard", "source_first"}:
         raise ProbeError("RESEARCH_APPROACH_INVALID")
     baseline = hashlib.sha256(
@@ -297,6 +297,26 @@ def method_fingerprint(approach="standard"):
             ensure_ascii=False,
         ).encode()
     ).hexdigest()
+    if review_feedback:
+        if approach != "standard":
+            raise ProbeError("RESEARCH_FEEDBACK_STANDARD_ONLY")
+        import inspect
+        import sys
+
+        from work_observer.quality import feedback
+
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "baseline": baseline,
+                    "version": feedback.VERSION,
+                    "implementation": "\n".join(inspect.getsource(feedback).splitlines()),
+                    "engine": "\n".join(inspect.getsource(sys.modules[__name__]).splitlines()),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     if approach == "standard":
         return baseline
     import inspect
@@ -450,11 +470,24 @@ async def _persisted_research(repository, question, settings, **options):
     ]
     question = redact(question, credentials)
     # 恢复以权威输入为准；调用者未重复指定方法时也不能静默降级。
+    if "review_feedback" in options:
+        raise ProbeError("RESEARCH_FEEDBACK_CONTEXT_INTERNAL_ONLY")
     if options.get("resume") and options.get("checkpoint"):
         checkpoint_store, checkpoint_id = options["checkpoint"]
         original = checkpoint_store.get(checkpoint_id)["input"].get("approach", "standard")
         options.setdefault("approach", original)
+        original_input = checkpoint_store.get(checkpoint_id)["input"]
+        for key in ("review_run_id", "review_id"):
+            if key in options and options[key] != original_input.get(key):
+                raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
+            options.setdefault(key, original_input.get(key))
+        if original_input.get("review_run_id"):
+            for key in ("job_ids", "filters"):
+                options.setdefault(key, original_input.get(key))
+            options["filters"] = Filters.model_validate(options.get("filters") or {})
     approach = options.get("approach", "standard")
+    if options.get("review_id") and not options.get("review_run_id"):
+        raise ProbeError("RESEARCH_FEEDBACK_INVALID_RUN")
     if approach not in {"standard", "source_first"}:
         raise ProbeError("RESEARCH_APPROACH_INVALID")
     if approach == "source_first" and options.get("allow_public", False):
@@ -474,6 +507,8 @@ async def _persisted_research(repository, question, settings, **options):
         ),
         credentials,
     )
+    if options.get("review_run_id"):
+        parameters["review_run_id"] = options["review_run_id"]
     own_store = False
     checkpoint = options.get("checkpoint")
     if checkpoint:
@@ -504,6 +539,23 @@ async def _persisted_research(repository, question, settings, **options):
         options["checkpoint"] = (store, identity)
     repository.bind_research_store(store)
     try:
+        if options.get("review_run_id"):
+            from work_observer.quality.feedback import load_feedback
+
+            if approach != "standard" or options.get("allow_public") or options.get("project_id"):
+                raise ProbeError("RESEARCH_FEEDBACK_STANDARD_ONLY")
+            selected = options.get("review_id") or store.get(identity)["input"].get("review_id")
+            feedback = load_feedback(
+                store,
+                repository,
+                options["review_run_id"],
+                question=question,
+                job_ids=options.get("job_ids"),
+                filters=options.get("filters"),
+                review_id=selected,
+            )
+            options["review_feedback"] = feedback
+            parameters["review_id"] = feedback["review_id"]
         store.prepare_execution(
             identity,
             parameters,
@@ -563,6 +615,9 @@ async def _research(
     model=None,
     checkpoint=None,
     resume=False,
+    review_run_id=None,
+    review_id=None,
+    review_feedback=None,
     memory=None,
     allow_public=False,
     public_search=None,
@@ -618,6 +673,10 @@ async def _research(
     scope["archived_public_total"] = archived_public_total
     scope["archived_public_truncated"] = archived_public_total > len(archived_public_ids)
     method_version = RESEARCH_METHOD_VERSION
+    if review_feedback:
+        from work_observer.quality.feedback import VERSION as feedback_version
+
+        method_version = feedback_version
     if approach == "source_first":
         from work_observer.research.source_first import VERSION
 
@@ -625,7 +684,9 @@ async def _research(
     result = {
         "format_version": 1,
         "research_method_version": method_version,
-        "research_method_sha256": method_fingerprint(approach),
+        "research_method_sha256": method_fingerprint(
+            approach, review_feedback=bool(review_feedback)
+        ),
         "approach": approach,
         "requirement_policy": REQUIREMENT_POLICY,
         "run_id": checkpoint[1] if checkpoint else uuid4().hex,
@@ -702,6 +763,9 @@ async def _research(
     result["continued_from"] = [
         item["run_id"] for item in (conversation_context or {}).get("previous_findings", [])
     ]
+    if review_feedback:
+        result["review_feedback"] = review_feedback
+        result["feedback_from"] = [review_feedback["run_id"]]
     from work_observer.tracking.evaluation import BASELINE_ID, StrategyService, config_hash
 
     strategies = StrategyService(repository)
@@ -771,6 +835,10 @@ async def _research(
         from work_observer.research.source_first import POLICY
 
         system += POLICY
+    if review_feedback:
+        from work_observer.quality.feedback import POLICY as feedback_policy
+
+        system += feedback_policy
     history = [
         {"role": "system", "content": system},
         {
@@ -784,6 +852,7 @@ async def _research(
                     "memory_context": result["memory_used"],
                     "project_context": conversation_context,
                     "public_search_allowed": allow_public,
+                    **({"review_feedback": review_feedback} if review_feedback else {}),
                 },
                 ensure_ascii=False,
             ),
@@ -799,11 +868,36 @@ async def _research(
         raise ProbeError("RESEARCH_CONTEXT_LIMIT")
     elapsed = 0.0
     store, identity = checkpoint if checkpoint else (None, None)
+
+    def check_feedback():
+        if not review_feedback:
+            return
+        from work_observer.quality.feedback import load_feedback
+
+        current = load_feedback(
+            store,
+            repository,
+            review_feedback["run_id"],
+            question=question,
+            job_ids=job_ids,
+            filters=filters,
+            review_id=review_feedback["review_id"],
+        )
+        if current != review_feedback:
+            raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
+
+    check_feedback()
     if resume:
         saved = store.load_checkpoint(identity) if store else None
         if not saved or saved.get("version") != 1:
             raise ProbeError("RESEARCH_CHECKPOINT_MISSING")
         result = saved["result"]
+        if review_feedback and (
+            result.get("review_feedback") != review_feedback
+            or result.get("research_method_sha256")
+            != method_fingerprint(approach, review_feedback=True)
+        ):
+            raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
         saved_approach = result.get("approach", "standard")
         if saved_approach != approach:
             raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
@@ -896,6 +990,7 @@ async def _research(
                 if recall() != result["memory_used"]:
                     raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                 check_knowledge()
+                check_feedback()
                 tool_contract = None
                 if isinstance(model, ModelClient) and approach == "source_first":
                     from work_observer.research.source_views import build_source_views
@@ -930,6 +1025,7 @@ async def _research(
                 usage = getattr(model, "last_usage", {})
                 if usage:
                     result["usage"].append(usage)
+                check_feedback()
                 check_knowledge()
                 history.extend(outputs)
                 name = call.get("name")

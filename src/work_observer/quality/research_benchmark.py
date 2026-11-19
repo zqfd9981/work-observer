@@ -466,6 +466,11 @@ class ResearchBenchmarkService:
                 ):
                     context_sha256 = digest(
                         {key: payload[key] for key in ("project_context", "memory_context")}
+                        | (
+                            {"review_feedback": payload["review_feedback"]}
+                            if payload.get("review_feedback")
+                            else {}
+                        )
                     )
                     effective_prompt_sha256 = digest(payload)
                     effective_question_sha256 = digest(payload["question"])

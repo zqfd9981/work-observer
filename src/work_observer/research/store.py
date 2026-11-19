@@ -220,6 +220,13 @@ class ResearchStore:
                 saved = json.loads(checkpoint) if checkpoint else {}
                 dependencies = set((record.get("result") or {}).get("continued_from", []))
                 dependencies.update((saved.get("result") or {}).get("continued_from", []))
+                # Feedback is a privacy lineage, not factual ancestry. Even an
+                # unexecuted queued repair can already hold this source link.
+                dependencies.update((record.get("result") or {}).get("feedback_from", []))
+                dependencies.update((saved.get("result") or {}).get("feedback_from", []))
+                source = record.get("input", {}).get("review_run_id")
+                if isinstance(source, str):
+                    dependencies.add(source)
                 if dependencies & identities:
                     affected.append(identity)
         return affected

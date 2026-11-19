@@ -541,6 +541,7 @@ def execute_research(
     timeout,
     allow_public=False,
     approach="standard",
+    review_run_id=None,
 ):
     from work_observer.reports.results import render, save_result
     from work_observer.research.agent import research
@@ -567,6 +568,8 @@ def execute_research(
             "allow_public": allow_public,
             "approach": approach,
         }
+        if review_run_id:
+            parameters["review_run_id"] = review_run_id
         run = store.create(parameters)
         result = asyncio.run(
             research(
@@ -581,6 +584,7 @@ def execute_research(
                 checkpoint=(store, run["id"]),
                 allow_public=allow_public,
                 approach=approach,
+                review_run_id=review_run_id,
             )
         )
         store.save(run["id"], state="finished", result=result)
@@ -632,6 +636,9 @@ def research_question(
     approach: Annotated[
         ResearchApproach, typer.Option(help="standard为标准方法；source_first为来源维度约束试验")
     ] = ResearchApproach.standard,
+    review_run_id: str | None = typer.Option(
+        None, help="明确参照此运行的当前拒绝复核；原问题、岗位和筛选须相同，新预算另计"
+    ),
 ):
     """一个有数量与时间预算的研究 Agent；不会访问招聘网站或改写岗位。"""
     execute_research(
@@ -650,6 +657,7 @@ def research_question(
         timeout,
         allow_public,
         approach.value,
+        review_run_id,
     )
 
 
