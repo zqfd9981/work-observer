@@ -30,14 +30,40 @@ class AbilityRelation(BaseModel):
 class WorkRelationItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_kind: Literal["business", "task", "deliverable", "responsibility", "ability", "tool"]
-    source_text: str = Field(min_length=1, max_length=500)
+    source_text: str = Field(min_length=1, max_length=1200)
     target_kind: Literal["business", "task", "deliverable", "responsibility", "ability", "tool"]
-    target_text: str = Field(min_length=1, max_length=500)
+    target_text: str = Field(min_length=1, max_length=1200)
     predicate: Literal["supports", "requires", "produces", "contradicts"]
     rationale: str = Field(min_length=1, max_length=1200)
     claim_indices: list[StrictInt] = Field(min_length=1, max_length=24)
     basis: Literal["direct", "synthesis", "inference"]
     transfer_limit: str = Field(min_length=1, max_length=1200)
+    source_claim_index: StrictInt | None = None
+    target_claim_index: StrictInt | None = None
+
+
+class ReferencedRelation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_claim_index: StrictInt = Field(ge=0, le=23)
+    target_claim_index: StrictInt = Field(ge=0, le=23)
+    predicate: Literal["supports", "requires", "produces", "contradicts"]
+    basis: Literal["direct", "synthesis", "inference"]
+    rationale: str = Field(min_length=1, max_length=1200)
+    transfer_limit: str = Field(min_length=1, max_length=1200)
+
+
+class RelationComparison(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    relation_indices: list[StrictInt] = Field(min_length=2, max_length=4)
+    common_ground: str = Field(min_length=1, max_length=1200)
+    differences: str = Field(min_length=1, max_length=1200)
+    transfer_conditions: str = Field(min_length=1, max_length=1200)
+    basis: Literal["synthesis", "inference"]
+    unknowns: list[str] = Field(min_length=1, max_length=4)
+
+
+class BoundComparison(RelationComparison):
+    claim_indices: list[StrictInt] = Field(min_length=1, max_length=24)
 
 
 class MapContent(BaseModel):
@@ -52,10 +78,12 @@ class WorkMap(MapContent):
     # Read existing reports without changing their stored representation.
     ability_relations: list[AbilityRelation] = Field(default_factory=list, max_length=12)
     work_relations: list[WorkRelationItem] = Field(default_factory=list, max_length=18)
+    comparisons: list[BoundComparison] = Field(default_factory=list, max_length=4)
 
 
 class ResearchWorkMap(MapContent):
-    work_relations: list[WorkRelationItem] = Field(max_length=18)
+    work_relations: list[ReferencedRelation] = Field(max_length=18)
+    comparisons: list[RelationComparison] = Field(default_factory=list, max_length=4)
 
 
 def checked_map(result):
@@ -65,15 +93,37 @@ def checked_map(result):
     value = WorkMap.model_validate(result["work_map"])
     claims = result.get("claims", [])
     evidence_ids = {item["id"] for item in result.get("evidence", [])}
-    for row in [*value.work_types, *value.ability_relations, *value.work_relations]:
+    for row in [
+        *value.work_types,
+        *value.ability_relations,
+        *value.work_relations,
+        *value.comparisons,
+    ]:
         for index in row.claim_indices:
             if index < 0 or index >= len(claims):
                 raise ValueError("工作地图引用了不存在的判断")
             refs = claims[index].get("evidence_ids", [])
             if not refs or not set(refs) <= evidence_ids:
                 raise ValueError("工作地图判断缺少可回查原文")
-    output = value.model_dump()
-    for key in ("ability_relations", "work_relations"):
+    for row in value.work_relations:
+        for side in ("source", "target"):
+            index = getattr(row, side + "_claim_index")
+            if index is not None and (
+                not 0 <= index < len(claims)
+                or getattr(row, side + "_text") != claims[index]["text"]
+                or getattr(row, side + "_kind") != claims[index]["category"]
+                or index not in row.claim_indices
+            ):
+                raise ValueError("关系两端必须保留所引用判断的完整表述与性质")
+    for row in value.comparisons:
+        refs = set(row.relation_indices)
+        if len(refs) < 2 or any(i < 0 or i >= len(value.work_relations) for i in refs):
+            raise ValueError("比较必须定位至少两条不同的已有关系")
+        expected = {i for key in refs for i in value.work_relations[key].claim_indices}
+        if set(row.claim_indices) != expected:
+            raise ValueError("比较依据必须覆盖所比较关系的两端判断")
+    output = value.model_dump(exclude_none=True)
+    for key in ("ability_relations", "work_relations", "comparisons"):
         if key not in result["work_map"]:
             output.pop(key)
     return output
@@ -136,6 +186,27 @@ def render_map(result, labels):
                 f"{row['target_text']}",
                 f"  解释：{row['rationale']} {refs(row)}",
                 f"  解释性质：{bases[row['basis']]}；适用与迁移边界：{row['transfer_limit']}",
+            ]
+        )
+    if value.get("comparisons"):
+        lines.extend(
+            ["", "## 共用、差异与迁移比较", "", "依据来自所连接关系的两端判断；比较解释仍需核对。"]
+        )
+    for row in value.get("comparisons", []):
+        lines.extend(
+            [
+                "",
+                "比较关系："
+                + "；".join(
+                    f"{value['work_relations'][i]['source_text']} → "
+                    f"{value['work_relations'][i]['target_text']}"
+                    for i in row["relation_indices"]
+                ),
+                f"共用点：{row['common_ground']}",
+                f"差异：{row['differences']}",
+                f"迁移条件：{row['transfer_conditions']}",
+                f"解释性质：{bases[row['basis']]}；依据：{refs(row)}",
+                "仍待核实：" + "；".join(row["unknowns"]),
             ]
         )
     lines.extend(["", "## 混合、未知与未分类", "", *[f"- {s}" for s in value["unknowns"]]])

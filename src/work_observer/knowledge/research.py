@@ -73,6 +73,17 @@ class ResearchKnowledgeService:
                         {
                             **item,
                             "index": index,
+                            **(
+                                {
+                                    "comparisons": [
+                                        row
+                                        for row in value.get("comparisons", [])
+                                        if index in row["relation_indices"]
+                                    ]
+                                }
+                                if key == "work_relations"
+                                else {}
+                            ),
                             "saved_id": saved.id if saved else None,
                             "saved_status": saved.status if saved else None,
                         }
@@ -136,11 +147,18 @@ class ResearchKnowledgeService:
             if type(index) is not int or not 0 <= index < len(value.get(kind, [])):
                 raise ProbeError("KNOWLEDGE_MAP_ITEM_REQUIRED")
             item = value[kind][index]
+            comparisons = [
+                row
+                for row in value.get("comparisons", [])
+                if work_relation_index is not None and index in row["relation_indices"]
+            ]
+            claim_indices = sorted(
+                set(item["claim_indices"])
+                | {i for row in comparisons for i in row["claim_indices"]}
+            )
             ids = list(
                 dict.fromkeys(
-                    key
-                    for i in item["claim_indices"]
-                    for key in result["claims"][i]["evidence_ids"]
+                    key for i in claim_indices for key in result["claims"][i]["evidence_ids"]
                 )
             )
             source = {row["id"]: row for row in result["evidence"]}
@@ -210,8 +228,9 @@ class ResearchKnowledgeService:
                 "basis": item["basis"],
                 "rationale": item["rationale"],
                 "transfer_limit": item["transfer_limit"],
-                "claim_indices": item["claim_indices"],
+                "claim_indices": claim_indices,
                 "scope_note": value["scope_note"],
+                **({"comparisons": comparisons} if comparisons else {}),
             }
             if work_relation_index is not None:
                 context["evidence_scope"] = (

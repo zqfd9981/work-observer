@@ -46,9 +46,9 @@ def add_map(calls, public):
     reference = args["claims"][0]["evidence_ids"]
     args["claims"] = [
         dict(
-            category="business" if public and key != "tool" else key,
+            category=key,
             text="合成资料描述：" + text,
-            basis="direct",
+            basis="inference" if public and key not in {"business", "tool"} else "direct",
             requirement="unspecified",
             evidence_ids=reference,
         )
@@ -72,18 +72,16 @@ def add_map(calls, public):
         ],
         work_relations=[
             dict(
-                source_kind=a,
-                source_text=NODES[a],
-                target_kind=b,
-                target_text=NODES[b],
+                source_claim_index=positions[a],
+                target_claim_index=positions[b],
                 predicate=predicate,
                 basis="inference",
                 rationale="合成的关系解释，仍需核对",
                 transfer_limit="不证明任职必备、独立交付或实际执行",
-                claim_indices=[positions[a], positions[b]],
             )
             for a, b, predicate in EDGES
         ],
+        comparisons=[],
         unknowns=["资料未证明实际执行"],
     )
     args["revisions"] = []
@@ -106,6 +104,75 @@ class DocumentMap(MaterialModel):
         calls, raw = await super().turn(history)
         add_map(calls, self.public)
         return calls, raw
+
+
+class ComparedJobMap(MapModel):
+    async def turn(self, history):
+        calls, raw = await super().turn(history)
+        if calls[0]["name"] == "finish_research":
+            args = json.loads(calls[0]["arguments"])
+            # Two already-read synthetic jobs supply distinct sides of the comparison.
+            sides = args["claims"][:2]
+            args["claims"] = [
+                dict(side, category=category, text=text, requirement="required")
+                for side, label in zip(sides, ("平台", "内容"), strict=True)
+                for category, text in (
+                    ("task", label + "接口开发"),
+                    ("ability", "精通" + label + "系统：" + "合成条件；" * 110),
+                )
+            ]
+            args["work_map"]["work_relations"] = [
+                dict(
+                    source_claim_index=i,
+                    target_claim_index=i + 1,
+                    predicate="requires",
+                    basis="inference",
+                    rationale="仅为合成关联",
+                    transfer_limit="未证明独立交付",
+                )
+                for i in (0, 2)
+            ]
+            args["work_map"]["comparisons"] = [
+                dict(
+                    relation_indices=[0, 1],
+                    common_ground="都涉及接口工作",
+                    differences="系统对象不同",
+                    transfer_conditions="核实个人分工与规模",
+                    basis="inference",
+                    unknowns=["不能直接认定可以迁移"],
+                )
+            ]
+            calls[0]["arguments"] = json.dumps(args)
+        return calls, raw
+
+
+def test_saved_relation_carries_comparison_and_evidence_from_both_jobs(source_workspace):
+    repo, store, jobs = source_workspace
+    result = asyncio.run(
+        research(
+            repo,
+            "合成比较",
+            Settings(),
+            job_ids=jobs[:2],
+            approach="work_map",
+            max_calls=4,
+            model=ComparedJobMap(),
+        )
+    )
+    assert result["status"] == "completed", result
+    original = deepcopy(store.get(result["run_id"])["result"])
+    transfer = ResearchKnowledgeService(repo, store)
+    preview = transfer.preview(result["run_id"])
+    assert preview["work_relations"][0]["comparisons"][0]["claim_indices"] == [0, 1, 2, 3]
+    domain = transfer.save(result["run_id"], work_type_index=0)["record"]
+    body = dict(work_relation_index=0, domain_id=domain["id"])
+    row = transfer.save(result["run_id"], **body)["record"]
+    assert set(row["scope"]["job_ids"]) == set(jobs[:2])
+    assert row["scope"]["research_map"]["claim_indices"] == [0, 1, 2, 3]
+    assert row["scope"]["research_map"]["comparisons"] == result["work_map"]["comparisons"]
+    assert row["target_text"] == result["claims"][1]["text"] and len(row["target_text"]) > 500
+    assert transfer.save(result["run_id"], **body)["record"]["id"] == row["id"]
+    assert store.get(result["run_id"])["result"] == original
 
 
 @pytest.mark.parametrize("origin", ["job", "manual", "public"])

@@ -55,9 +55,9 @@ class ResearchKnowledgeInput(KnowledgeInput):
 class RelationInput(KnowledgeInput):
     domain_id: str
     source_kind: Literal["business", "task", "deliverable", "responsibility", "ability", "tool"]
-    source_text: str = Field(min_length=1, max_length=500)
+    source_text: str = Field(min_length=1, max_length=1200)
     target_kind: Literal["business", "task", "deliverable", "responsibility", "ability", "tool"]
-    target_text: str = Field(min_length=1, max_length=500)
+    target_text: str = Field(min_length=1, max_length=1200)
     evidence: list[dict] = Field(min_length=1, max_length=10)
     predicate: Literal["supports", "requires", "produces", "contradicts"] = "supports"
     counterevidence: list[dict] = Field(default_factory=list, max_length=10)

@@ -216,7 +216,7 @@ class DomainKnowledgeService:
             raise ProbeError("INVALID_RELATION_DIMENSION")
         if predicate not in {"supports", "requires", "produces", "contradicts"}:
             raise ProbeError("INVALID_RELATION_PREDICATE")
-        source_text, target_text = _text(source_text, 500), _text(target_text, 500)
+        source_text, target_text = _text(source_text, 1200), _text(target_text, 1200)
         if source_run_id is not None and (
             not isinstance(source_run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", source_run_id)
         ):

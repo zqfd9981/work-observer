@@ -25,7 +25,7 @@
     <details class="panel"><summary>从检索原文建立关系候选</summary><form id="knowledge-relation-form" class="match-form">
       <label>采用的领域定义<select name="domain_id" required></select></label>
       <div class="form-grid"><label>起点类别<select name="source_kind"><option value="task">任务</option><option value="deliverable">交付物</option><option value="responsibility">责任</option><option value="ability">能力</option><option value="tool">工具</option><option value="business">业务背景</option></select></label><label>终点类别<select name="target_kind"><option value="deliverable">交付物</option><option value="ability">能力</option><option value="tool">工具</option><option value="responsibility">责任</option><option value="task">任务</option><option value="business">业务背景</option></select></label></div>
-      <div class="form-grid"><label>起点表述<input name="source_text" required maxlength="500" placeholder="如：维护检索问答服务"></label><label>终点表述<input name="target_text" required maxlength="500" placeholder="如：可上线的问答接口"></label></div>
+      <div class="form-grid"><label>起点表述<input name="source_text" required maxlength="1200" placeholder="如：维护检索问答服务"></label><label>终点表述<input name="target_text" required maxlength="1200" placeholder="如：可上线的问答接口"></label></div>
       <label>关系<select name="predicate"><option value="produces">产出</option><option value="requires">需要</option><option value="supports">支撑</option><option value="contradicts">反驳</option></select></label>
       <label>与哪些已有关系冲突（可多选，须逐项审核）<select name="conflict_ids" multiple size="3"></select></label>
       <p class="form-note">先检索并在原文片段旁选择“支持证据”或“反例”。引用会重新核对；至少一条支持证据。关系仅适用证据覆盖的岗位或公开业务资料，不推广到企业全部岗位。</p>

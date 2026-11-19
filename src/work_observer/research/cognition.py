@@ -15,14 +15,18 @@ finish_research同时提交claims、gaps、work_map和revisions。work_map.versi
 先根据业务问题、主要任务和交付物形成可重叠分组，不按职位标题、工具名称或预设五类硬分。
 业务场景、技术层级与交付方式可以交叉；任务不足就放unknowns，可令work_types为空。
 每个分组写问题、任务、交付物、边界/反例与下一步验证。work_relations按本题需要连接business业务问题、
-task任务、deliverable交付物、responsibility责任、ability能力、tool工具；写两端具体表述、关系方向、
+task任务、deliverable交付物、responsibility责任、ability能力、tool工具；两端用source_claim_index、
+target_claim_index定位本次claims，程序保留完整原判断及category，不再重复抄写或缩写节点。
+写关系方向、
 为什么相关以及适用/迁移边界。predicate可为supports支撑、requires需要、produces产出、contradicts反驳；
 requires表示本条工作关系的条件，不自动表示招聘必备资格，任职要求强度仍以claims.requirement为准。
-不要强行凑齐六维或把工具提及改写为个人能力。关系和分组中的claim_indices是本次claims的零起始下标，必须实际存在，
-并选择能支持本条关系全部已知表述的判断；若边界涉及另一岗位，也需选择该岗位判断和原文。
+不要强行凑齐六维或把工具提及改写为个人能力。分组claim_indices和关系两端都是本次claims零起始下标，必须实际存在。
+单条关系的rationale/transfer_limit只解释所连接判断；跨关系或跨岗位的共用、差异、迁移比较放comparisons，
+每项relation_indices至少选两条不同关系，写common_ground、differences、transfer_conditions和unknowns。
+程序从被比较关系汇集全部两端判断和引用，不再另填一套可能漏侧的比较claim_indices；比较仍需语义核对。
 能力来自任职要求时，关系说明保留原文强度及其对象，例如“精通分布式设计”不能只写“设计能力”
-或换成“较强”。节点可以简写，但说明必须保留对应完整要求，不让地图概括冲淡支撑判断。
-跨岗位迁移比较需在本条claim_indices中选择两侧相关判断；整图引用两侧不等于本条已得到支持。
+或换成“较强”。节点由程序保留完整判断，不让地图概括冲淡支撑判断。
+跨岗位迁移比较需在comparisons中连接两侧相关关系；整图引用两侧不等于该比较已得到支持。
 一侧未明示某项要求不表示实际不需要；证据不足时缩小关系表述，明确迁移仍待核实。
 分组basis为synthesis或inference；关系可为direct/synthesis/inference。
 按问题取最少必要分组与关系，表述简短，不凑满字段上限。
@@ -88,10 +92,34 @@ def tools(base):
 def validate_map(answer, evidence):
     if answer.work_map.version != VERSION:
         raise ValueError("本轮工作地图版本应为" + VERSION)
+    value = answer.work_map.model_dump()
+    claims = [claim.model_dump() for claim in answer.claims]
+    relations = []
+    for item in value["work_relations"]:
+        indices = [item["source_claim_index"], item["target_claim_index"]]
+        if any(i < 0 or i >= len(claims) for i in indices):
+            raise ValueError("关系必须引用本轮实际存在的判断")
+        source, target = [claims[i] for i in indices]
+        relations.append(
+            {
+                **item,
+                "source_kind": source["category"],
+                "source_text": source["text"],
+                "target_kind": target["category"],
+                "target_text": target["text"],
+                "claim_indices": sorted(set(indices)),
+            }
+        )
+    value["work_relations"] = relations
+    for item in value["comparisons"]:
+        refs = set(item["relation_indices"])
+        if len(refs) < 2 or any(i < 0 or i >= len(relations) for i in refs):
+            raise ValueError("比较必须定位至少两条不同的已有关系")
+        item["claim_indices"] = sorted({i for key in refs for i in relations[key]["claim_indices"]})
     return checked_map(
         {
-            "work_map": answer.work_map.model_dump(),
-            "claims": [claim.model_dump() for claim in answer.claims],
+            "work_map": value,
+            "claims": claims,
             "evidence": list(evidence.values()),
         }
     )

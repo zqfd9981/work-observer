@@ -33,15 +33,12 @@ class RelationMap(MapModel):
             args = json.loads(calls[0]["arguments"])
             args["work_map"]["work_relations"] = [
                 dict(
-                    source_kind="task",
-                    source_text="实现接口",
-                    target_kind="ability",
-                    target_text="接口设计",
+                    source_claim_index=0,
+                    target_claim_index=1,
                     predicate="supports",
                     rationale="合成待验证解释",
                     transfer_limit="不证明独立平台交付",
                     basis="inference",
-                    claim_indices=[0, 1],
                 )
             ]
             calls[0]["arguments"] = json.dumps(args)

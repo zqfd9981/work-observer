@@ -13,7 +13,7 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.quality.reviews import QualityReviewService
 from work_observer.quality.service import DIMENSIONS
 from work_observer.reports.results import read_result, render, save_result
-from work_observer.research.agent import TOOLS, method_fingerprint, research
+from work_observer.research.agent import TOOL_BUDGET_POLICY, TOOLS, method_fingerprint, research
 from work_observer.research.cognition import VERSION, tools
 
 
@@ -69,6 +69,7 @@ class MapModel:
                             }
                         ],
                         "work_relations": [],
+                        "comparisons": [],
                         "unknowns": ["个人责任和资格未知"],
                     },
                 },
@@ -114,7 +115,10 @@ def test_map_engine_saves_original_references_and_repairs_within_budget(
     assert result["model_calls"] == (5 if repair else 4)
     assert result["analysis_origin"] == "research_agent"
     assert result["work_map"]["version"] == VERSION
-    assert result["research_method_sha256"] == method_fingerprint("work_map")
+    assert result["tool_budget_policy"] == TOOL_BUDGET_POLICY
+    assert result["research_method_sha256"] == method_fingerprint(
+        "work_map", tool_budget_policy=TOOL_BUDGET_POLICY
+    )
     assert store.get(result["run_id"])["input"]["approach"] == "work_map"
     assert store.load_checkpoint(result["run_id"])["result"]["work_map"] == result["work_map"]
     assert all(

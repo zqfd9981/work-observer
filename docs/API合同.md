@@ -26,7 +26,9 @@
 - 比较报告的`archived_changes`区分网页正文、用户修订、提取结果、换行、原始文件/元数据、归档不可用及观察范围变化；复用`PublicDocumentService.compare`，不把资料变化解释为岗位职责变化。`archived_documents`/`public_document_ids`可用于建立只有归档资料的新研究。
 - `research_impact.runs[].document_updates`明确原研究限定的旧归档及同来源较晚版本。用户保存对应复核问题时，沿用既有范围修订服务替换这些版本，保留`scope_history`与旧回答，不增加其他来源；重复保存不再次改范围或重置预算。旧判断只作为历史对照，须读取当前原文后再说明修订。
 - 新地图合同`work-map-v3-work-relations`以`work_relations`连接business/task/deliverable/responsibility/ability/tool；每条保留两端表述、predicate方向、依据判断、解释性质及适用边界。新Agent不重复输出旧`ability_relations`；历史地图仍按原字段读取、展示和保存，不改原报告。旧合同的未完研究继续受既有方法指纹约束，不能带着旧预算静默改用新合同。
+- Agent提交的关系两端使用`source_claim_index/target_claim_index`定位本轮判断；程序生成完整的两端文本、类别和`claim_indices`，保留任职要求强度。`comparisons`最多4项，每项以`relation_indices`连接2–4条不同关系，并写`common_ground/differences/transfer_conditions/basis/unknowns`；程序汇集比较对象两端的判断依据，不接受另填单侧比较引用。该绑定只保证可回查，不证明比较解释正确。旧报告的自由文本关系继续原样读取；新合同纳入既有方法指纹，不静默切换未完研究。
 - `POST /api/knowledge/research/{id}`可用`work_relation_index`（0–17）保存本轮原生关系；与`work_type_index`、旧`ability_relation_index`三选一。方向及内容从原研究读取，客户端不能另填。派生关系的`scope.evidence_scope`区分job、work_material与public_context；公开背景不证明岗位个人责任/必备资格，用户资料不证明实际执行。来源范围、既有审核、冲突及失效机制保持有效。
+- 保存关系时，关联比较及双方证据一同保留在既有`scope.research_map`和证据集合内；预览返回每条关系关联的`comparisons`。两端文本上限与判断一致为1200字，避免保存时截断限定。报告、研究页、知识卡显示比较条件与未知项；比较可准备原项目的反例查证，准备不写步骤或调用模型。
 - 岗位画像补充分类改用已保存、已采纳且在当前资料范围内有效的工作类型定义，不再自动提供旧五类。`classification_definitions`保留本次使用的定义及边界，候选附`definition_id`/`definition_version`；没有有效定义时保持未分类，核实问题仍可生成。定义/范围变化会使旧缓存过时，旧画像内容不改写。
 - `GET /api/profiles/{id}`的`classification_options`供画像页使用同一组当前有效定义；人工归类复用`POST /api/knowledge/jobs/{id}/domains`。命令`product profiles correct`可用`{domain_ids,reason}`走同一服务；旧`domains`参数仅保留既有纠正兼容。分类采用的定义进入原研究依赖，遗忘其来源时连同派生画像及复制了定义名称的纠正清理，原始JD保持。
 - 研究页地图中的工作类型边界、工作关系、旧能力关系和未知项可以准备原项目的追问。准备时重读权威运行记录并定位原步骤，只填可编辑问题，不创建步骤、不启动模型；边界/关系默认`kind=counterexample`，未知项默认`investigate`。用户继续后才走既有`POST /api/projects/{id}/steps`和`/run`，精确绑定`reply_to_step_id`，保留原范围、方法和累计额度。
