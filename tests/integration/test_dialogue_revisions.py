@@ -80,6 +80,95 @@ class ConversationModel:
         return [call], call
 
 
+def test_targeted_user_correction_is_recalled_before_revision_without_overwriting_old_answer(
+    source_workspace,
+    tmp_path,
+):
+    repo, store, jobs = source_workspace
+    projects = ProjectService(store)
+    project = projects.create("合成纠正流程", "接口责任边界", jobs[:1], max_calls=6)
+    private = MemoryService(repo).create(
+        "preference",
+        "只讨论接口责任：SYNTHETIC_PRIVATE_CONTEXT",
+        scope="project",
+        project_id=project["id"],
+        origin="user",
+    )
+    project = projects.add(
+        project["id"],
+        "接口工作",
+        revision=project["revision"],
+        coverage_mode="question",
+        max_calls=3,
+    )
+    project = asyncio.run(
+        execute_project(
+            projects,
+            project["id"],
+            repo,
+            Settings(),
+            model=ConversationModel(),
+            max_steps=1,
+        )
+    )
+    step = project["steps"][0]
+    original = deepcopy(store.get(step["run_id"])["result"])
+    assert any(row["id"] == private["id"] for row in original["memory_used"])
+    correction = MemoryService(repo).create(
+        "correction",
+        "针对本研究旧判断的纠正意见（用户提出，须按原文核实）\n"
+        + "原判断："
+        + original["claims"][0]["text"]
+        + "\n我的纠正和理由：接口任务和与平台协作不证明个人独立上线权。",
+        scope="project",
+        project_id=project["id"],
+        origin="user",
+    )
+    project = projects.add(
+        project["id"],
+        "核对我对个人独立上线的纠正意见",
+        revision=project["revision"],
+        reply_to_step_id=step["id"],
+        coverage_mode="question",
+        max_calls=3,
+    )
+    model = ConversationModel()
+    project = asyncio.run(
+        execute_project(
+            projects,
+            project["id"],
+            repo,
+            Settings(),
+            model=model,
+            max_steps=1,
+        )
+    )
+    result = store.get(project["steps"][-1]["run_id"])["result"]
+    assert result["status"] == "completed", result
+    assert any(row["id"] == correction["id"] for row in result["memory_used"])
+    assert any(row["id"] == correction["id"] for row in model.contexts[0]["memory_context"])
+    revision = result["cognition_revisions"][0]
+    assert revision["previous_run_id"] == step["run_id"]
+    assert revision["previous_statement"] == original["claims"][0]["text"]
+    assert revision["decision"] == "revise"
+    assert store.get(step["run_id"])["result"] == original
+    assert correction["status"] == "active" and correction["source_run_id"] is None
+    assert not correction["evidence"]  # A user opinion is not original source evidence.
+    from work_observer.memory.lifecycle import forget_personal
+
+    forget_personal(repo, store, private["id"], tmp_path / "reports")
+    validity = MemoryService(repo).validity(correction["id"])
+    assert not validity["eligible"] and "forgotten" in validity["reasons"]
+    erased = next(
+        row
+        for row in MemoryService(repo).list(include_history=True)
+        if row["id"] == correction["id"]
+    )
+    assert erased["content"] == "[已忘记]" and erased["status"] == "forgotten"
+    assert projects.get(project["id"])["state"] == "invalidated"
+    assert repo.counts()["jobs"] == len(jobs)
+
+
 @pytest.mark.parametrize("material_only", [False, True])
 def test_three_turn_reopened_conversation_carries_pending_revision_without_a_map(
     source_workspace, tmp_path, material_only
@@ -543,7 +632,9 @@ def test_review_trigger_requires_the_selected_old_runs_actual_rejection(missing)
     answer.revisions[0].trigger = "review"
     historical = context["previous_findings"].pop()
     historical["review_diagnostic"] = {
-        "id": "b" * 32, "status": "rejected", "reviewer_kind": "agent_assisted"
+        "id": "b" * 32,
+        "status": "rejected",
+        "reviewer_kind": "agent_assisted",
     }
     context["historical_reply"] = historical
     if missing == "diagnostic":

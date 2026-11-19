@@ -46,7 +46,8 @@ document.addEventListener("click",async event=>{
     if(button.dataset.projectOpen)await openProject(button.dataset.projectOpen);
     if(button.dataset.projectForget){
       if(!window.confirm("忘记整个项目的目标、追问、全部项目记忆与关联派生结果？原始岗位和原图仍保留；独立下载副本与备份不自动删除。此操作无法撤销。"))return;
-      await api("projects/"+button.dataset.projectForget,{method:"DELETE"});
+      const forgotten=await api("projects/"+button.dataset.projectForget,{method:"DELETE"});
+      window.clearForgottenConversation?.([button.dataset.projectForget,...(forgotten.affected_project_ids||[])]);
       window.resetResearchHistory?.();
       selectedProject=null;clearTimeout(projectPoll);$("#project-detail").replaceChildren();
       state.memories=new Map();state.lastRun=null;state.lastResult=null;state.operations=null;

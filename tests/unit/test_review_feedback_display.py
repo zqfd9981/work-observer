@@ -12,6 +12,7 @@ import pytest
     [
         "review_feedback_display.cjs",
         "result_source_context.cjs",
+        "claim_correction.cjs",
         "project_feedback_display.cjs",
         "research_conversation.cjs",
         "conversation_retry.cjs",
