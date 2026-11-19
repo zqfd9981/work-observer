@@ -213,7 +213,10 @@ class ProfileService:
             row.result["classification_definitions"] != definitions
         ):
             stale.append("工作类型定义、版本或有效范围已变化")
-        if row.result.get("research_method_sha256") != method_fingerprint():
+        if row.result.get("research_method_sha256") != method_fingerprint(
+            work_materials=bool(row.result.get("scope", {}).get("work_material_ids")),
+            archived_sources=bool(row.result.get("archived_sources_version")),
+        ):
             stale.append("采用的研究方法或检查口径已变化")
         strategy = row.result.get("strategy")
         if strategy and any(

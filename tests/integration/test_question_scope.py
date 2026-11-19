@@ -276,6 +276,7 @@ def test_public_document_can_explain_tool_but_cannot_prove_job_responsibility(
         assert result["research_method_sha256"] == method_fingerprint(
             coverage_mode=coverage,
             public_only=True,
+            archived_sources=True,
         )
 
 

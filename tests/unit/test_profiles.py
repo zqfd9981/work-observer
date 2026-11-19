@@ -115,6 +115,21 @@ def analyze(store, **changes):
     ), model
 
 
+def test_optional_archive_reader_does_not_make_a_fresh_profile_cache_stale(profile_store, tmp_path):
+    from work_observer.connectors.public_documents import PublicDocumentService
+
+    service, repository, _, job_id = profile_store
+    PublicDocumentService(repository, tmp_path / "materials").archive_text(
+        "合成公司资料", "RAG接口开发与平台团队协作", "合成自述"
+    )
+    first, _ = analyze(profile_store)
+    assert first["result"]["archived_sources_version"] == "archived-source-windows-v1"
+    assert not first["stale"]
+    again, unused = analyze(profile_store)
+    assert again["cached"] and again["id"] == first["id"] and unused.calls == 0
+    assert not service.get(job_id)["stale"]
+
+
 def test_profile_method_switch_invalidates_cache_and_task_matching(profile_store):
     from work_observer.retrieval.enhanced import DEFAULT_ALIASES
     from work_observer.tracking.evaluation import StrategyService

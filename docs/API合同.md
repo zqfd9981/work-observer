@@ -33,6 +33,8 @@
 - 研究页当前认识按原研究逐轮展示地图；后续仍有效的`cognition_revisions`按原运行与判断下标关联到分组、关系及比较，标出受修正影响或尚有疑问，提供原文、原图和查证入口。已拒绝/失效/旧范围轮不参与当前整理，不写回旧报告或自动合并为新结论。
 - 领域定义/关系列表及`browse_domain_knowledge`复用既有后续修正提示，按地图保存的来源运行、原判断下标和原文表述精确匹配，返回最近最多3条`revision_notices`；包含`previous_claim_index/previous_statement`、新表述、理由及后续运行回链。提示不修改采纳状态或独立判定真假。研究召回按当前项目、所选岗位/归档资料及历史截止过滤；提示的来源运行进入既有`source_run_ids`依赖。知识页提供相同回查提示。
 - 依赖遗忘沿原有闭包识别研究中已保存的记忆`revision_notices`来源（含检查点），清理因私有来源产生的提示副本；提示本身不改变原知识的事实资格或形成反向依赖。正式原文不改。
+- 新的普通/地图模型研究在本轮有归档资料时，固定范围向Agent展示前20份资料的定位目录（含类型、长度和时间，不是正文证据），混合岗位/资料研究同样可见。`read_archived_document({document_id,start})`按本轮冻结ID每次读取最多5600字，拆为700字引用，返回`next_start/has_more`，不联网、不占公开请求额度、不扩大资料范围；完整性、原始字符位置及来源性质沿现有服务核验。正文后段的引用可进入现有报告/知识候选与假设流程；企业背景不能直接当岗位个人责任。
+- 此可选读取能力记录`archived_sources_version=archived-source-windows-v1`，纳入既有方法指纹及检查点；无此标记的旧研究继续使用原工具、提示、冻结资料与原剩余预算。纯岗位、离线及原source_first试验不增添此能力。画像缓存按实际采用的可选合同核对，避免有归档资料时刚生成的画像被误判为方法失效。
 - 岗位画像补充分类改用已保存、已采纳且在当前资料范围内有效的工作类型定义，不再自动提供旧五类。`classification_definitions`保留本次使用的定义及边界，候选附`definition_id`/`definition_version`；没有有效定义时保持未分类，核实问题仍可生成。定义/范围变化会使旧缓存过时，旧画像内容不改写。
 - `GET /api/profiles/{id}`的`classification_options`供画像页使用同一组当前有效定义；人工归类复用`POST /api/knowledge/jobs/{id}/domains`。命令`product profiles correct`可用`{domain_ids,reason}`走同一服务；旧`domains`参数仅保留既有纠正兼容。分类采用的定义进入原研究依赖，遗忘其来源时连同派生画像及复制了定义名称的纠正清理，原始JD保持。
 - 研究页地图中的工作类型边界、工作关系、旧能力关系和未知项可以准备原项目的追问。准备时重读权威运行记录并定位原步骤，只填可编辑问题，不创建步骤、不启动模型；边界/关系默认`kind=counterexample`，未知项默认`investigate`。用户继续后才走既有`POST /api/projects/{id}/steps`和`/run`，精确绑定`reply_to_step_id`，保留原范围、方法和累计额度。

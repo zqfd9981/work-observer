@@ -22,6 +22,7 @@ from work_observer.research.archive_versions import (
     compare,
     historical_evidence_ids,
 )
+from work_observer.research.archived_sources import POLICY as READER_POLICY
 
 
 def versions(repo, tmp_path):
@@ -186,6 +187,8 @@ def test_interrupted_comparison_reopens_with_same_pair_and_remaining_budget(
     run = store.list()[0]
     frozen = deepcopy(store.load_checkpoint(run["id"]))
     if contract == "archive-versions-v1":
+        frozen["result"].pop("archived_sources_version")
+        frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(READER_POLICY, "")
         frozen["result"]["archive_versions_version"] = contract
         frozen["result"]["research_method_sha256"] = method_fingerprint(
             coverage_mode="question",
@@ -260,6 +263,8 @@ def test_pre_feature_checkpoint_keeps_original_method_without_comparison_tool(
     run = store.list()[0]
     saved = store.load_checkpoint(run["id"])
     baseline = method_fingerprint(coverage_mode="question", public_only=True, work_materials=True)
+    saved["result"].pop("archived_sources_version")
+    saved["history"][0]["content"] = saved["history"][0]["content"].replace(READER_POLICY, "")
     saved["result"].pop("archive_versions_version")
     saved["result"].pop("archive_comparisons")
     saved["result"]["scope"].pop("archive_version_pairs")

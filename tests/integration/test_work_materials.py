@@ -135,6 +135,7 @@ def test_material_can_state_work_but_is_not_promoted_to_a_job_qualification(
         coverage_mode="question",
         public_only=True,
         work_materials=True,
+        archived_sources=True,
     )
     if requirement == "unspecified":
         assert result["model_calls"] == 2 and not audit_result(result, repo)["changed_sources"]
