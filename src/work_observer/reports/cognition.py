@@ -240,6 +240,15 @@ def render_revisions(result, labels):
                 f"原运行：`{row['previous_run_id']}`；原步骤状态："
                 + states.get(row["previous_review_state"], row["previous_review_state"]),
                 *([quality_notice] if quality_notice else []),
+                *(
+                    [
+                        "研究范围或目标已经调整；本次是在新范围内重新核对旧判断，不表示外部工作发生变化。"
+                    ]
+                    if type(row.get("previous_scope_version")) is int
+                    and type(row.get("current_scope_version")) is int
+                    and row["previous_scope_version"] != row["current_scope_version"]
+                    else []
+                ),
                 f"旧判断：{row['previous_statement']}",
                 *[f"本轮判断：{statement}" for statement in row["new_statements"]],
                 f"理由：{row['reason']}",

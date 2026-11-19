@@ -174,4 +174,16 @@ def validate_revisions(answer, evidence, context):
                 "notice": "认识变化记录；不是外部需求变化或独立人审。",
             }
         )
+        previous_scope, current_scope = (
+            row.get("source_scope_version"),
+            row.get("current_scope_version"),
+        )
+        if (
+            type(previous_scope) is int
+            and type(current_scope) is int
+            and previous_scope != current_scope
+        ):
+            checked[-1].update(
+                previous_scope_version=previous_scope, current_scope_version=current_scope
+            )
     return checked

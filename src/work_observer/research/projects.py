@@ -885,7 +885,7 @@ class ProjectService:
         if step.get("review_run_id"):
             excluded.add(step["review_run_id"])
         auditor = DependencyAudit(repository, excluded_runs=excluded)
-        candidates, eligible, audits = [], [], {}
+        candidates, eligible, audits, past_followups = [], [], {}, []
         historical_reply = None
         for previous in record["steps"]:
             if (
@@ -904,9 +904,8 @@ class ProjectService:
             corrects_reply = reply_run and any(
                 row["previous_run_id"] == reply_run for row in result.get("cognition_revisions", [])
             )
-            if previous["scope_version"] != step["scope_version"] and not (
-                is_reply or corrects_reply
-            ):
+            scope_changed = previous["scope_version"] != step["scope_version"]
+            if scope_changed and not (is_reply or corrects_reply):
                 continue
             rejected_reply = (
                 is_reply and previous["id"] in rejected and not step.get("review_run_id")
@@ -924,6 +923,7 @@ class ProjectService:
                 is_reply
                 and (
                     rejected_reply
+                    or scope_changed
                     or audit["changed_sources"]
                     or any(
                         issue["reason"] == "source_changed" and issue["id"] in evidence_ids
@@ -972,6 +972,10 @@ class ProjectService:
                 if ev.get("public_document_id")
             } <= set(selected_documents):
                 continue
+            if scope_changed:
+                if corrects_reply:
+                    past_followups.append((previous, result))
+                continue
             eligible.append((previous, result))
             score = len(_tokens(step["question"]) & _tokens(previous["question"]))
             if not is_reply and previous["id"] not in dependencies and not score:
@@ -995,10 +999,14 @@ class ProjectService:
             candidates.append((3, order, previous, result))
         candidates.sort(key=lambda value: value[:2], reverse=True)
         followups = {}
-        eligible_runs = {previous["run_id"] for previous, _ in eligible}
+        step_order = {row["id"]: index for index, row in enumerate(record["steps"])}
+        followup_sources = sorted(
+            [*eligible, *past_followups], key=lambda pair: step_order[pair[0]["id"]]
+        )
+        eligible_runs = {previous["run_id"] for previous, _ in followup_sources}
         if historical_reply:
             eligible_runs.add(historical_reply[0]["run_id"])
-        for previous, result in eligible:
+        for previous, result in followup_sources:
             for revision in result.get("cognition_revisions", []):
                 if revision["previous_run_id"] not in eligible_runs:
                     continue
@@ -1010,6 +1018,8 @@ class ProjectService:
                         "new_claim_indices": revision["new_claim_indices"],
                         "reason": revision["reason"][:400],
                         "review_state": previous["state"],
+                        "source_scope_version": previous["scope_version"],
+                        "historical_scope": previous["scope_version"] != step["scope_version"],
                     }
                 )
         context = dict(
@@ -1033,6 +1043,7 @@ class ProjectService:
                 "仅选择同范围、仍有效的相关研究；omitted_claims是未放入上下文的判断数，"
                 "work_map_omitted表示整份地图未带入时各类省略数；未展示不能当作不存在。"
                 "origin为agent的问题由Agent提出，不是用户新增偏好或知识采纳。"
+                "范围变化的明确追问只带旧判断作重读对照，不作为当前有效前提。"
             ),
         )
         if reply_id:
@@ -1058,7 +1069,13 @@ class ProjectService:
                 question=previous["question"][:1000],
                 question_origin=previous.get("origin", "unspecified"),
                 review_state=previous["state"],
-                reason="source_version_changed",
+                reason=(
+                    "project_scope_changed"
+                    if previous["scope_version"] != step["scope_version"]
+                    else "source_version_changed"
+                ),
+                source_scope_version=previous["scope_version"],
+                current_scope_version=step["scope_version"],
                 derived_claims=[],
                 total_claims=len(result.get("claims", [])),
                 omitted_claims=len(result.get("claims", [])),
@@ -1069,6 +1086,13 @@ class ProjectService:
                     "不能由新旧认识不同推定外部工作实际变化。"
                 ),
             )
+            if historical["reason"] == "project_scope_changed":
+                historical["note"] = (
+                    "旧判断所在的资料范围或研究目标已调整，只供本次明确追问定位，"
+                    "不能代表新范围的结论或当前事实；也不能直接外推到新加入的资料。"
+                    "须重读本轮来源，核对旧判断及其followup_decisions后说明保留、修订或未知；"
+                    "范围调整不等于外部工作发生变化。"
+                )
             if previous["id"] in rejected:
                 from work_observer.quality.reviews import QualityReviewService
 
@@ -1154,11 +1178,7 @@ class ProjectService:
                     "不是当前岗位事实，不能因仍可回查就当成最新要求。"
                 )
                 item["historical_source_cutoffs"] = sorted(
-                    {
-                        cutoff
-                        for evidence in historical_sources
-                        for cutoff in evidence["cutoffs"]
-                    }
+                    {cutoff for evidence in historical_sources for cutoff in evidence["cutoffs"]}
                 )
             if result.get("work_map"):
                 item["work_map_omitted"] = {

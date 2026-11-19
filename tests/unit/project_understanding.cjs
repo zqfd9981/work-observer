@@ -58,3 +58,8 @@ assert.ok(datedUnderstanding.includes("含历史时点依据"));
 assert.ok(datedUnderstanding.includes("历史原文读取截止"));
 assert.ok(datedUnderstanding.includes('data-reply-step="second"'));
 assert.ok(!datedUnderstanding.includes("人工核对通过"));
+
+second.result.cognition_revisions[0].previous_scope_version=1;
+second.result.cognition_revisions[0].current_scope_version=2;
+assert.ok(vm.runInContext("renderProjectUnderstanding(project)",context).includes("研究范围或目标已经调整"));
+assert.equal(vm.runInContext("renderRevisionScope({})",context),"");
