@@ -785,7 +785,7 @@ async function openResearchConversation(id, navigate=true) {
   } : {};
   const contextKind=same ? $("#conversation-context [name=kind]")?.value || "preference" : "preference";
   conversation.renderedId=id;
-  const active=same && ["conversation-question","conversation-context-content","conversation-public-url","conversation-material-title","conversation-material-source","conversation-material-text","application-background","application-goal","application-constraints","action-feedback-did","action-feedback-observed","action-feedback-artifact"].includes(document.activeElement?.id) ? document.activeElement.id : null;
+  const active=same && ["conversation-question","conversation-context-content","conversation-public-url","conversation-material-title","conversation-material-source","conversation-material-text","application-background","application-goal","application-constraints","action-feedback-did","action-feedback-observed","action-feedback-artifact","action-feedback-criterion","action-feedback-reproduction"].includes(document.activeElement?.id) ? document.activeElement.id : null;
   const selection=active ? [$("#"+active).selectionStart,$("#"+active).selectionEnd] : null;
   const offline=same ? $("#conversation-offline").checked : project.steps.at(-1)?.offline ?? $("#offline").checked;
   const allowPublic=same ? $("#conversation-allow-public").checked : project.steps.at(-1)?.allow_public ?? $("#allow-public").checked;
@@ -955,6 +955,7 @@ document.addEventListener("click",async event=>{
 
 const conversationMaterialReceipts = new Map();
 const actionFeedbackSelections = new Map(),actionFeedbackDrafts = new Map(),actionFeedbackSaving = new Set();
+const attemptCheckLabels={unverified:"尚未核验",met:"按所填标准自查符合",not_met:"按所填标准自查不符",unclear:"尝试后仍无法判断"};
 
 function currentActionFeedback(projectId) {
   if(!actionFeedbackSelections.has(projectId)){
@@ -963,7 +964,7 @@ function currentActionFeedback(projectId) {
   }
   const selection=actionFeedbackSelections.get(projectId);if(!selection)return null;
   const key=projectId+":"+selection.stepId+":"+selection.index;
-  if(!actionFeedbackDrafts.has(key))actionFeedbackDrafts.set(key,{...selection,did:"",observed:"",artifact:""});
+  if(!actionFeedbackDrafts.has(key))actionFeedbackDrafts.set(key,{...selection,did:"",observed:"",artifact:"",criterion:"",checkState:"unverified",reproduction:""});
   return actionFeedbackDrafts.get(key);
 }
 
@@ -977,7 +978,11 @@ function captureActionFeedback(projectId) {
   const draft=currentActionFeedback(projectId);
   if(!draft||draft.documentId)return;
   if($("#action-feedback-form")?.dataset?.actionFeedbackKey!==projectId+":"+draft.stepId+":"+draft.index)return;
-  for(const key of ["did","observed","artifact"]){const input=$("#action-feedback-"+key);if(input)draft[key]=input.value;}
+  for(const key of ["did","observed","artifact","criterion","checkState","reproduction"]){const input=$("#action-feedback-"+key);if(input)draft[key]=input.value||(key==="checkState"?"unverified":"");}
+}
+
+function renderAttemptVerification(draft) {
+  return `<label>本次核验标准及其来源（可选）<textarea id="action-feedback-criterion" name="criterion" rows="3" maxlength="2000" placeholder="什么结果算符合？标准来自哪份原文、原建议，还是自行约定？尚未明确可留空。">${e(draft.criterion||"")}</textarea></label><label>本次自查结果<select id="action-feedback-checkState" name="check_state">${Object.entries(attemptCheckLabels).map(([value,label])=>`<option value="${value}" ${value===(draft.checkState||"unverified")?"selected":""}>${e(label)}</option>`).join("")}</select></label><label>复现条件（可选）<textarea id="action-feedback-reproduction" name="reproduction" rows="3" maxlength="2000" placeholder="使用的资料或程序版本、输入/样本、运行环境等；不知道的项目留待核实。">${e(draft.reproduction||"")}</textarea></label><p class="form-note">有日志不等于通过验证。选择自查符合或不符须说明标准；自查结果仍是用户回报，未经独立验收。</p>`;
 }
 
 function renderActionFeedback(project) {
@@ -985,7 +990,7 @@ function renderActionFeedback(project) {
   const step=project.steps.find(step=>step.id===draft.stepId&&step.run_id===draft.runId);
   const action=step?.result?.application_plan?.actions?.[draft.index];
   if(!action)return '<p class="form-note">原行动建议当前无法读取，回报草稿保留；请从可查看的原建议继续。</p>';
-  return `<details id="action-feedback-panel" class="detail-section" open><summary>回报尝试结果 · ${e(action.title)}</summary><form id="action-feedback-form" data-action-feedback-key="${e(project.id+':'+draft.stepId+':'+draft.index)}">${draft.documentId?`<p class="form-note">尝试记录已保存。${draft.attached?"已加入本研究，可继续核实。":"尚未加入本研究，可直接重试，无需再次保存。"}</p><button type="button" class="text-button" data-public-source="${e(draft.documentId)}">核对尝试记录原文 ↗</button>`:`<label>实际尝试了什么<textarea id="action-feedback-did" name="did" rows="3" maxlength="4000" required>${e(draft.did)}</textarea></label><label>观察结果或遇到的问题<textarea id="action-feedback-observed" name="observed" rows="3" maxlength="4000" required>${e(draft.observed)}</textarea></label><label>产出或核验原文（可选）<textarea id="action-feedback-artifact" name="artifact" rows="4" maxlength="50000" placeholder="粘贴实际取得的产出、测试记录或错误信息；没有就留空。">${e(draft.artifact)}</textarea></label>`}<button class="secondary" ${project.worker_running||actionFeedbackSaving.has(project.id)?"disabled":""}>${draft.documentId?"加入记录并准备追问":"保存尝试记录并准备追问"}</button><p class="form-note">记录为用户自述，未独立核实；建议不会自动标成完成或能力证明。保存不调用模型，也不自动执行外部动作。</p>${draft.documentId?`<button type="button" class="text-button" data-action-feedback-new ${actionFeedbackSaving.has(project.id)?'disabled':''}>记录另一次尝试</button>`:""}</form></details>`;
+  return `<details id="action-feedback-panel" class="detail-section" open><summary>回报尝试结果 · ${e(action.title)}</summary><form id="action-feedback-form" data-action-feedback-key="${e(project.id+':'+draft.stepId+':'+draft.index)}">${draft.documentId?`<p class="form-note">尝试记录已保存。${draft.attached?"已加入本研究，可继续核实。":"尚未加入本研究，可直接重试，无需再次保存。"}</p><button type="button" class="text-button" data-public-source="${e(draft.documentId)}">核对尝试记录原文 ↗</button>`:`<label>实际尝试了什么<textarea id="action-feedback-did" name="did" rows="3" maxlength="4000" required>${e(draft.did)}</textarea></label><label>观察结果或遇到的问题<textarea id="action-feedback-observed" name="observed" rows="3" maxlength="4000" required>${e(draft.observed)}</textarea></label>${renderAttemptVerification(draft)}<label>产出或核验原文（可选）<textarea id="action-feedback-artifact" name="artifact" rows="4" maxlength="50000" placeholder="粘贴实际取得的产出、测试记录或错误信息；没有就留空。">${e(draft.artifact)}</textarea></label>`}<button class="secondary" ${project.worker_running||actionFeedbackSaving.has(project.id)?"disabled":""}>${draft.documentId?"加入记录并准备追问":"保存尝试记录并准备追问"}</button><p class="form-note">记录为用户自述，未独立核实；建议不会自动标成完成或能力证明。保存不调用模型，也不自动执行外部动作。</p>${draft.documentId?`<button type="button" class="text-button" data-action-feedback-new ${actionFeedbackSaving.has(project.id)?'disabled':''}>记录另一次尝试</button>`:""}</form></details>`;
 }
 
 async function selectActionFeedback(stepId,index) {
@@ -999,11 +1004,11 @@ async function selectActionFeedback(stepId,index) {
   $("#action-feedback-panel").scrollIntoView({block:"center",behavior:"smooth"});
 }
 
-async function saveActionFeedback(did="",observed="",artifact="") {
+async function saveActionFeedback(did="",observed="",artifact="",verification={}) {
   const projectId=conversation.id;
   if(actionFeedbackSaving.has(projectId))throw new Error("尝试记录正在保存，请稍候。");
   actionFeedbackSaving.add(projectId);
-  try{return await saveSelectedActionFeedback(did,observed,artifact);}
+  try{return await saveSelectedActionFeedback(did,observed,artifact,verification);}
   finally{
     actionFeedbackSaving.delete(projectId);
     if(conversation.id===projectId){
@@ -1014,13 +1019,19 @@ async function saveActionFeedback(did="",observed="",artifact="") {
   }
 }
 
-async function saveSelectedActionFeedback(did="",observed="",artifact="") {
+async function saveSelectedActionFeedback(did="",observed="",artifact="",verification={}) {
   const projectId=conversation.id,draft=currentActionFeedback(projectId);
   if(!draft)throw new Error("请先选择要回报的行动建议。");
   if(!draft.documentId){
     draft.did=did;draft.observed=observed;draft.artifact=artifact;
+    draft.criterion=verification.criterion??draft.criterion??"";
+    draft.checkState=verification.checkState||draft.checkState||"unverified";
+    draft.reproduction=verification.reproduction??draft.reproduction??"";
     if(!did.trim()||!observed.trim())throw new Error("请说明实际尝试和观察结果；尚未开始也请如实说明。");
     if(did.length>4000||observed.length>4000||artifact.length>50000)throw new Error("内容超出长度，请精简后再保存。");
+    if(!Object.hasOwn(attemptCheckLabels,draft.checkState))throw new Error("请选择本次自查结果，不能把未知当成符合。");
+    if(["met","not_met"].includes(draft.checkState)&&!draft.criterion.trim())throw new Error("选择自查符合或不符前，请说明核验标准及来源；没有标准时可保留尚未核验或无法判断。");
+    if(draft.criterion.length>2000||draft.reproduction.length>2000)throw new Error("核验标准或复现条件过长，请精简后再保存。");
   }
   const project=await api("projects/"+encodeURIComponent(projectId));
   if(project.worker_running)throw new Error("请等当前调查结束后再保存回报；输入仍保留。");
@@ -1028,7 +1039,7 @@ async function saveSelectedActionFeedback(did="",observed="",artifact="") {
   if(!step?.result?.application_plan?.actions?.[draft.index])throw new Error("原建议已不可读取，当前回报保留，未自动另建资料。");
   if(conversation.id!==projectId)return;
   if(!draft.documentId){
-    const text=`用户尝试记录（用户自述，未独立核实）\n回应研究：${draft.runId}\n回应建议序号：${draft.index+1}\n记录编号只用于关联，不是执行或能力证明。\n\n实际尝试（用户自述）：\n${draft.did}\n\n观察结果（用户自述）：\n${draft.observed}\n\n产出或核验原文（用户粘贴，未独立核实）：\n${draft.artifact||"未提供"}`;
+    const text=`用户尝试记录（用户自述，未独立核实）\n回应研究：${draft.runId}\n回应建议序号：${draft.index+1}\n记录编号只用于关联，不是执行或能力证明。\n\n实际尝试（用户自述）：\n${draft.did}\n\n观察结果（用户自述）：\n${draft.observed}\n\n本次核验标准及来源（用户填写）：\n${draft.criterion||"未说明，不能据此判定符合或不符"}\n\n本次自查结果（用户回报，非独立验收）：\n${attemptCheckLabels[draft.checkState]}\n\n复现条件（用户填写）：\n${draft.reproduction||"未说明，留待核实"}\n\n产出或核验原文（用户粘贴，未独立核实）：\n${draft.artifact||"未提供"}`;
     const result=await api("work-materials",{method:"POST",body:JSON.stringify({title:"行动尝试记录 · 建议"+(draft.index+1),text,source_name:"用户自行回报的尝试与观察，未经独立核实"})});
     draft.documentId=result.document.id;rememberActionFeedback(projectId,draft);
     rememberConversationMaterial(projectId,result.document);
@@ -1039,7 +1050,7 @@ async function saveSelectedActionFeedback(did="",observed="",artifact="") {
   rememberConversationMaterial(projectId,{id:draft.documentId,title:"行动尝试记录 · 建议"+(draft.index+1),evidence_kind:"work_material"},true);
   if(conversation.id!==projectId)return;
   conversation.replyToStepId=draft.stepId;
-  const input=$("#conversation-question"),prompt=`请重新核实上面第 ${draft.index+1} 条行动建议，并查阅刚加入的尝试记录（归档编号 ${draft.documentId}）。旧建议只是研究推断，用户尝试记录是自述；先区分实际提供的产出或核验原文与尚未验证的说法。只在项目上下文确实带出原行动时回看它；未带出则说明缺口，不根据编号补造内容。原建议的动作、产物和完成检查哪些得到支持、遇到反例或需要调整？给出下一步最必要的验证，不把一次自述、工具使用或测试记录概括为已具备岗位能力。`;
+  const input=$("#conversation-question"),prompt=`请重新核实上面第 ${draft.index+1} 条行动建议，并查阅刚加入的尝试记录（归档编号 ${draft.documentId}）。旧建议只是研究推断，用户尝试记录是自述；先区分实际提供的产出或核验原文与尚未验证的说法。核对用户填写的标准、标准来源、输入或版本等复现条件，标准或资料不足就保留未知；有日志、自查符合或单项指标达标不等于根因已定位或能力已证明。只在项目上下文确实带出原行动时回看它；未带出则说明缺口，不根据编号补造内容。原建议的动作、产物和完成检查哪些得到支持、遇到反例或需要调整？给出下一步最必要的验证，不把一次自述、工具使用或测试记录概括为已具备岗位能力。`;
   if(!input.value.includes(prompt)){
     if(input.value.length+prompt.length+2>4000)throw new Error("尝试记录已保存并加入；下方追问过长，请精简后再次准备。");
     input.value+=(input.value.trim()?"\n\n":"")+prompt;
@@ -1052,14 +1063,14 @@ document.addEventListener("click",async event=>{
   const selected=event.target.closest("[data-action-feedback-step]"),another=event.target.closest("[data-action-feedback-new]");
   try{
     if(selected)await selectActionFeedback(selected.dataset.actionFeedbackStep,Number(selected.dataset.actionFeedbackIndex));
-    if(another){const draft=currentActionFeedback(conversation.id);if(!draft)return;draft.documentId=null;draft.attached=false;draft.did="";draft.observed="";draft.artifact="";rememberActionFeedback(conversation.id,draft);await openResearchConversation(conversation.id,false);}
+    if(another){const draft=currentActionFeedback(conversation.id);if(!draft)return;draft.documentId=null;draft.attached=false;draft.did="";draft.observed="";draft.artifact="";draft.criterion="";draft.checkState="unverified";draft.reproduction="";rememberActionFeedback(conversation.id,draft);await openResearchConversation(conversation.id,false);}
   }catch(error){notify(error.message,true);}
 });
 
 document.addEventListener("submit",async event=>{
   if(event.target.id!=="action-feedback-form")return;
   event.preventDefault();const form=event.target,button=event.submitter||form.querySelector('button:not([type="button"])');button.disabled=true;
-  try{await saveActionFeedback(form.elements.did?.value||"",form.elements.observed?.value||"",form.elements.artifact?.value||"");notify("尝试记录已保存，可以继续核实原建议。保存未调用模型。");}
+  try{await saveActionFeedback(form.elements.did?.value||"",form.elements.observed?.value||"",form.elements.artifact?.value||"",{criterion:form.elements.criterion?.value||"",checkState:form.elements.check_state?.value||"unverified",reproduction:form.elements.reproduction?.value||""});notify("尝试记录已保存，可以继续核实原建议。保存未调用模型。");}
   catch(error){notify(error.message,true);}
   finally{button.disabled=false;}
 });

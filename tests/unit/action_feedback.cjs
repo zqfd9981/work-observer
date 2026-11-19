@@ -18,7 +18,10 @@ vm.runInContext('conversation.id=project.id;conversation.project=project;openRes
  const form=vm.runInContext('renderActionFeedback(project)',context);
  assert.ok(form.includes("&lt;script&gt;合成建议"));assert.ok(!form.includes("<script>"));
  assert.ok(form.includes("\n合成实际尝试。\n"));
- const pending=vm.runInContext('saveActionFeedback("\\n合成实际尝试。\\n","合成失败观察","\\n合成产出原文。\\n")',context);
+ assert.ok(form.includes('value="unverified" selected'));assert.ok(form.includes("有日志不等于通过验证"));
+ await assert.rejects(vm.runInContext('saveActionFeedback("合成实际尝试","合成观察","",{checkState:"met",criterion:""})',context),/请说明核验标准/);
+ assert.equal(context.documents,0);
+ const pending=vm.runInContext('saveActionFeedback("\\n合成实际尝试。\\n","合成失败观察","\\n合成产出原文。\\n",{criterion:"按合成项目自行约定：正常请求返回预期结果",checkState:"not_met",reproduction:"合成资料v1，请求样本X"})',context);
  const failed=assert.rejects(pending,/加入失败/);
  await assert.rejects(vm.runInContext('saveActionFeedback("合成重复提交","合成观察")',context),/正在保存/);
  await failed;
@@ -26,9 +29,12 @@ vm.runInContext('conversation.id=project.id;conversation.project=project;openRes
  const content=JSON.parse(context.calls.find(call=>call.path==="work-materials").options.body);
  assert.ok(content.text.includes(runId));assert.ok(content.text.includes("回应建议序号：1"));
  assert.ok(content.text.includes("\n合成产出原文。\n"));assert.ok(content.text.includes("用户自述，未独立核实"));
+ assert.ok(content.text.includes("按所填标准自查不符"));assert.ok(content.text.includes("正常请求返回预期结果"));
+ assert.ok(content.text.includes("合成资料v1，请求样本X"));assert.ok(content.text.includes("非独立验收"));
  assert.ok(!content.text.includes("生成建议中不应复制到原始回报的私人目标"));
  const stored=JSON.parse(storage.get("wo-action-feedback:"+projectId));assert.equal(stored.documentId,documentId);
  assert.ok(!storage.get("wo-action-feedback:"+projectId).includes("合成实际尝试"));
+ assert.ok(!storage.get("wo-action-feedback:"+projectId).includes("正常请求返回预期结果"));
  assert.ok(vm.runInContext('renderActionFeedback(project)',context).includes("尚未加入本研究"));
  node("#conversation-question").value="保留我正在写的追问";
  context.attachFails=false;
