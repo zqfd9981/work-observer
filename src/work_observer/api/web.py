@@ -65,7 +65,8 @@ class ResearchInput(BaseModel):
     max_calls: int = Field(default=10, ge=2, le=12)
     timeout: int = Field(default=180, ge=1, le=300)
     allow_public: bool = False
-    approach: Literal["standard", "source_first"] = "standard"
+    approach: Literal["standard", "source_first", "work_map"] = "standard"
+    coverage_mode: Literal["all", "question"] = "all"
     review_run_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     review_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
@@ -355,6 +356,7 @@ def create_app(
                 memory=memory,
                 allow_public=data.allow_public,
                 approach=data.approach,
+                coverage_mode=data.coverage_mode,
                 review_run_id=data.review_run_id,
                 review_id=data.review_id,
             )
@@ -640,6 +642,9 @@ def create_app(
                 "IMPORT_TOO_LARGE": "内容过大，请限制在 500 KB 以内。",
                 "JSON_BODY_REQUIRED": "请使用页面表单或 JSON 格式提交。",
                 "RESEARCH_NOT_FOUND": "找不到这次研究，请从研究历史重新选择。",
+                "QUALITY_WORK_MAP_REVIEW_REQUIRED": (
+                    "请单独核对地图的分组、能力关系与边界；逐条判断通过不能替代地图核对。"
+                ),
                 "JOB_NOT_FOUND": "找不到该岗位，请刷新资料列表。",
                 "REPORT_NOT_FOUND": "找不到这份已存研究。",
                 "CSV_TOO_LARGE": "CSV内容请控制在500KB以内。",

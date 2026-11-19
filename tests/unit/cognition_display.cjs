@@ -1,0 +1,23 @@
+// Isolated rendering check; no browser, navigation, or network operations.
+const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
+const node=()=>({querySelector:node,querySelectorAll:()=>[],addEventListener(){}});
+const context={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:""},URL,console,setTimeout,clearTimeout,Intl};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),context);
+context.result={claims:[{text:"<img src=x>合成判断",evidence_ids:["one"]}],work_map:{version:"test",scope_note:"范围",work_types:[{name:"<script>类型</script>",problem:"问题",tasks:"任务",deliverables:"成果",boundary:"反例",next_check:"验证",claim_indices:[0]}],ability_relations:[{task:"任务",ability:"能力",rationale:"解释",transfer_limit:"未知",claim_indices:[0]}],unknowns:["缺正文"]}};
+context.evidence=new Map([["one",{label:"E1"}]]);
+const html=vm.runInContext("renderWorkMap(result,evidence)",context);
+assert.ok(html.includes('data-cite="one"')&&html.includes("边界与反例")&&html.includes("下一步验证"));
+assert.ok(html.includes("&lt;script&gt;")&&html.includes("&lt;img")&&!html.includes("<script>")&&!html.includes("<img"));
+assert.ok(html.includes("类型允许重叠")&&html.includes("缺正文")&&html.includes("迁移边界"));
+assert.equal(vm.runInContext("renderWorkMap({},evidence)",context),"");
+vm.runInContext(fs.readFileSync(require("node:path").join(require("node:path").dirname(process.argv[2]),"quality.js"),"utf8"),context);
+const review=vm.runInContext("renderQualityMap(result)",context);
+assert.ok(review.includes("地图关系单独核对")&&review.includes('name="work-map-rating"'));
+assert.ok(review.includes("逐条原文判断通过不代表分组和因果关系成立")&&!review.includes("<script>"));
+assert.equal(vm.runInContext("renderQualityMap({})",context),"");
+context.revised={cognition_revisions:[{previous_run_id:"a".repeat(32),previous_claim_index:4,decision:"retain",previous_statement:"<script>旧判断</script>",new_statements:["<img>本轮判断"],reason:"重读并保留边界",previous_review_state:"waiting_review",evidence_relation:"reread",evidence_ids:["one"]}]};
+const revision=vm.runInContext("renderCognitiveRevisions(revised,evidence)",context);
+assert.ok(revision.includes("重读原材料")&&revision.includes("不等于外部工作需求变化"));
+assert.ok(revision.includes("&lt;script&gt;旧判断")&&revision.includes("&lt;img&gt;本轮判断")&&!revision.includes("<script>"));
+assert.ok(revision.includes('data-open-run="'+"a".repeat(32)+'"')&&revision.includes('data-cite="one"'));

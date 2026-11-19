@@ -236,7 +236,7 @@ def test_project_id_alone_cannot_create_a_repair_budget(project_case):
     assert not model.contexts
 
 
-def test_feedback_excludes_accepted_memories_derived_from_rejected_source(project_case):
+def test_feedback_cannot_activate_memories_derived_from_rejected_source(project_case):
     repo, store, service, project, source, _, _, _ = project_case
     memory = MemoryService(repo)
     result = store.get(source["run_id"])["result"]
@@ -249,8 +249,9 @@ def test_feedback_excludes_accepted_memories_derived_from_rejected_source(projec
         scope="project",
         origin="agent",
     )
-    memory.activate(candidate["id"])
-    assert candidate["id"] in {
+    with pytest.raises(ProbeError, match="MEMORY_DERIVED_DEPENDENCY_STALE"):
+        memory.activate(candidate["id"])
+    assert candidate["id"] not in {
         m["id"]
         for m in memory.recall(source["question"], source["job_ids"], project_id=project["id"])
     }
@@ -260,7 +261,9 @@ def test_feedback_excludes_accepted_memories_derived_from_rejected_source(projec
         execute_project(service, project["id"], repo, Settings(), model=model, max_steps=1)
     )
     assert candidate["id"] not in {m["id"] for m in model.contexts[0]["memory_context"]}
-    assert next(row for row in memory.list() if row["id"] == candidate["id"])["status"] == "active"
+    assert (
+        next(row for row in memory.list() if row["id"] == candidate["id"])["status"] == "candidate"
+    )
 
 
 def test_http_saves_plan_only_and_cli_executes_offline_under_same_project(

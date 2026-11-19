@@ -1,6 +1,7 @@
 """研究语义送审的隔离机制测试；判断文字均为明确合成。"""
 
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 from sqlalchemy.orm import Session
@@ -174,3 +175,96 @@ def test_forgetting_erases_review_free_text_and_blocks_old_packet(reviews):
         service.packet(identity)
     with pytest.raises(ProbeError, match="QUALITY_RESEARCH_FORGOTTEN"):
         service.submit(identity, data)
+
+
+def test_review_exposes_uncited_frozen_job_and_qualifications_after_first_chunk(reviews):
+    service, identity, job = reviews
+    text = (
+        "岗位职责\n"
+        + "建设服务并维护接口。" * 90
+        + "\n任职资格\n本科及以上，3年以上经验。\n热爱AI。"
+    )
+    second = import_jd(
+        service.repository,
+        RawArchive(Path(service.repository.engine.url.database).parent / "raw"),
+        ManualJD(
+            title="另一合成岗位",
+            company="模拟公司",
+            external_id="uncited",
+            description=text,
+            data_kind="synthetic",
+        ),
+    )["job_id"]
+    result = deepcopy(service.store.get(identity)["result"])
+    result["scope"] = Catalog(service.repository).query(job_ids=[job, second])
+    result["evidence"] += Catalog(service.repository).evidence(second, limit=1)
+    before = deepcopy(result)
+    service.store.save(identity, result=result)
+    sources = service.packet(identity)["source_context"]["sources"]
+    source = next(row for row in sources if row["job_id"] == second)
+    assert source["state"] == "available"
+    assert any(row["text"] == "本科及以上，3年以上经验。" for row in source["units"])
+    assert all(not row["claim_indices"] for row in source["units"])
+    assert service.store.get(identity)["result"] == before
+
+
+def test_review_keeps_historical_text_after_job_changes_and_does_not_rewrite_result(reviews):
+    service, identity, job = reviews
+    before = deepcopy(service.store.get(identity))
+    import_jd(
+        service.repository,
+        RawArchive(Path(service.repository.engine.url.database).parent / "raw"),
+        ManualJD(
+            title="合成岗位",
+            company="模拟公司",
+            external_id="one",
+            description="全新的正文，不得用它替代历史研究。",
+            data_kind="synthetic",
+        ),
+    )
+    packet = service.packet(identity)
+    source = next(row for row in packet["source_context"]["sources"] if row["job_id"] == job)
+    assert source["state"] == "available"
+    assert source["units"][0]["text"] == "Python为必备，Docker加分"
+    assert source["units"][0]["claim_indices"] == [0]
+    assert not packet["approve_allowed"]
+    assert service.store.get(identity) == before
+
+
+def test_review_source_context_rejects_corrupt_archive_and_never_fills_unknown_version(reviews):
+    from work_observer.quality.source_context import source_context
+    from work_observer.storage.models import SourceDocument
+
+    service, identity, job = reviews
+    original = service.store.get(identity)["result"]
+    unknown = deepcopy(original)
+    unknown["evidence"] = []
+    source = source_context(unknown, service.repository)["sources"][0]
+    assert source["state"] == "no_frozen_detail" and not source["units"]
+    with Session(service.repository.engine) as session:
+        path = session.get(SourceDocument, original["evidence"][0]["document_id"]).path
+    Path(path).write_text("被破坏的合成归档", encoding="utf-8")
+    source = source_context(original, service.repository)["sources"][0]
+    assert source["job_id"] == job and source["state"] == "integrity_failed"
+    assert not source["units"]
+
+
+def test_legacy_review_never_guesses_between_two_evidence_versions(reviews):
+    from work_observer.quality.source_context import source_context
+
+    service, identity, job = reviews
+    original = deepcopy(service.store.get(identity)["result"])
+    import_jd(
+        service.repository,
+        RawArchive(Path(service.repository.engine.url.database).parent / "raw"),
+        ManualJD(
+            title="合成岗位",
+            company="模拟公司",
+            external_id="one",
+            description="合成的新版本，5年以上经验。",
+            data_kind="synthetic",
+        ),
+    )
+    original["evidence"] += Catalog(service.repository).evidence(job)
+    source = source_context(original, service.repository)["sources"][0]
+    assert source["state"] == "ambiguous_version" and source["units"] == []

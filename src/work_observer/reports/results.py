@@ -262,6 +262,17 @@ def render(result):
             f"- {job['title']} · {job['company']} · `{job['id']}` · "
             f"{'有正文' if job['has_detail'] else '仅摘要'} · {job['match_status']}"
         )
+    if result.get("question_scope"):
+        coverage = result["question_scope"]
+        lines.extend(
+            [
+                "",
+                f"本轮按问题选择资料，查阅了{coverage['read_job_fragments']}份岗位材料的片段；"
+                f"范围内有{coverage['available_details']}份可用正文。",
+                coverage["notice"],
+                "",
+            ]
+        )
     feedback = result.get("review_feedback")
     if feedback:
         lines.extend(
@@ -298,8 +309,19 @@ def render(result):
         )
     evidence = {item["id"]: item for item in result["evidence"]}
     labels = {key: f"E{index}" for index, key in enumerate(evidence, 1)}
+    from work_observer.reports.cognition import render_map, render_revisions
+
+    if result.get("analysis_origin") == "developer_sample":
+        lines.extend(["", "产出来源：开发分析样稿，非产品Agent运行，非独立人审。", ""])
+    lines.extend(render_map(result, labels))
+    lines.extend(render_revisions(result, labels))
     lines.extend(_render_source_findings(result, labels))
-    lines.extend(["", "## 判断（模型分析）", ""])
+    heading = (
+        "样稿判断（开发分析，待核对）"
+        if result.get("analysis_origin") == "developer_sample"
+        else "判断（模型分析）"
+    )
+    lines.extend(["", "## " + heading, ""])
     if result.get("source_findings"):
         lines.extend(
             [
@@ -390,6 +412,9 @@ def render(result):
 
 
 def save_result(result, directory=Path("reports")):
+    from work_observer.reports.cognition import checked_map
+
+    checked_map(result)
     directory.mkdir(parents=True, exist_ok=True)
     identity = uuid4().hex
     payload = {**result, "report_id": identity}

@@ -112,6 +112,14 @@ class QualityReviewService:
             "reviews": self.list_run(identity, result_sha256=digest(result)),
             "notice": "未审核保持待核对；程序只核对来源与合同，语义由审核者逐条判断。",
         }
+        from work_observer.quality.source_context import source_context
+
+        packet["source_context"] = source_context(result, self.repository)
+        if result.get("work_map"):
+            from work_observer.reports.cognition import checked_map
+
+            packet["work_map"] = checked_map(result)
+            packet["cognition_revisions"] = result.get("cognition_revisions", [])
         notes = source_analysis_notes(result)
         if notes:
             packet["analysis_notes"] = notes
@@ -160,6 +168,15 @@ class QualityReviewService:
             raise ProbeError("QUALITY_ALL_CLAIMS_REQUIRE_SEMANTIC_REVIEW")
         if any(not item["note"].strip() for item in reviews):
             raise ProbeError("QUALITY_CLAIM_REVIEW_REASON_REQUIRED")
+        map_review = data.get("work_map_review")
+        if map_review and not map_review.get("reason", "").strip():
+            raise ProbeError("QUALITY_REVIEW_REASON_REQUIRED")
+        if (
+            packet.get("work_map")
+            and data["decision"] == "approve"
+            and (not map_review or map_review.get("rating") != "pass")
+        ):
+            raise ProbeError("QUALITY_WORK_MAP_REVIEW_REQUIRED")
         if data["decision"] == "approve" and (
             data["reviewer_kind"] != "human"
             or not packet["approve_allowed"]

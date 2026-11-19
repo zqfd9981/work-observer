@@ -66,11 +66,22 @@ class ResearchStore:
                 raise ProbeError("RESEARCH_RUN_ALREADY_FINISHED")
             keys = {"question", *supplied} if resume else set(parameters)
             clean_input = redact(record["input"], redactions)
+            original_coverage = clean_input.get("coverage_mode", "all")
+            requested_coverage = parameters.get("coverage_mode", original_coverage)
+            if requested_coverage not in ("all", "question"):
+                raise ProbeError("RESEARCH_COVERAGE_INVALID")
+            if (
+                "coverage_mode" in keys
+                and (resume or "coverage_mode" in clean_input)
+                and (requested_coverage != original_coverage)
+            ):
+                raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
             # Historical sealed inputs omitted this field and always used the standard method.
             original_approach = clean_input.get("approach", "standard")
             requested_approach = parameters.get("approach", original_approach)
-            if original_approach not in ("standard", "source_first") or (
-                "approach" in keys and requested_approach not in ("standard", "source_first")
+            if original_approach not in ("standard", "source_first", "work_map") or (
+                "approach" in keys
+                and requested_approach not in ("standard", "source_first", "work_map")
             ):
                 raise ProbeError("RESEARCH_APPROACH_INVALID")
             if (

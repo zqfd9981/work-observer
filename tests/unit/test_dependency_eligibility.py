@@ -306,7 +306,8 @@ def test_replacing_source_metadata_cannot_silently_rebind_frozen_evidence(depend
     assert "source_reference_changed" in {issue["reason"] for issue in audited["dependency_issues"]}
 
 
-def test_explicit_human_rejection_blocks_derived_memory_until_human_reassessment(dependencies):
+@pytest.mark.parametrize("reviewer_kind", ["human", "agent_assisted"])
+def test_rejection_blocks_derived_memory_until_human_reassessment(dependencies, reviewer_kind):
     from work_observer.quality.reviews import QualityReviewService
     from work_observer.quality.service import DIMENSIONS
 
@@ -317,7 +318,7 @@ def test_explicit_human_rejection_blocks_derived_memory_until_human_reassessment
     packet = quality.packet(run["run_id"])
     review = {
         "reviewer": "合成人审动作",
-        "reviewer_kind": "human",
+        "reviewer_kind": reviewer_kind,
         "decision": "reject",
         "note": "合成机制测试，不是实际人类标注",
         "result_sha256": packet["result_sha256"],
@@ -334,6 +335,7 @@ def test_explicit_human_rejection_blocks_derived_memory_until_human_reassessment
     assert not memory.validity(knowledge["id"])["eligible"]
     approved = {
         **review,
+        "reviewer_kind": "human",
         "decision": "approve",
         "dimensions": {key: {"rating": "pass", "reason": "合成重新核对"} for key in DIMENSIONS},
         "claim_reviews": [

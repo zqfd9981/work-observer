@@ -34,6 +34,12 @@ class Target(StrEnum):
 class ResearchApproach(StrEnum):
     standard = "standard"
     source_first = "source_first"
+    work_map = "work_map"
+
+
+class ResearchCoverage(StrEnum):
+    all = "all"
+    question = "question"
 
 
 def failure(exc: Exception):
@@ -542,6 +548,7 @@ def execute_research(
     allow_public=False,
     approach="standard",
     review_run_id=None,
+    coverage_mode="all",
 ):
     from work_observer.reports.results import render, save_result
     from work_observer.research.agent import research
@@ -567,6 +574,7 @@ def execute_research(
             "timeout": timeout,
             "allow_public": allow_public,
             "approach": approach,
+            "coverage_mode": coverage_mode,
         }
         if review_run_id:
             parameters["review_run_id"] = review_run_id
@@ -585,6 +593,7 @@ def execute_research(
                 allow_public=allow_public,
                 approach=approach,
                 review_run_id=review_run_id,
+                coverage_mode=coverage_mode,
             )
         )
         store.save(run["id"], state="finished", result=result)
@@ -634,11 +643,15 @@ def research_question(
     env_file: Path = Path(".env"),
     allow_public: bool = typer.Option(False, help="允许必要的公开搜索，最多两次；不访问招聘来源"),
     approach: Annotated[
-        ResearchApproach, typer.Option(help="standard为标准方法；source_first为来源维度约束试验")
+        ResearchApproach,
+        typer.Option(help="standard标准判断；work_map工作地图；source_first来源维度约束试验"),
     ] = ResearchApproach.standard,
     review_run_id: str | None = typer.Option(
         None, help="明确参照此运行的当前拒绝复核；原问题、岗位和筛选须相同，新预算另计"
     ),
+    coverage_mode: Annotated[
+        ResearchCoverage, typer.Option(help="all要求逐岗覆盖；question按问题选择必要资料")
+    ] = ResearchCoverage.all,
 ):
     """一个有数量与时间预算的研究 Agent；不会访问招聘网站或改写岗位。"""
     execute_research(
@@ -658,6 +671,7 @@ def research_question(
         allow_public,
         approach.value,
         review_run_id,
+        coverage_mode.value,
     )
 
 

@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.routing import Route
@@ -46,6 +47,8 @@ class StepInput(BaseModel):
     max_calls: int = Field(default=10, ge=1, le=12)
     timeout: int = Field(default=180, ge=1, le=300)
     key: str | None = Field(default=None, max_length=100)
+    approach: Literal["standard", "work_map"] = "standard"
+    coverage_mode: Literal["all", "question"] = "all"
 
 
 class StepReview(BaseModel):

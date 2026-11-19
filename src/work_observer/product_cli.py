@@ -578,6 +578,7 @@ def register(app):
                         checkpoint=(store, id),
                         resume=True,
                         approach=params.get("approach", "standard"),
+                        coverage_mode=params.get("coverage_mode", "all"),
                     )
                 )
                 store.save(id, result=result, state="finished")

@@ -296,6 +296,8 @@ class ProjectService:
         max_calls=10,
         timeout=180,
         key=None,
+        approach="standard",
+        coverage_mode="all",
     ):
         if (
             not question.strip()
@@ -305,6 +307,8 @@ class ProjectService:
             or kind not in {"investigate", "counterexample", "synthesis"}
             or not 1 <= max_calls <= 12
             or not 1 <= timeout <= 300
+            or approach not in {"standard", "work_map"}
+            or coverage_mode not in {"all", "question"}
         ):
             raise ProbeError("INVALID_INVESTIGATION_STEP")
         with self.store.lock, self.store.db:
@@ -340,6 +344,8 @@ class ProjectService:
                     allow_public=allow_public,
                     max_calls=max_calls,
                     timeout=timeout,
+                    approach=approach,
+                    coverage_mode=coverage_mode,
                     run_id=None,
                     created_at=now(),
                     stop_reason=None,
@@ -509,7 +515,12 @@ class ProjectService:
             }:
                 continue
             latest = next(
-                (r for r in quality.list_run(step["run_id"]) if not r["stale_result"]), None
+                (
+                    r
+                    for r in quality.list_run(step["run_id"])
+                    if not r["stale_result"] and r.get("decision") in {"approve", "reject"}
+                ),
+                None,
             )
             if latest and latest["status"] == "rejected":
                 rejected.add(step["id"])
@@ -604,6 +615,8 @@ class ProjectService:
                         timeout=step["timeout"],
                         allow_public=step["allow_public"],
                         project_id=identity,
+                        approach=step.get("approach", "standard"),
+                        coverage_mode=step.get("coverage_mode", "all"),
                     ),
                     result=None,
                     saved=None,
@@ -784,6 +797,12 @@ class ProjectService:
             completion=step["completion"],
             investigation_kind=step["kind"],
             previous_findings=[],
+            excluded_prior_findings=[
+                {"run_id": s["run_id"], "reason": "quality_rejected"}
+                for s in record["steps"]
+                if s["id"] in rejected and s.get("run_id")
+            ][:10],
+            context_version="project-context-v2",
             memory_dependencies=[],
             knowledge_dependencies=[],
             refresh_note=step.get("refresh_note"),
@@ -814,6 +833,8 @@ class ProjectService:
                 gaps=[gap[:300] for gap in result.get("gaps", [])[-3:]],
                 total_claims=len(ranked),
                 omitted_claims=len(ranked),
+                read_evidence_ids=[e["id"] for e in result.get("evidence", [])],
+                coverage_mode=result.get("coverage_mode", "all"),
             )
             dependencies = [*result.get("memory_used", []), *result.get("context_memory_used", [])]
             saved_dependencies = context["memory_dependencies"][:]
@@ -927,6 +948,8 @@ async def _execute_project_locked(
                 conversation_context=context,
                 checkpoint=(service.store, run_id),
                 resume=resume,
+                approach=step.get("approach", "standard"),
+                coverage_mode=step.get("coverage_mode", "all"),
                 _lock_held=True,
                 **(
                     {key: step[key] for key in ("review_run_id", "review_id")}

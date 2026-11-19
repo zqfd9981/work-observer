@@ -28,7 +28,7 @@ def auth(client):
     return {"X-WO-Token": token}
 
 
-@pytest.mark.parametrize("requested", [None, "source_first"])
+@pytest.mark.parametrize("requested", [None, "source_first", "work_map"])
 def test_http_start_persists_and_passes_selected_approach(configured, monkeypatch, requested):
     calls = []
 
@@ -58,7 +58,7 @@ def test_http_start_persists_and_passes_selected_approach(configured, monkeypatc
         assert rejected.status_code == 422
 
 
-@pytest.mark.parametrize("original", [None, "source_first"])
+@pytest.mark.parametrize("original", [None, "source_first", "work_map"])
 def test_http_resume_loads_original_or_legacy_standard(configured, monkeypatch, original):
     path = configured.database_path
     store = ResearchStore(path.parent / "checkpoints.db", str(path.resolve()))
@@ -88,7 +88,7 @@ def test_http_resume_loads_original_or_legacy_standard(configured, monkeypatch, 
         assert calls == [(original or "standard", True)]
 
 
-@pytest.mark.parametrize("requested", [None, "source_first"])
+@pytest.mark.parametrize("requested", [None, "source_first", "work_map"])
 def test_cli_start_persists_and_passes_approach(configured, monkeypatch, requested):
     calls = []
 
@@ -112,7 +112,7 @@ def test_cli_start_persists_and_passes_approach(configured, monkeypatch, request
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("original", [None, "source_first"])
+@pytest.mark.parametrize("original", [None, "source_first", "work_map"])
 def test_cli_resume_passes_original_or_legacy_standard(configured, monkeypatch, original):
     path = configured.database_path
     store = ResearchStore(path.parent / "checkpoints.db", str(path.resolve()))
@@ -138,7 +138,7 @@ def test_cli_resume_passes_original_or_legacy_standard(configured, monkeypatch, 
     assert calls == [(original or "standard", True)]
 
 
-@pytest.mark.parametrize("original", [None, "standard", "source_first"])
+@pytest.mark.parametrize("original", [None, "standard", "source_first", "work_map"])
 def test_store_resume_rejects_switch_and_does_not_rewrite_legacy_input(tmp_path, original):
     store = ResearchStore(tmp_path / "checkpoints.db", "synthetic")
     parameters = {"question": "Synthetic immutable input"}

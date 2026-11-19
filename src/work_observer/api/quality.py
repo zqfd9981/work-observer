@@ -31,6 +31,7 @@ class QualityReviewInput(BaseModel):
     note: str = Field(min_length=1, max_length=2000)
     dimensions: dict[str, DimensionReview]
     claim_reviews: list[ClaimReview] = Field(max_length=30)
+    work_map_review: DimensionReview | None = None
 
 
 def quality_routes(*, repository, store, response, read_json, busy):

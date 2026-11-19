@@ -37,4 +37,11 @@ vm.runInContext('api=async(route,options)=>{calls.push({route,options});return o
   assert.ok(feedback.includes("&lt;img")&&feedback.includes("&lt;script&gt;范围"));
   assert.ok(!feedback.includes("<img")&&!feedback.includes("<script>"));
   assert.equal(vm.runInContext("renderReviewFeedback({})",context),"");
+  context.sourcePacket={source_context:{notice:"引用不表示覆盖",sources:[{title:"<script>合成岗位</script>",state:"available",snapshot_id:"old-version",units:[{start:701,end:719,text:"本科，3年以上经验。<img src=x>",claim_indices:[]},{start:720,end:740,text:"Docker优先",claim_indices:[0]}]}]}};
+  const sources=vm.runInContext("renderQualitySources(sourcePacket)",context);
+  assert.ok(sources.includes("本科，3年以上经验")&&sources.includes("没有判断引用该段"));
+  assert.ok(sources.includes("研究当时的完整正文")&&sources.includes("仍需核对回答是否覆盖"));
+  assert.ok(sources.includes("&lt;img")&&sources.includes("&lt;script&gt;合成岗位"));
+  assert.ok(!sources.includes("<img")&&!sources.includes("<script>"));
+  assert.equal(vm.runInContext("renderQualitySources({})",context),"");
 })().catch(error=>{console.error(error);process.exitCode=1;});

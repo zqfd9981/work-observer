@@ -75,7 +75,7 @@ class DependencyAudit:
         except (sqlite3.Error, OSError, ValueError):
             return None
 
-    def _human_rejection(self, identity, result):
+    def _quality_rejection(self, identity, result):
         fingerprint = hashlib.sha256(
             json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -89,14 +89,18 @@ class DependencyAudit:
                     return []
                 row = db.execute(
                     "SELECT record FROM quality_reviews WHERE namespace=? AND run_id=? "
-                    "AND json_extract(record,'$.reviewer_kind')='human' "
                     "AND json_extract(record,'$.result_sha256')=? "
                     "AND json_extract(record,'$.decision') IN ('approve','reject') "
                     "ORDER BY json_extract(record,'$.created_at') DESC,id DESC LIMIT 1",
                     (self.namespace, identity, fingerprint),
                 ).fetchone()
-                if row and json.loads(row[0]).get("decision") == "reject":
-                    return [self._issue("run", identity, "source_human_review_rejected")]
+                if row and (review := json.loads(row[0])).get("decision") == "reject":
+                    reason = (
+                        "source_human_review_rejected"
+                        if review.get("reviewer_kind") == "human"
+                        else "source_agent_review_rejected"
+                    )
+                    return [self._issue("run", identity, reason)]
         except (sqlite3.Error, OSError, ValueError):
             return [self._issue("run", identity, "source_review_unavailable")]
         return []
@@ -289,7 +293,7 @@ class DependencyAudit:
             issues = self._result(result, evidence_ids=anchors)
             if anchors and not anchors <= {item.get("id") for item in result.get("evidence", [])}:
                 issues.append(self._issue("run", identity, "source_run_evidence_mismatch"))
-            issues.extend(self._human_rejection(identity, result))
+            issues.extend(self._quality_rejection(identity, result))
             project_id = result.get("project_id") or (record.get("input") or {}).get("project_id")
             if project_id:
                 project = self._read("research_projects", project_id)

@@ -21,6 +21,12 @@ from work_observer.retrieval.catalog import Catalog, Filters
 
 LEGACY_RESEARCH_METHOD_VERSION = "research-method-v5-responsibility-boundaries"
 RESEARCH_METHOD_VERSION = "research-method-v6-versioned-qualification-validation"
+QUESTION_COVERAGE_POLICY = (
+    "本轮按用户问题选择必要资料。固定候选是允许查阅的范围，不是必须逐岗生成判断的名单。"
+    "不要为了覆盖无关候选而补写判断。若用户明确要求逐一比较、完整清单或总体统计，"
+    "仍须实际查足相应资料；做不到就明确缺口，不把未读当不存在或用检索命中代替总体。"
+    "回答和建议区分原文与推断，说明只调查了范围中的哪些材料，不自称全面覆盖。"
+)
 REQUIREMENT_POLICY = (
     "required表示来源明确列为岗位资格的条件，不保证现实录取的一票否决。"
     "任职资格/岗位要求中明确要求具备、掌握、熟悉、熟练、精通等个人条件，且无加分措辞时用required；"
@@ -277,8 +283,27 @@ company_identity_status等业务库核验状态、归档完整性和未披露合
 中文输出，结论简洁具体，信息不足写入 gaps。只能通过提供的函数完成回答。"""
 
 
-def method_fingerprint(approach="standard", *, review_feedback=False, requirement_guard=None):
-    if approach not in {"standard", "source_first"}:
+def method_fingerprint(
+    approach="standard", *, review_feedback=False, requirement_guard=None, coverage_mode="all"
+):
+    if coverage_mode not in {"all", "question"}:
+        raise ProbeError("RESEARCH_COVERAGE_INVALID")
+    if coverage_mode == "question":
+        baseline = method_fingerprint(
+            approach, review_feedback=review_feedback, requirement_guard=requirement_guard
+        )
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "base": baseline,
+                    "coverage_policy": QUESTION_COVERAGE_POLICY,
+                    "version": "question-scope-v1",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+    if approach not in {"standard", "source_first", "work_map"}:
         raise ProbeError("RESEARCH_APPROACH_INVALID")
     guard = requirement_guard or qualification.CURRENT_GUARD
     if guard not in {qualification.CURRENT_GUARD, qualification.LEGACY_GUARD}:
@@ -344,6 +369,16 @@ def method_fingerprint(approach="standard", *, review_feedback=False, requiremen
         ).hexdigest()
     if approach == "standard":
         return baseline
+    if approach == "work_map":
+        from work_observer.research.cognition import POLICY, VERSION, tools
+
+        return hashlib.sha256(
+            json.dumps(
+                {"baseline": baseline, "version": VERSION, "policy": POLICY, "tools": tools(TOOLS)},
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     import inspect
     import sys
 
@@ -504,6 +539,7 @@ async def _persisted_research(repository, question, settings, **options):
         original = checkpoint_store.get(checkpoint_id)["input"].get("approach", "standard")
         options.setdefault("approach", original)
         original_input = checkpoint_store.get(checkpoint_id)["input"]
+        options.setdefault("coverage_mode", original_input.get("coverage_mode", "all"))
         for key in ("review_run_id", "review_id"):
             if key in options and options[key] != original_input.get(key):
                 raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
@@ -523,7 +559,7 @@ async def _persisted_research(repository, question, settings, **options):
     approach = options.get("approach", "standard")
     if options.get("review_id") and not options.get("review_run_id"):
         raise ProbeError("RESEARCH_FEEDBACK_INVALID_RUN")
-    if approach not in {"standard", "source_first"}:
+    if approach not in {"standard", "source_first", "work_map"}:
         raise ProbeError("RESEARCH_APPROACH_INVALID")
     if approach == "source_first" and options.get("allow_public", False):
         raise ProbeError("SOURCE_FIRST_LOCAL_JD_ONLY")
@@ -539,6 +575,7 @@ async def _persisted_research(repository, question, settings, **options):
             project_id=options.get("project_id"),
             allow_proposals=options.get("allow_proposals", True),
             approach=approach,
+            coverage_mode=options.get("coverage_mode", "all"),
         ),
         credentials,
     )
@@ -673,6 +710,7 @@ async def _research(
     project_id=None,
     conversation_context=None,
     approach="standard",
+    coverage_mode="all",
     _qualification_guard=qualification.CURRENT_GUARD,
 ):
     if _qualification_guard not in {qualification.CURRENT_GUARD, qualification.LEGACY_GUARD}:
@@ -737,13 +775,23 @@ async def _research(
         from work_observer.research.source_first import VERSION
 
         method_version = VERSION
+    elif approach == "work_map":
+        from work_observer.research.cognition import VERSION
+
+        method_version = VERSION
+    if coverage_mode == "question":
+        method_version += "-question-scope-v1"
     result = {
         "format_version": 1,
         "research_method_version": method_version,
         "research_method_sha256": method_fingerprint(
-            approach, review_feedback=bool(review_feedback), requirement_guard=_qualification_guard
+            approach,
+            review_feedback=bool(review_feedback),
+            requirement_guard=_qualification_guard,
+            coverage_mode=coverage_mode,
         ),
         "approach": approach,
+        "coverage_mode": coverage_mode,
         "requirement_policy": REQUIREMENT_POLICY,
         "run_id": checkpoint[1] if checkpoint else uuid4().hex,
         "created_at": research_created_at,
@@ -892,10 +940,20 @@ async def _research(
         return finalize(result)
     evidence = {}
     queried = False
-    required_jobs = {job["id"] for job in scope["jobs"] if job["has_detail"]} if job_ids else set()
+    required_jobs = (
+        {job["id"] for job in scope["jobs"] if job["has_detail"]}
+        if job_ids and coverage_mode == "all"
+        else set()
+    )
     system = SYSTEM
+    if coverage_mode == "question":
+        system += QUESTION_COVERAGE_POLICY
     if approach == "source_first":
         from work_observer.research.source_first import POLICY
+
+        system += POLICY
+    elif approach == "work_map":
+        from work_observer.research.cognition import POLICY
 
         system += POLICY
     if review_feedback:
@@ -973,23 +1031,32 @@ async def _research(
             result.get("review_feedback") != review_feedback
             or result.get("research_method_sha256")
             != method_fingerprint(
-                approach, review_feedback=True, requirement_guard=_qualification_guard
+                approach,
+                review_feedback=True,
+                requirement_guard=_qualification_guard,
+                coverage_mode=coverage_mode,
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
         saved_approach = result.get("approach", "standard")
         if saved_approach != approach:
             raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
-        if approach == "source_first" and result.get(
+        if result.get("coverage_mode", "all") != coverage_mode:
+            raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
+        if approach in {"source_first", "work_map"} and result.get(
             "research_method_sha256"
-        ) != method_fingerprint(approach, requirement_guard=_qualification_guard):
+        ) != method_fingerprint(
+            approach, requirement_guard=_qualification_guard, coverage_mode=coverage_mode
+        ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
             approach == "standard"
             and not review_feedback
             and result.get("research_method_sha256") is not None
             and result["research_method_sha256"]
-            != method_fingerprint(requirement_guard=_qualification_guard)
+            != method_fingerprint(
+                requirement_guard=_qualification_guard, coverage_mode=coverage_mode
+            )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         scope, pool, history = result["scope"], saved["pool"], saved["history"]
@@ -1060,12 +1127,15 @@ async def _research(
         async with asyncio.timeout(max(0, timeout - elapsed)):
             model = model or ModelClient(settings)
             if isinstance(model, ModelClient):
+                from work_observer.research.cognition import tools as cognition_tools
                 from work_observer.research.source_first import tools as source_first_tools
 
                 model.tools = (
                     (
                         source_first_tools(TOOLS, scope_jobs=candidates)
                         if approach == "source_first"
+                        else cognition_tools(TOOLS)
+                        if approach == "work_map"
                         else TOOLS
                     )
                     + EXTRA_TOOLS
@@ -1604,12 +1674,21 @@ async def _research(
                         )
 
                         answer = SourceAnswer.model_validate(arguments)
+                    elif approach == "work_map":
+                        from work_observer.research.cognition import CognitionAnswer
+
+                        answer = CognitionAnswer.model_validate(arguments)
                     else:
                         answer = Answer.model_validate(arguments)
                     for claim in answer.claims:
                         claim.evidence_ids = [
                             citation_ids.get(key, key) for key in claim.evidence_ids
                         ]
+                    if approach == "work_map":
+                        for revision in answer.revisions:
+                            revision.evidence_ids = [
+                                citation_ids.get(key, key) for key in revision.evidence_ids
+                            ]
                     if approach == "source_first":
                         answer, resolution_issues = resolve_answer(
                             answer, result.get("source_findings", []), evidence
@@ -1635,6 +1714,20 @@ async def _research(
                             )
                         )
                     ]
+                    map_error, work_map, cognition_revisions = None, None, []
+                    if approach == "work_map":
+                        from work_observer.research.cognition import (
+                            validate_map,
+                            validate_revisions,
+                        )
+
+                        try:
+                            work_map = validate_map(answer, evidence)
+                            cognition_revisions = validate_revisions(
+                                answer, evidence, conversation_context
+                            )
+                        except ValueError as exc:
+                            map_error = str(exc)
                     finding_check = None
                     if approach == "source_first":
                         from work_observer.research.source_first import check_answer
@@ -1656,6 +1749,7 @@ async def _research(
                         result["source_binding_check"] = finding_check
                     if (
                         not queried
+                        or map_error
                         or (finding_check and not finding_check["binding_passed"])
                         or mixed_requirements
                         or not used.issubset(evidence)
@@ -1688,6 +1782,7 @@ async def _research(
                                 "直接职责判断需岗位原文；公开搜索综合内容只能作推测或综合。"
                             ),
                             "query_jobs_required": not queried,
+                            **({"work_map_error": map_error} if map_error else {}),
                             **(
                                 {
                                     "source_finding_check": finding_check,
@@ -1741,6 +1836,10 @@ async def _research(
                             stop_reason="answered",
                             claims=[claim.model_dump() for claim in answer.claims],
                         )
+                        if work_map is not None:
+                            result["work_map"] = work_map
+                            result["analysis_origin"] = "research_agent"
+                            result["cognition_revisions"] = cognition_revisions
                         if approach == "source_first":
                             result["unknown_finding_ids"] = answer.unknown_finding_ids
                             if finding_check.get("analysis_notes"):
@@ -1809,6 +1908,15 @@ def finalize(result):
     """固定复盘只检查可计算合同，不以结构合格声称语义正确。"""
     evidence = {ev["id"]: ev for ev in result["evidence"]}
     used = {key for claim in result["claims"] for key in claim["evidence_ids"]}
+    if result.get("coverage_mode") == "question":
+        scoped = {j["id"] for j in result["scope"]["jobs"] if j["has_detail"]}
+        read = {e.get("job_id") for e in evidence.values() if e.get("snapshot_id")}
+        result["question_scope"] = {
+            "available_details": len(scoped),
+            "read_job_fragments": len(read & scoped),
+            "unread_job_ids": sorted(scoped - read),
+            "notice": "按本次问题选择资料；读到片段不代表全文核对，未读不代表没有相关要求。",
+        }
     result["review"] = {
         "checks": [
             {

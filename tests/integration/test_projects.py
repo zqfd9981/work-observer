@@ -204,7 +204,13 @@ def test_restart_recovery_does_not_consume_and_http_followup(tmp_path):
         p = client.post(
             f"/api/projects/{p['id']}/steps",
             headers=headers,
-            json=dict(revision=p["revision"], question="Python", offline=True),
+            json=dict(
+                revision=p["revision"],
+                question="Python",
+                offline=True,
+                approach="work_map",
+                coverage_mode="question",
+            ),
         ).json()
         assert client.post(f"/api/projects/{p['id']}/run", headers=headers).status_code == 202
         for _ in range(100):
@@ -213,6 +219,9 @@ def test_restart_recovery_does_not_consume_and_http_followup(tmp_path):
                 break
             time.sleep(0.01)
         assert detail["steps"][0]["state"] == "waiting_material"
+        assert detail["steps"][0]["approach"] == "work_map"
+        assert detail["steps"][0]["result"]["coverage_mode"] == "question"
+        assert "work_map" not in detail["steps"][0]["result"]
         assert detail["usage"]["calls"] == 0
     with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
         detail = client.get(f"/api/projects/{p['id']}").json()
