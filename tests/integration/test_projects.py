@@ -334,3 +334,5 @@ def test_restart_recovery_does_not_consume_and_http_followup(tmp_path):
         )
         assert followup.status_code == 201
         assert followup.json()["steps"][-1]["reply_to_step_id"] == detail["steps"][0]["id"]
+        queued = client.get(f"/api/projects/{p['id']}").json()
+        assert queued["ready_step_ids"] == [queued["steps"][-1]["id"]]

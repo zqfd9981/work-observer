@@ -58,6 +58,65 @@ class SubsetModel:
         return [call], call
 
 
+class DirectComparisonModel:
+    async def turn(self, history):
+        jobs = json.loads(history[1]["content"])["fixed_scope"]["jobs"]
+        outputs = [
+            json.loads(row["output"])
+            for row in history
+            if row.get("type") == "function_call_output"
+        ]
+        if len(outputs) < len(jobs):
+            name, arguments = "read_job", {"job_id": jobs[len(outputs)]["id"]}
+        else:
+            name, arguments = (
+                "finish_research",
+                {
+                    "claims": [
+                        {
+                            "category": "task",
+                            "basis": "synthesis",
+                            "requirement": "unspecified",
+                            "text": "两份合成原文均描述接口开发任务。",
+                            "evidence_ids": [row["evidence"][0]["id"] for row in outputs[:2]],
+                        }
+                    ],
+                    "gaps": [],
+                },
+            )
+        call = dict(
+            type="function_call",
+            name=name,
+            arguments=json.dumps(arguments),
+            call_id=str(len(history)),
+        )
+        return [call], call
+
+
+@pytest.mark.parametrize("mode,expected", [("question", "completed"), ("all", "incomplete")])
+def test_frozen_question_scope_can_read_both_sources_and_answer_in_three_calls(
+    source_workspace, mode, expected
+):
+    repo, _, jobs = source_workspace
+    result = asyncio.run(
+        research(
+            repo,
+            "比较两份合成接口任务",
+            Settings(),
+            job_ids=jobs,
+            coverage_mode=mode,
+            max_calls=3,
+            model=DirectComparisonModel(),
+        )
+    )
+    assert result["status"] == expected
+    assert result["model_calls"] == 3
+    assert [row["tool"] for row in result["trace"]] == ["read_job", "read_job", "finish_research"]
+    if mode == "question":
+        assert len({e["job_id"] for e in result["evidence"]}) == 2
+        assert len(result["claims"][0]["evidence_ids"]) == 2
+
+
 @pytest.mark.parametrize("mode,expected", [("question", "completed"), ("all", "incomplete")])
 def test_partial_relevant_answer_is_deliverable_but_explicit_full_comparison_is_not(
     source_workspace, mode, expected

@@ -9,7 +9,7 @@ from starlette.routing import Route
 
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.reports.results import audit_result
-from work_observer.research.projects import ProjectService, execute_project
+from work_observer.research.projects import ProjectService, completed_steps, execute_project
 
 
 class ProjectInput(BaseModel):
@@ -167,6 +167,12 @@ def project_routes(
                         else {"status": "pending"}
                     )
                 step["run_state"] = run["state"]
+        completed = completed_steps(project, svc.rejected_steps(project))
+        project["ready_step_ids"] = [
+            step["id"]
+            for step in project["steps"]
+            if step["state"] in {"queued", "interrupted"} and set(step["depends_on"]) <= completed
+        ]
         project["worker_running"] = bool(
             tasks.get("project:" + identity) and not tasks["project:" + identity].done()
         )

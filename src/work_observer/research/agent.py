@@ -30,6 +30,8 @@ PUBLIC_ONLY_POLICY = (
     "官方正文可直接说明tool类工具行为；API前置条件不是岗位资格，要求性质用unspecified。"
 )
 QUESTION_COVERAGE_POLICY = (
+    "fixed_scope已由程序冻结并展示，可直接读取或检索其中原文，无须先query_jobs重复确认范围。"
+    "query_jobs仍可查看正文定位预览。有限调用优先查证并回答；不必单独登记已有的调查计划。"
     "本轮按用户问题选择必要资料。固定候选是允许查阅的范围，不是必须逐岗生成判断的名单。"
     "不要为了覆盖无关候选而补写判断。若用户明确要求逐一比较、完整清单或总体统计，"
     "仍须实际查足相应资料；做不到就明确缺口，不把未读当不存在或用检索命中代替总体。"
@@ -330,7 +332,7 @@ def method_fingerprint(
                 {
                     "base": baseline,
                     "coverage_policy": QUESTION_COVERAGE_POLICY,
-                    "version": "question-scope-v2",
+                    "version": "question-scope-v3",
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -827,7 +829,7 @@ async def _research(
 
         method_version = VERSION
     if coverage_mode == "question":
-        method_version += "-question-scope-v2"
+        method_version += "-question-scope-v3"
     if job_ids == []:
         method_version += "-public-documents-v1"
     result = {
@@ -989,7 +991,7 @@ async def _research(
             )
         return finalize(result)
     evidence = {}
-    queried = job_ids == []
+    queried = job_ids == [] or coverage_mode == "question"
     required_jobs = (
         {job["id"] for job in scope["jobs"] if job["has_detail"]}
         if job_ids and coverage_mode == "all"

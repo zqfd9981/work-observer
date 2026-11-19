@@ -42,7 +42,7 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(node("#conversation-question").value.includes("结合刚归档"));
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,2);
 
- vm.runInContext('state.serviceContract={components:{schemas:{StepInput:{properties:{reply_to_step_id:{}}}}}};conversation.replyToStepId=undefined;api=async(path,options)=>{calls.push({path,options});return options?{}:{id:"project-1",revision:5,worker_running:false,steps:[{id:"a".repeat(32),state:"waiting_review"},{id:"b".repeat(32),state:"queued"}]};}',context);
+ vm.runInContext('state.serviceContract={components:{schemas:{StepInput:{properties:{reply_to_step_id:{}}}}}};conversation.replyToStepId=undefined;api=async(path,options)=>{calls.push({path,options});return options?{}:{id:"project-1",revision:5,worker_running:false,steps:[{id:"a".repeat(32),state:"waiting_review"},{id:"b".repeat(32),state:"queued",offline:true}]};}',context);
  await vm.runInContext('askResearchConversation("为什么？")',context);
  let reply=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
  assert.equal(reply.reply_to_step_id,"a".repeat(32)); // Pending planned work is not the reply target.
@@ -54,6 +54,31 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  reply=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
  assert.equal(reply.reply_to_step_id,"c".repeat(32));
  assert.equal(context.calls.filter(c=>c.path.includes("/review")).length,0);
+
+ context.capacityProject={id:"project-1",revision:7,worker_running:false,budget:{max_calls:10,max_seconds:300,max_rounds:2,max_public:0},usage:{reserved_calls:6,reserved_seconds:180,public:0},ready_step_ids:[],steps:[{id:"first",state:"waiting_review",run_id:"old-run",max_calls:6,timeout:180,offline:false}]};
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});return options?{}:capacityProject;}',context);
+ await vm.runInContext('askResearchConversation("按实际剩余额度继续",{offline:false,allowPublic:false})',context);
+ const bounded=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
+ assert.equal(bounded.max_calls,4);assert.equal(bounded.timeout,120);
+ let stepWrites=context.calls.filter(c=>c.path.endsWith("/steps")).length;
+ context.capacityProject.steps.push({id:"second",state:"failed",run_id:"second-run",offline:false});
+ await assert.rejects(vm.runInContext('askResearchConversation("轮数已满",{offline:true})',context),/轮数/);
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/steps")).length,stepWrites);
+ context.capacityProject.steps.pop();context.capacityProject.usage.reserved_seconds=300;
+ await assert.rejects(vm.runInContext('askResearchConversation("时间已满",{offline:false})',context),/时间/);
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/steps")).length,stepWrites);
+ await vm.runInContext('askResearchConversation("时间用完后只整理原文",{offline:true,allowPublic:true})',context);
+ const offlineBounded=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
+ assert.equal(offlineBounded.offline,true);assert.equal(offlineBounded.allow_public,false);
+ context.capacityProject.usage.reserved_seconds=180;
+ await assert.rejects(vm.runInContext('askResearchConversation("补查额度不足",{offline:false,allowPublic:true})',context),/公开补查/);
+ context.capacityProject.budget.max_rounds=3;
+ context.capacityProject.steps.push({id:"queued",state:"queued",max_calls:4,timeout:120,offline:false});
+ context.capacityProject.ready_step_ids=["queued"];
+ stepWrites=context.calls.filter(c=>c.path.endsWith("/steps")).length;
+ await assert.rejects(vm.runInContext('askResearchConversation("已有计划占用额度",{offline:false})',context),/调用额度/);
+ await assert.rejects(vm.runInContext('askResearchConversation("不得借离线启动待执行模型",{offline:true})',context),/待执行的模型/);
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/steps")).length,stepWrites);
 
  node("#research-source-mode").value="public";
  const queriesBefore=context.calls.filter(c=>c.path.startsWith("jobs?")).length;
