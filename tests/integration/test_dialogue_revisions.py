@@ -619,12 +619,17 @@ def test_legacy_checkpoint_keeps_its_original_finish_contract(source_workspace):
     frozen = store.load_checkpoint(run["id"])
     frozen["result"].pop("dialogue_revisions_version")
     delivery_policy = frozen["result"].pop("answer_delivery_policy", "")
+    budget_policy = frozen["result"].pop("tool_budget_policy", "")
     frozen["result"]["research_method_sha256"] = method_fingerprint(coverage_mode="question")
     frozen["result"]["research_method_version"] = frozen["result"][
         "research_method_version"
     ].replace("-" + VERSION, "")
     frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(POLICY, "")
     frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(delivery_policy, "")
+    frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(budget_policy, "")
+    payload = json.loads(frozen["history"][1]["content"])
+    payload.pop("research_budget", None)
+    frozen["history"][1]["content"] = json.dumps(payload, ensure_ascii=False)
     store.checkpoint(run["id"], frozen)
     store.save(run["id"], result=frozen["result"])
     result = asyncio.run(

@@ -72,6 +72,13 @@ ANSWER_DELIVERY_POLICY = (
     "字段比较、解释或待确认建议属于推断，不与资格原句混在一条direct判断中。"
     "提交前对照用户的问题检查遗漏和重复；未完成的部分在gaps说明，不宣称全面回答。"
 )
+TOOL_BUDGET_POLICY = (
+    "research_budget是程序在每次调用前更新的真实额度，remaining_model_calls包含本次调用。"
+    "finish_research也需要一次模型调用，查证时为提交保留一次。固定范围已提供时不重复确认，"
+    "简单问题不另行登记已有计划。优先完成问题所需的原文核对，减少无必要的准备步骤。"
+    "原文或额度不足时明确未完成的部分，不能靠删除重要问题、编造依据或放宽要求来完成。"
+    "这只是执行额度提示，不是资料证据或完成命令。"
+)
 
 
 class Claim(BaseModel):
@@ -333,8 +340,9 @@ def method_fingerprint(
     archive_version=None,
     application_actions=False,
     answer_delivery_policy=None,
+    tool_budget_policy=None,
 ):
-    if answer_delivery_policy:
+    if answer_delivery_policy or tool_budget_policy:
         return hashlib.sha256(
             json.dumps(
                 {
@@ -345,7 +353,11 @@ def method_fingerprint(
                         dialogue_revisions=dialogue_revisions, archive_versions=archive_versions,
                         archive_version=archive_version, application_actions=application_actions,
                     ),
-                    "answer_delivery_policy": answer_delivery_policy,
+                    **(
+                        {"answer_delivery_policy": answer_delivery_policy}
+                        if answer_delivery_policy else {}
+                    ),
+                    **({"tool_budget_policy": tool_budget_policy} if tool_budget_policy else {}),
                 },
                 ensure_ascii=False, sort_keys=True,
             ).encode()
@@ -998,8 +1010,10 @@ async def _research(
         if approach == "standard" and coverage_mode == "question" and job_ids != [] and not offline
         else None
     )
+    budget_policy = TOOL_BUDGET_POLICY if delivery_policy else None
     if resume and checkpoint:
         frozen = checkpoint[0].load_checkpoint(checkpoint[1]) or {}
+        budget_policy = frozen.get("result", {}).get("tool_budget_policy")
         delivery_policy = frozen.get("result", {}).get("answer_delivery_policy")
         has_work_materials = bool(
             frozen.get("result", {}).get("scope", {}).get("work_material_ids")
@@ -1060,6 +1074,7 @@ async def _research(
             archive_version=archive_contract_version,
             application_actions=application_enabled,
             answer_delivery_policy=delivery_policy,
+            tool_budget_policy=budget_policy,
         ),
         "approach": approach,
         "coverage_mode": coverage_mode,
@@ -1106,6 +1121,8 @@ async def _research(
         result["dialogue_revisions_version"] = dialogue_version
     if delivery_policy:
         result["answer_delivery_policy"] = delivery_policy
+    if budget_policy:
+        result["tool_budget_policy"] = budget_policy
     if archive_enabled:
         result["archive_versions_version"] = archive_contract_version
         result["archive_comparisons"] = []
@@ -1181,6 +1198,7 @@ async def _research(
             archive_version=archive_contract_version,
             application_actions=True,
             answer_delivery_policy=delivery_policy,
+            tool_budget_policy=budget_policy,
         )
     result["continued_from"] = [
         item["run_id"] for item in (conversation_context or {}).get("previous_findings", [])
@@ -1259,6 +1277,8 @@ async def _research(
     system = SYSTEM
     if delivery_policy:
         system += delivery_policy
+    if budget_policy:
+        system += budget_policy
     if application_enabled:
         system += applications.POLICY
     if archive_enabled:
@@ -1372,6 +1392,7 @@ async def _research(
                 archive_version=archive_contract_version,
                 application_actions=application_enabled,
                 answer_delivery_policy=delivery_policy,
+                tool_budget_policy=budget_policy,
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
@@ -1393,6 +1414,7 @@ async def _research(
             archive_version=archive_contract_version,
             application_actions=application_enabled,
             answer_delivery_policy=delivery_policy,
+            tool_budget_policy=budget_policy,
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
@@ -1410,6 +1432,7 @@ async def _research(
                 archive_version=archive_contract_version,
                 application_actions=application_enabled,
                 answer_delivery_policy=delivery_policy,
+                tool_budget_policy=budget_policy,
             )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
@@ -1535,6 +1558,14 @@ async def _research(
                     raise ProbeError("RESEARCH_CONTEXT_LIMIT")
                 if tool_contract:
                     result.setdefault("tool_contracts", []).append(tool_contract)
+                if budget_policy:
+                    context = json.loads(history[1]["content"])
+                    context["research_budget"] = {
+                        "max_model_calls": max_calls,
+                        "used_model_calls": result["model_calls"],
+                        "remaining_model_calls": max_calls - result["model_calls"],
+                    }
+                    history[1]["content"] = json.dumps(context, ensure_ascii=False)
                 result["model_calls"] += 1
                 persist(pending=True)
                 outputs, call = await model.turn(history)

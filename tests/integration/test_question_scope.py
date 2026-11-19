@@ -138,7 +138,8 @@ def test_partial_relevant_answer_is_deliverable_but_explicit_full_comparison_is_
     assert result["status"] == expected
     assert result["scope"]["counts"]["candidate_details"] == 2
     assert result["research_method_sha256"] == method_fingerprint(
-        coverage_mode=mode, answer_delivery_policy=result.get("answer_delivery_policy")
+        coverage_mode=mode, answer_delivery_policy=result.get("answer_delivery_policy"),
+        tool_budget_policy=result.get("tool_budget_policy"),
     )
     if mode == "question":
         assert result["model_calls"] == 3
@@ -370,16 +371,28 @@ def test_answer_guidance_is_frozen_with_the_original_progress(
     assert policy in saved["history"][0]["content"]
     if legacy:
         saved["result"].pop("answer_delivery_policy")
+        budget_policy = saved["result"].pop("tool_budget_policy")
         saved["history"][0]["content"] = saved["history"][0]["content"].replace(policy, "")
+        saved["history"][0]["content"] = saved["history"][0]["content"].replace(budget_policy, "")
+        context = json.loads(saved["history"][1]["content"])
+        context.pop("research_budget")
+        saved["history"][1]["content"] = json.dumps(context, ensure_ascii=False)
         saved["result"]["research_method_sha256"] = method_fingerprint(coverage_mode="question")
         store.checkpoint(run["id"], saved)
     original_hash = saved["result"]["research_method_sha256"]
     original_system = saved["history"][0]["content"]
     monkeypatch.setattr(agent, "ANSWER_DELIVERY_POLICY", "后续修改的提示，不能进入旧进度")
+    monkeypatch.setattr(agent, "TOOL_BUDGET_POLICY", "后续修改的预算提示，不能进入旧进度")
 
     class ResumeModel(SubsetModel):
         async def turn(self, history):
             assert history[0]["content"] == original_system
+            budget = json.loads(history[1]["content"]).get("research_budget")
+            assert budget == (
+                None if legacy else {
+                    "max_model_calls": 5, "used_model_calls": 3, "remaining_model_calls": 2
+                }
+            )
             return await super().turn(history)
 
     result = asyncio.run(
@@ -396,6 +409,30 @@ def test_answer_guidance_is_frozen_with_the_original_progress(
     assert result["research_method_sha256"] == original_hash
     assert result.get("answer_delivery_policy") == (None if legacy else policy)
     assert store.load_checkpoint(run["id"])["max_calls"] == 5
+
+
+def test_each_turn_has_current_budget_while_two_sources_are_read_and_cited(source_workspace):
+    repo, _, jobs = source_workspace
+
+    class BudgetComparison(DirectComparisonModel):
+        def __init__(self):
+            self.seen = []
+
+        async def turn(self, history):
+            self.seen.append(json.loads(history[1]["content"])["research_budget"])
+            return await super().turn(history)
+
+    model = BudgetComparison()
+    result = asyncio.run(research(
+        repo, "比较两份合成接口工作", Settings(), job_ids=jobs,
+        coverage_mode="question", max_calls=3, model=model,
+    ))
+    assert result["status"] == "completed" and result["model_calls"] == 3
+    assert [b["remaining_model_calls"] for b in model.seen] == [3, 2, 1]
+    assert [b["used_model_calls"] for b in model.seen] == [0, 1, 2]
+    assert all(b["max_model_calls"] == 3 for b in model.seen)
+    assert len({ev["job_id"] for ev in result["evidence"]}) == 2
+    assert len(result["claims"][0]["evidence_ids"]) == 2
 
 
 def test_agent_searches_same_glyph_radicals_in_its_frozen_source_pool(source_workspace, tmp_path):
