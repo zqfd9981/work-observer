@@ -53,30 +53,35 @@ class ResearchKnowledgeService:
                         "saved_status": saved.status if saved else None,
                     }
                 )
-            abilities = []
-            for index, item in enumerate(value["ability_relations"]):
-                saved = next(
-                    (
-                        row
-                        for row in relations
-                        if row.source_run_id == run_id
-                        and row.scope.get("research_map", {}).get("ability_relation_index") == index
-                    ),
-                    None,
-                )
-                abilities.append(
-                    {
-                        **item,
-                        "index": index,
-                        "saved_id": saved.id if saved else None,
-                        "saved_status": saved.status if saved else None,
-                    }
-                )
+            relation_items = {}
+            for key, index_key in (
+                ("ability_relations", "ability_relation_index"),
+                ("work_relations", "work_relation_index"),
+            ):
+                relation_items[key] = []
+                for index, item in enumerate(value.get(key, [])):
+                    saved = next(
+                        (
+                            row
+                            for row in relations
+                            if row.source_run_id == run_id
+                            and row.scope.get("research_map", {}).get(index_key) == index
+                        ),
+                        None,
+                    )
+                    relation_items[key].append(
+                        {
+                            **item,
+                            "index": index,
+                            "saved_id": saved.id if saved else None,
+                            "saved_status": saved.status if saved else None,
+                        }
+                    )
         return {
             "run_id": run_id,
             "project_id": result.get("project_id"),
             "work_types": work_types,
-            "ability_relations": abilities,
+            **relation_items,
             "scope_note": value["scope_note"],
             "unknowns": value["unknowns"],
             "domains": [
@@ -98,6 +103,7 @@ class ResearchKnowledgeService:
                     "domain_key": domain_keys.get(row.domain_id),
                     "source_text": row.source_text,
                     "target_text": row.target_text,
+                    "predicate": row.predicate,
                 }
                 for row in relations
                 if row.status in {"active", "candidate", "conflicted"}
@@ -112,17 +118,22 @@ class ResearchKnowledgeService:
         *,
         work_type_index=None,
         ability_relation_index=None,
+        work_relation_index=None,
         domain_id=None,
         previous_domain_id=None,
         previous_relation_id=None,
     ):
-        if (work_type_index is None) == (ability_relation_index is None):
+        choices = [
+            ("work_types", work_type_index),
+            ("ability_relations", ability_relation_index),
+            ("work_relations", work_relation_index),
+        ]
+        if sum(index is not None for _, index in choices) != 1:
             raise ProbeError("KNOWLEDGE_MAP_ITEM_REQUIRED")
         with exclusive(self.repository.engine.url.database):
             result, value = self._source(run_id)
-            kind = "work_types" if work_type_index is not None else "ability_relations"
-            index = work_type_index if work_type_index is not None else ability_relation_index
-            if type(index) is not int or not 0 <= index < len(value[kind]):
+            kind, index = next((key, index) for key, index in choices if index is not None)
+            if type(index) is not int or not 0 <= index < len(value.get(kind, [])):
                 raise ProbeError("KNOWLEDGE_MAP_ITEM_REQUIRED")
             item = value[kind][index]
             ids = list(
@@ -193,21 +204,31 @@ class ResearchKnowledgeService:
             if not domain_id:
                 raise ProbeError("DOMAIN_NOT_FOUND")
             context = {
-                "ability_relation_index": index,
+                "work_relation_index"
+                if work_relation_index is not None
+                else "ability_relation_index": index,
                 "basis": item["basis"],
                 "rationale": item["rationale"],
                 "transfer_limit": item["transfer_limit"],
                 "claim_indices": item["claim_indices"],
                 "scope_note": value["scope_note"],
             }
+            if work_relation_index is not None:
+                context["evidence_scope"] = (
+                    "job"
+                    if any(ev.get("job_id") for ev in evidence)
+                    else "work_material"
+                    if any(ev.get("evidence_kind") == "work_material" for ev in evidence)
+                    else "public_context"
+                )
             record = self.knowledge.propose_relation(
                 domain_id,
-                "task",
-                item["task"],
-                "ability",
-                item["ability"],
+                item["source_kind"] if work_relation_index is not None else "task",
+                item["source_text"] if work_relation_index is not None else item["task"],
+                item["target_kind"] if work_relation_index is not None else "ability",
+                item["target_text"] if work_relation_index is not None else item["ability"],
                 evidence,
-                predicate="supports",
+                predicate=item["predicate"] if work_relation_index is not None else "supports",
                 project_id=result.get("project_id"),
                 source_run_id=run_id,
                 conflict_ids=[previous_relation_id] if previous_relation_id else [],

@@ -23,7 +23,7 @@ def data():
             "version": VERSION,
             "scope_note": "合成范围",
             "work_types": [],
-            "ability_relations": [],
+            "work_relations": [],
             "unknowns": ["待核实"],
         },
         "revisions": [

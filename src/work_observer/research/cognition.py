@@ -5,17 +5,20 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
-from work_observer.reports.cognition import WorkMap, checked_map
+from work_observer.reports.cognition import ResearchWorkMap, checked_map
 from work_observer.research.agent import Answer
 
-VERSION = "work-map-v2-revisions"
+VERSION = "work-map-v3-work-relations"
 POLICY = """
-本轮成果是工作地图与任务/能力关系，仍由你这个研究Agent选择调查和比较，不是按固定分类填表。
-finish_research同时提交claims、gaps、work_map和revisions。work_map.version填work-map-v2-revisions。
+本轮成果是工作地图与业务/工作关系，仍由你这个研究Agent选择调查和比较，不是按固定分类填表。
+finish_research同时提交claims、gaps、work_map和revisions。work_map.version填work-map-v3-work-relations。
 先根据业务问题、主要任务和交付物形成可重叠分组，不按职位标题、工具名称或预设五类硬分。
 业务场景、技术层级与交付方式可以交叉；任务不足就放unknowns，可令work_types为空。
-每个分组写问题、任务、交付物、边界/反例与下一步验证；每个能力关系写具体任务、能力、
-为什么相关以及迁移条件。关系和分组中的claim_indices是本次claims的零起始下标，必须实际存在，
+每个分组写问题、任务、交付物、边界/反例与下一步验证。work_relations按本题需要连接business业务问题、
+task任务、deliverable交付物、responsibility责任、ability能力、tool工具；写两端具体表述、关系方向、
+为什么相关以及适用/迁移边界。predicate可为supports支撑、requires需要、produces产出、contradicts反驳；
+requires表示本条工作关系的条件，不自动表示招聘必备资格，任职要求强度仍以claims.requirement为准。
+不要强行凑齐六维或把工具提及改写为个人能力。关系和分组中的claim_indices是本次claims的零起始下标，必须实际存在，
 并选择能支持本条关系全部已知表述的判断；若边界涉及另一岗位，也需选择该岗位判断和原文。
 分组basis为synthesis或inference；关系可为direct/synthesis/inference。
 按问题取最少必要分组与关系，表述简短，不凑满字段上限。
@@ -24,6 +27,9 @@ finish_research同时提交claims、gaps、work_map和revisions。work_map.versi
 scope_note写实际样本范围、正文不足及推断限制；unknowns保留混合/待分类/未知和竞争解释。
 不从7份正文外推行业分布、固定互斥比例或时间趋势，不编造用户背景、内部动机和组织权力。
 地图是你的分析，不是独立来源或人审；所有已知判断仍需本轮已读原文，派生认识不能重复计证据。
+公开产品/技术说明只支持相应业务背景或所描述的工作，不证明具体岗位个人责任；用户补充资料保持自述性质。
+仅公开网页时，以business背景或tool行为判断为依据，其他工作联系保持归纳或待验证解释，不改成任职职责。
+同一来源的归纳不能重复计为多份独立证据；没有原文支持的责任、产出或因果关系留作未知。
 有project_context.previous_findings时，针对本次问题检查相关旧判断，按需要用revisions说明
 保留、修订、撤回或尚未解决。previous_claim_index使用旧derived_claims.previous_claim_index，
 不是该列表位置。new_claim_indices使用本次claims零起始下标，evidence_ids引用本轮已读原文。
@@ -46,7 +52,7 @@ class CognitiveRevision(BaseModel):
 
 
 class CognitionAnswer(Answer):
-    work_map: WorkMap
+    work_map: ResearchWorkMap
     revisions: list[CognitiveRevision] = Field(default_factory=list, max_length=8)
 
 
@@ -69,7 +75,9 @@ def tools(base):
     strict(schema)
     finish = next(item for item in result if item["name"] == "finish_research")
     finish["parameters"] = schema
-    finish["description"] = "提交有原文判断、可重叠工作分组、任务能力关系、边界与未知的认知地图。"
+    finish["description"] = (
+        "提交有原文判断、可重叠工作分组、业务/任务/交付物/责任/能力/工具关系及边界的地图。"
+    )
     return result
 
 

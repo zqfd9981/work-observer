@@ -239,8 +239,18 @@ class DomainKnowledgeService:
                 raise ProbeError("DOMAIN_NOT_FOUND")
             verified = self._relation_evidence(session, evidence)
             counter = self._relation_evidence(session, counterevidence) if counterevidence else []
-            if (source_kind != "business" or target_kind != "business") and not any(
-                item.get("job_id") for item in verified
+            evidence_scope = (
+                "job"
+                if any(item.get("job_id") for item in verified)
+                else "work_material"
+                if any(item.get("evidence_kind") == "work_material" for item in verified)
+                else "public_context"
+            )
+            if (
+                (source_kind != "business" or target_kind != "business")
+                and not any(item.get("job_id") for item in verified)
+                and evidence_scope != "work_material"
+                and not (research_map and research_map.get("evidence_scope") == "public_context")
             ):
                 raise ProbeError("RELATION_JOB_EVIDENCE_REQUIRED")
             scope = {
@@ -263,6 +273,7 @@ class DomainKnowledgeService:
                     }
                 ),
                 "project_id": project_id,
+                "evidence_scope": evidence_scope,
                 **({"research_map": research_map} if research_map is not None else {}),
             }
             for identity in conflict_ids:

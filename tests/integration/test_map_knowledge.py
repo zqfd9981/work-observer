@@ -31,10 +31,13 @@ class RelationMap(MapModel):
         calls, raw = await super().turn(history)
         if calls[0]["name"] == "finish_research":
             args = json.loads(calls[0]["arguments"])
-            args["work_map"]["ability_relations"] = [
+            args["work_map"]["work_relations"] = [
                 dict(
-                    task="实现接口",
-                    ability="接口设计",
+                    source_kind="task",
+                    source_text="实现接口",
+                    target_kind="ability",
+                    target_text="接口设计",
+                    predicate="supports",
                     rationale="合成待验证解释",
                     transfer_limit="不证明独立平台交付",
                     basis="inference",
@@ -89,7 +92,7 @@ def test_map_http_retention_revisions_reuse_and_forgetting(source_workspace, tmp
         path = f"/api/knowledge/research/{first['run_id']}"
         preview = client.get(path)
         assert preview.status_code == 200
-        assert preview.json()["ability_relations"][0]["basis"] == "inference"
+        assert preview.json()["work_relations"][0]["basis"] == "inference"
         saved = client.post(path, headers=headers, json={"work_type_index": 0})
         assert saved.status_code == 201, saved.text
         domain = saved.json()["record"]
@@ -107,7 +110,7 @@ def test_map_http_retention_revisions_reuse_and_forgetting(source_workspace, tmp
             ).status_code
             == 200
         )
-        body = {"ability_relation_index": 0, "domain_id": domain["id"]}
+        body = {"work_relation_index": 0, "domain_id": domain["id"]}
         saved = client.post(path, headers=headers, json=body)
         assert saved.status_code == 201, saved.text
         relation = saved.json()["record"]
@@ -130,7 +133,7 @@ def test_map_http_retention_revisions_reuse_and_forgetting(source_workspace, tmp
     knowledge.review_domain(revised["id"], "accept", "合成新地图修订")
     replacement = transfer.save(
         second["run_id"],
-        ability_relation_index=0,
+        work_relation_index=0,
         domain_id=revised["id"],
         previous_relation_id=relation["id"],
     )["record"]
@@ -179,7 +182,7 @@ def test_rejected_map_stops_saved_work_type_reuse(source_workspace):
     saved = transfer.save(result["run_id"], work_type_index=0)["record"]
     knowledge = DomainKnowledgeService(repo)
     knowledge.review_domain(saved["id"], "accept", "合成机制核对")
-    relation = transfer.save(result["run_id"], ability_relation_index=0, domain_id=saved["id"])[
+    relation = transfer.save(result["run_id"], work_relation_index=0, domain_id=saved["id"])[
         "record"
     ]
     assert relation["scope"]["project_id"] == project["id"]

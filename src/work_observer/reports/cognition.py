@@ -27,13 +27,35 @@ class AbilityRelation(BaseModel):
     transfer_limit: str = Field(min_length=1, max_length=1200)
 
 
-class WorkMap(BaseModel):
+class WorkRelationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_kind: Literal["business", "task", "deliverable", "responsibility", "ability", "tool"]
+    source_text: str = Field(min_length=1, max_length=500)
+    target_kind: Literal["business", "task", "deliverable", "responsibility", "ability", "tool"]
+    target_text: str = Field(min_length=1, max_length=500)
+    predicate: Literal["supports", "requires", "produces", "contradicts"]
+    rationale: str = Field(min_length=1, max_length=1200)
+    claim_indices: list[StrictInt] = Field(min_length=1, max_length=24)
+    basis: Literal["direct", "synthesis", "inference"]
+    transfer_limit: str = Field(min_length=1, max_length=1200)
+
+
+class MapContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str = Field(min_length=1, max_length=80)
     scope_note: str = Field(min_length=1, max_length=2000)
     work_types: list[WorkType] = Field(max_length=8)
-    ability_relations: list[AbilityRelation] = Field(max_length=12)
     unknowns: list[str] = Field(min_length=1, max_length=12)
+
+
+class WorkMap(MapContent):
+    # Read existing reports without changing their stored representation.
+    ability_relations: list[AbilityRelation] = Field(default_factory=list, max_length=12)
+    work_relations: list[WorkRelationItem] = Field(default_factory=list, max_length=18)
+
+
+class ResearchWorkMap(MapContent):
+    work_relations: list[WorkRelationItem] = Field(max_length=18)
 
 
 def checked_map(result):
@@ -43,14 +65,18 @@ def checked_map(result):
     value = WorkMap.model_validate(result["work_map"])
     claims = result.get("claims", [])
     evidence_ids = {item["id"] for item in result.get("evidence", [])}
-    for row in [*value.work_types, *value.ability_relations]:
+    for row in [*value.work_types, *value.ability_relations, *value.work_relations]:
         for index in row.claim_indices:
             if index < 0 or index >= len(claims):
                 raise ValueError("工作地图引用了不存在的判断")
             refs = claims[index].get("evidence_ids", [])
             if not refs or not set(refs) <= evidence_ids:
                 raise ValueError("工作地图判断缺少可回查原文")
-    return value.model_dump()
+    output = value.model_dump()
+    for key in ("ability_relations", "work_relations"):
+        if key not in result["work_map"]:
+            output.pop(key)
+    return output
 
 
 def render_map(result, labels):
@@ -81,13 +107,35 @@ def render_map(result, labels):
                 f"下一步验证：{row['next_check']}",
             ]
         )
-    lines.extend(["", "## 任务与能力关系（解释仍需核对）", ""])
-    for row in value["ability_relations"]:
+    if value.get("ability_relations"):
+        lines.extend(["", "## 任务与能力关系（解释仍需核对）", ""])
+    for row in value.get("ability_relations", []):
         lines.extend(
             [
                 f"- {row['task']} → {row['ability']}：{row['rationale']} {refs(row)}",
                 f"  解释性质：{bases[row['basis']]}",
                 f"  迁移边界：{row['transfer_limit']}",
+            ]
+        )
+    dimensions = {
+        "business": "业务问题",
+        "task": "任务",
+        "deliverable": "交付物",
+        "responsibility": "责任",
+        "ability": "能力",
+        "tool": "工具",
+    }
+    predicates = {"supports": "支撑", "requires": "需要", "produces": "产出", "contradicts": "反驳"}
+    if value.get("work_relations"):
+        lines.extend(["", "## 业务与工作关系（解释仍需核对）", ""])
+    for row in value.get("work_relations", []):
+        lines.extend(
+            [
+                f"- {dimensions[row['source_kind']]}：{row['source_text']} → "
+                f"{predicates[row['predicate']]} → {dimensions[row['target_kind']]}："
+                f"{row['target_text']}",
+                f"  解释：{row['rationale']} {refs(row)}",
+                f"  解释性质：{bases[row['basis']]}；适用与迁移边界：{row['transfer_limit']}",
             ]
         )
     lines.extend(["", "## 混合、未知与未分类", "", *[f"- {s}" for s in value["unknowns"]]])
@@ -111,7 +159,8 @@ def render_revisions(result, labels):
                 else "Agent辅助，非独立人审"
             )
             + "）。"
-            if prior_quality.get("status") == "rejected" else None
+            if prior_quality.get("status") == "rejected"
+            else None
         )
         lines.extend(
             [

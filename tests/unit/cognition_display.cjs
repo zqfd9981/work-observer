@@ -11,6 +11,18 @@ assert.ok(html.includes('data-cite="one"')&&html.includes("边界与反例")&&ht
 assert.ok(html.includes("&lt;script&gt;")&&html.includes("&lt;img")&&!html.includes("<script>")&&!html.includes("<img"));
 assert.ok(html.includes("类型允许重叠")&&html.includes("缺正文")&&html.includes("迁移边界"));
 assert.equal(vm.runInContext("renderWorkMap({},evidence)",context),"");
+context.result.work_map.work_relations=[{source_kind:"task",source_text:"核对原文",target_kind:"deliverable",target_text:"<script>检查清单</script>",predicate:"produces",basis:"inference",rationale:"合成解释",transfer_limit:"不证明招聘必备",claim_indices:[0]}];
+context.result.evidence=[{id:"one",public_document_id:"p"}];
+const full=vm.runInContext("renderWorkMap(result,evidence)",context);
+assert.ok(full.includes("业务与工作关系")&&full.includes("产出")&&full.includes("交付物"));
+assert.ok(full.includes("公开业务/技术背景，不证明岗位个人责任")&&full.includes("&lt;script&gt;检查清单"));
+context.retention={notice:"合成",work_types:[],work_relations:[{...context.result.work_map.work_relations[0],index:0}],domains:[],relations:[]};
+const retention=vm.runInContext("renderMapRetention(retention)",context);
+assert.ok(retention.includes('data-kind="work_relation"')&&retention.includes('data-index="0"')&&retention.includes("保留这条工作关系"));
+const approach={value:"work_map",querySelector:()=>({disabled:false})};
+context.document.querySelector=selector=>selector==="#research-approach"?approach:selector==="#research-source-mode"?{value:"public"}:node();
+vm.runInContext("updateResearchApproach()",context);
+assert.equal(approach.value,"work_map");assert.equal(approach.disabled,false);
 vm.runInContext(fs.readFileSync(require("node:path").join(require("node:path").dirname(process.argv[2]),"quality.js"),"utf8"),context);
 const review=vm.runInContext("renderQualityMap(result)",context);
 assert.ok(review.includes("地图关系单独核对")&&review.includes('name="work-map-rating"'));

@@ -46,6 +46,7 @@ class KnowledgeReviewInput(KnowledgeInput):
 class ResearchKnowledgeInput(KnowledgeInput):
     work_type_index: int | None = Field(default=None, ge=0, le=7)
     ability_relation_index: int | None = Field(default=None, ge=0, le=11)
+    work_relation_index: int | None = Field(default=None, ge=0, le=17)
     domain_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     previous_domain_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     previous_relation_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")

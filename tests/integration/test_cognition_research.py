@@ -68,7 +68,7 @@ class MapModel:
                                 "next_check": "核实个人分工",
                             }
                         ],
-                        "ability_relations": [],
+                        "work_relations": [],
                         "unknowns": ["个人责任和资格未知"],
                     },
                 },
