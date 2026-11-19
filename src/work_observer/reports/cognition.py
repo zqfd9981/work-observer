@@ -99,13 +99,15 @@ def render_revisions(result, labels):
     if not revisions:
         return []
     decisions = {"retain": "保留", "revise": "修订", "withdraw": "撤回", "unresolved": "仍待核实"}
+    states = {"waiting_review": "待核对", "completed": "项目内已接受（不等于独立质量审核）"}
     lines = ["", "## 认识修正记录", "", "以下是认识变化，不等于外部工作需求变化或人审。"]
     for row in revisions:
         lines.extend(
             [
                 "",
                 f"### {decisions[row['decision']]}旧判断 {row['previous_claim_index'] + 1}",
-                f"原运行：`{row['previous_run_id']}`；原核对状态：{row['previous_review_state']}",
+                f"原运行：`{row['previous_run_id']}`；原核对状态："
+                + states.get(row["previous_review_state"], row["previous_review_state"]),
                 f"旧判断：{row['previous_statement']}",
                 *[f"本轮判断：{statement}" for statement in row["new_statements"]],
                 f"理由：{row['reason']}",

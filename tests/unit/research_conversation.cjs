@@ -123,6 +123,13 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.equal(node("#research-source-mode").value,"jobs");
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBeforeMaterial);
 
+ vm.runInContext(fs.readFileSync(require("node:path").join(require("node:path").dirname(process.argv[2]),"quality.js"),"utf8"),context);
+ context.revisionRows=[{previous_run_id:"a".repeat(32),previous_claim_index:0,decision:"revise",previous_statement:"<b>旧解释</b>",new_statements:["新的解释"],reason:"重读原文纠正",previous_review_state:"waiting_review",evidence_relation:"reread",evidence_ids:[]}];
+ const correctionHtml=vm.runInContext('renderQualityMap({cognition_revisions:revisionRows})',context);
+ assert.ok(correctionHtml.includes("认识修正记录"));assert.ok(correctionHtml.includes("待核对"));
+ assert.ok(correctionHtml.includes("&lt;b&gt;旧解释&lt;/b&gt;"));
+ assert.ok(!correctionHtml.includes("地图关系单独核对")); // Ordinary corrections do not require map review fields.
+
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
  vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs";conversation.id="project-1"',context);
  await vm.runInContext('openResearchConversation("project-1",false)',context);

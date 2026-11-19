@@ -315,7 +315,30 @@ def method_fingerprint(
     coverage_mode="all",
     public_only=False,
     work_materials=False,
+    dialogue_revisions=False,
 ):
+    if dialogue_revisions:
+        from work_observer.research.dialogue import POLICY, VERSION, tools
+
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "base": method_fingerprint(
+                        approach,
+                        review_feedback=review_feedback,
+                        requirement_guard=requirement_guard,
+                        coverage_mode=coverage_mode,
+                        public_only=public_only,
+                        work_materials=work_materials,
+                    ),
+                    "dialogue_policy": POLICY,
+                    "version": VERSION,
+                    "tools": tools(TOOLS),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     if work_materials:
         return hashlib.sha256(
             json.dumps(
@@ -856,10 +879,16 @@ async def _research(
                 "标题只用于定位，须检索并引用原文；来源说明不等于独立核实或执行结果。"
             )
     has_work_materials = bool(work_material_ids)
+    dialogue_enabled = approach == "standard" and bool(
+        (conversation_context or {}).get("previous_findings")
+    )
     if resume and checkpoint:
         frozen = checkpoint[0].load_checkpoint(checkpoint[1]) or {}
         has_work_materials = bool(
             frozen.get("result", {}).get("scope", {}).get("work_material_ids")
+        )
+        dialogue_enabled = (
+            frozen.get("result", {}).get("dialogue_revisions_version") == "standard-dialogue-v1"
         )
     validation = (
         qualification.guard_contract()
@@ -885,6 +914,8 @@ async def _research(
         method_version += "-public-documents-v1"
     if has_work_materials:
         method_version += "-work-materials-v1"
+    if dialogue_enabled:
+        method_version += "-standard-dialogue-v1"
     result = {
         "format_version": 1,
         "research_method_version": method_version,
@@ -895,6 +926,7 @@ async def _research(
             coverage_mode=coverage_mode,
             public_only=job_ids == [],
             work_materials=has_work_materials,
+            dialogue_revisions=dialogue_enabled,
         ),
         "approach": approach,
         "coverage_mode": coverage_mode,
@@ -937,6 +969,8 @@ async def _research(
             "note": "服务未提供可核实单价，费用未知；调用与时间有上限。",
         },
     }
+    if dialogue_enabled:
+        result["dialogue_revisions_version"] = "standard-dialogue-v1"
     if validation:
         result["qualification_validation"] = validation
     if memory is None:
@@ -1064,6 +1098,10 @@ async def _research(
         system += PUBLIC_ONLY_POLICY
     if has_work_materials:
         system += WORK_MATERIAL_POLICY
+    if dialogue_enabled:
+        from work_observer.research.dialogue import POLICY as dialogue_policy
+
+        system += dialogue_policy
     if approach == "source_first":
         from work_observer.research.source_first import POLICY
 
@@ -1153,6 +1191,7 @@ async def _research(
                 coverage_mode=coverage_mode,
                 public_only=job_ids == [],
                 work_materials=has_work_materials,
+                dialogue_revisions=dialogue_enabled,
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
@@ -1169,6 +1208,7 @@ async def _research(
             coverage_mode=coverage_mode,
             public_only=job_ids == [],
             work_materials=has_work_materials,
+            dialogue_revisions=dialogue_enabled,
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
@@ -1181,6 +1221,7 @@ async def _research(
                 coverage_mode=coverage_mode,
                 public_only=job_ids == [],
                 work_materials=has_work_materials,
+                dialogue_revisions=dialogue_enabled,
             )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
@@ -1253,6 +1294,7 @@ async def _research(
             model = model or ModelClient(settings)
             if isinstance(model, ModelClient):
                 from work_observer.research.cognition import tools as cognition_tools
+                from work_observer.research.dialogue import tools as dialogue_tools
                 from work_observer.research.source_first import tools as source_first_tools
 
                 model.tools = (
@@ -1261,6 +1303,8 @@ async def _research(
                         if approach == "source_first"
                         else cognition_tools(TOOLS)
                         if approach == "work_map"
+                        else dialogue_tools(TOOLS)
+                        if dialogue_enabled
                         else TOOLS
                     )
                     + EXTRA_TOOLS
@@ -1817,13 +1861,17 @@ async def _research(
                         from work_observer.research.cognition import CognitionAnswer
 
                         answer = CognitionAnswer.model_validate(arguments)
+                    elif dialogue_enabled:
+                        from work_observer.research.dialogue import DialogueAnswer
+
+                        answer = DialogueAnswer.model_validate(arguments)
                     else:
                         answer = Answer.model_validate(arguments)
                     for claim in answer.claims:
                         claim.evidence_ids = [
                             citation_ids.get(key, key) for key in claim.evidence_ids
                         ]
-                    if approach == "work_map":
+                    if approach == "work_map" or dialogue_enabled:
                         for revision in answer.revisions:
                             revision.evidence_ids = [
                                 citation_ids.get(key, key) for key in revision.evidence_ids
@@ -1854,6 +1902,16 @@ async def _research(
                         )
                     ]
                     map_error, work_map, cognition_revisions = None, None, []
+                    revision_error = None
+                    if dialogue_enabled:
+                        from work_observer.research.dialogue import validate as validate_dialogue
+
+                        try:
+                            cognition_revisions = validate_dialogue(
+                                answer, evidence, conversation_context, review_feedback
+                            )
+                        except ValueError as exc:
+                            revision_error = str(exc)
                     if approach == "work_map":
                         from work_observer.research.cognition import (
                             validate_map,
@@ -1889,6 +1947,7 @@ async def _research(
                     if (
                         not queried
                         or map_error
+                        or revision_error
                         or (finding_check and not finding_check["binding_passed"])
                         or mixed_requirements
                         or not used.issubset(evidence)
@@ -1937,6 +1996,7 @@ async def _research(
                             ),
                             "query_jobs_required": not queried,
                             **({"work_map_error": map_error} if map_error else {}),
+                            **({"revision_error": revision_error} if revision_error else {}),
                             **(
                                 {
                                     "source_finding_check": finding_check,
@@ -1993,6 +2053,8 @@ async def _research(
                         if work_map is not None:
                             result["work_map"] = work_map
                             result["analysis_origin"] = "research_agent"
+                            result["cognition_revisions"] = cognition_revisions
+                        if dialogue_enabled:
                             result["cognition_revisions"] = cognition_revisions
                         if approach == "source_first":
                             result["unknown_finding_ids"] = answer.unknown_finding_ids

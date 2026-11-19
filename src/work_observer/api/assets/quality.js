@@ -7,7 +7,7 @@ function renderQualitySources(packet) {
   return `<section class="detail-section"><h3>原文逐段对照 · 检查回答遗漏</h3><p class="form-note">${e(context.notice)}</p>${context.scope_truncated ? '<p class="form-note">范围超过显示上限，以下岗位对照不完整。</p>' : ""}${context.sources.map(source=>`<details open><summary>${e(source.title || "岗位正文")} · ${source.state === "available" ? "研究当时的完整正文" : e(states[source.state] || "待核对")}</summary>${source.snapshot_id ? `<p class="form-note">正文版本：${e(source.snapshot_id)} · 取得：${e(source.observed_at || "未知")}</p>` : ""}${source.units.map(unit=>`<div class="research-context"><blockquote class="body-text">${e(unit.text)}</blockquote><p class="form-note">字符 ${e(unit.start)}–${e(unit.end)} · ${unit.claim_indices.length ? "引用片段涉及判断："+unit.claim_indices.map(index=>e(index+1)).join("、")+"；仍需核对回答是否覆盖" : "没有判断引用该段，请核对是否与问题有关、是否被遗漏"}</p></div>`).join("")}</details>`).join("") || '<p class="form-note">没有可对照的岗位正文范围。</p>'}</section>`;
 }
 function renderQualityMap(packet) {
-  if (!packet.work_map) return "";
+  if (!packet.work_map) return renderCognitiveRevisions(packet,new Map());
   return renderWorkMap(packet,new Map()) + renderCognitiveRevisions(packet,new Map()) + `<fieldset><legend>地图关系单独核对</legend><p class="form-note">逐条原文判断通过不代表分组和因果关系成立。核对分组边界、反例、迁移限制、修订理由与未知；各组展开可见判断编号，下文查对应原文。</p><label>地图关系与边界<select name="work-map-rating"><option value="unknown">尚待核对</option><option value="pass">分组与关系在本次范围内有支持</option><option value="fail">需要修正</option></select></label><label>依据与疑点<input name="work-map-reason" required maxlength="1200"></label></fieldset>`;
 }
 function renderQualityRepair(packet) {

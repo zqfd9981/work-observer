@@ -765,12 +765,13 @@ class ProjectService:
         allowed = set(step["job_ids"])
         dependencies = dependency_steps(record, step["depends_on"])
         reply_id = step.get("reply_to_step_id")
+        reply_run = next((s.get("run_id") for s in record["steps"] if s["id"] == reply_id), None)
         rejected = self.rejected_steps(record)
         excluded = {s["run_id"] for s in record["steps"] if s["id"] in rejected}
         if step.get("review_run_id"):
             excluded.add(step["review_run_id"])
         auditor = DependencyAudit(repository, excluded_runs=excluded)
-        candidates = []
+        candidates, eligible = [], []
         for previous in record["steps"]:
             if previous["id"] == step["id"] or previous["state"] not in {
                 "completed",
@@ -778,10 +779,15 @@ class ProjectService:
             }:
                 continue
             is_reply = previous["id"] == reply_id
-            if previous["scope_version"] != step["scope_version"] and not is_reply:
-                continue
             run = self.store.get(previous["run_id"])
             result = run.get("result") or {}
+            corrects_reply = reply_run and any(
+                row["previous_run_id"] == reply_run for row in result.get("cognition_revisions", [])
+            )
+            if previous["scope_version"] != step["scope_version"] and not (
+                is_reply or corrects_reply
+            ):
+                continue
             if excluded and not auditor.run(previous["run_id"])["eligible"]:
                 continue
             audit = audit_result(result, repository)
@@ -795,13 +801,42 @@ class ProjectService:
                 continue
             if not {j["id"] for j in result.get("scope", {}).get("jobs", [])} <= allowed:
                 continue
+            eligible.append((previous, result))
             score = len(_tokens(step["question"]) & _tokens(previous["question"]))
             if not is_reply and previous["id"] not in dependencies and not score:
                 continue
             candidates.append(
                 (2 if is_reply else int(previous["id"] in dependencies), score, previous, result)
             )
+        selected_runs = {previous["run_id"] for _, _, previous, _ in candidates}
+        related = [
+            (previous, result)
+            for previous, result in eligible
+            if any(
+                row["previous_run_id"] in selected_runs
+                for row in result.get("cognition_revisions", [])
+            )
+        ][-2:]
+        for order, (previous, result) in enumerate(related):
+            candidates = [row for row in candidates if row[2]["id"] != previous["id"]]
+            candidates.append((3, order, previous, result))
         candidates.sort(key=lambda value: value[:2], reverse=True)
+        followups = {}
+        eligible_runs = {previous["run_id"] for previous, _ in eligible}
+        for previous, result in eligible:
+            for revision in result.get("cognition_revisions", []):
+                if revision["previous_run_id"] not in eligible_runs:
+                    continue
+                key = (revision["previous_run_id"], revision["previous_claim_index"])
+                followups.setdefault(key, []).append(
+                    {
+                        "run_id": previous["run_id"],
+                        "decision": revision["decision"],
+                        "new_claim_indices": revision["new_claim_indices"],
+                        "reason": revision["reason"][:400],
+                        "review_state": previous["state"],
+                    }
+                )
         context = dict(
             project_id=identity,
             goal=record["goal"],
@@ -886,6 +921,9 @@ class ProjectService:
                 continue
             for index, claim in ranked:
                 selected = {**claim, "previous_claim_index": index}
+                if decisions := followups.get((previous["run_id"], index)):
+                    selected["followup_decisions"] = decisions[-3:]
+                    selected["reuse_status"] = "has_provisional_followup"
                 item["derived_claims"].append(selected)
                 if len(json.dumps(context, ensure_ascii=False)) > 14000:
                     item["derived_claims"].pop()

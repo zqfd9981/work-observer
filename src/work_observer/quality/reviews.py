@@ -120,6 +120,8 @@ class QualityReviewService:
 
             packet["work_map"] = checked_map(result)
             packet["cognition_revisions"] = result.get("cognition_revisions", [])
+        if result.get("cognition_revisions"):
+            packet["cognition_revisions"] = result["cognition_revisions"]
         notes = source_analysis_notes(result)
         if notes:
             packet["analysis_notes"] = notes
