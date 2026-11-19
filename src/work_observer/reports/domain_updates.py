@@ -19,6 +19,7 @@ from work_observer.research.history import HistoryService
 from work_observer.retrieval.catalog import Catalog, Filters
 from work_observer.retrieval.enhanced import RetrievalService, validated_terms
 from work_observer.storage.models import JobAnalysis
+from work_observer.text_match import match_text
 
 FIELDS = (
     "title",
@@ -37,6 +38,12 @@ FIELDS = (
 
 def _json(value):
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _knowledge_rows(rows):
+    # Later opinions are available on the knowledge page; they are not a new
+    # definition/version and must not be copied into unrelated observation panels.
+    return [{key: value for key, value in row.items() if key != "revision_notices"} for row in rows]
 
 
 class DomainUpdateService:
@@ -289,16 +296,18 @@ class DomainUpdateService:
             if row.get("correction_id"):
                 value = memory_rows[row["correction_id"]]
                 memory_refs[value["id"]] = {"id": value["id"], "version": value["version"]}
-        relations = [
-            row
-            for row in knowledge.list_relations(include_history=True)
-            if (not domain_id or row["domain_id"] == domain_id)
-            and (
-                set(row["scope"].get("job_ids", [])) & set(scope_ids)
-                or set(row["scope"].get("public_document_ids", [])) & archived_ids
-            )
-        ]
-        definitions = knowledge.list_domains(include_history=True)
+        relations = _knowledge_rows(
+            [
+                row
+                for row in knowledge.list_relations(include_history=True)
+                if (not domain_id or row["domain_id"] == domain_id)
+                and (
+                    set(row["scope"].get("job_ids", [])) & set(scope_ids)
+                    or set(row["scope"].get("public_document_ids", [])) & archived_ids
+                )
+            ]
+        )
+        definitions = _knowledge_rows(knowledge.list_domains(include_history=True))
         profiles = {}
         with Session(self.repository.engine) as session:
             for row in session.scalars(
@@ -381,7 +390,7 @@ class DomainUpdateService:
             {
                 "term": term,
                 "literal_jobs": sum(
-                    term.casefold() in item["record"]["description_text"].casefold()
+                    match_text(term) in match_text(item["record"]["description_text"])
                     for item in eligible
                 )
                 if eligible
@@ -390,6 +399,37 @@ class DomainUpdateService:
             }
             for term in terms
         ]
+        eligible_ids = {item["job_id"] for item in eligible}
+        composition = {}
+        for item in records:
+            job = by_id[item["job_id"]]
+            if (
+                item["state"] == "excluded"
+                or domain_id
+                and (job["domain"] or {}).get("state") == "excluded"
+            ):
+                continue
+            source = job["source"] or {}
+            key = (item["record"].get("source", "unknown"), source.get("data_kind", "unspecified"))
+            group = composition.setdefault(
+                key,
+                {
+                    "source": key[0],
+                    "data_kind": key[1],
+                    "jobs": 0,
+                    "eligible_details": 0,
+                    "missing_details": 0,
+                    "unknown_scope": 0,
+                    "known_published_time": 0,
+                },
+            )
+            group["jobs"] += 1
+            group["eligible_details"] += item["job_id"] in eligible_ids
+            group["missing_details"] += not bool(item["record"].get("description_text"))
+            group["unknown_scope"] += item["state"] == "unknown" or bool(
+                domain_id and (job["domain"] or {}).get("state") == "unknown"
+            )
+            group["known_published_time"] += bool(item["record"].get("source_published_at"))
         payload = {
             "id": uuid4().hex,
             "state": "captured",
@@ -418,9 +458,11 @@ class DomainUpdateService:
                     row["integrity"] != "verified" for row in archived["documents"]
                 ),
                 "domain_counts": page["counts"],
+                "source_composition": [composition[key] for key in sorted(composition)],
             },
             "jobs": jobs,
             "terms": terms,
+            "literal_matching": "casefold-kangxi-radicals",
             "archived_scope": archived,
             "statistics": stats,
             "definitions": definitions,
@@ -446,6 +488,14 @@ class DomainUpdateService:
 
         before = self._get("domain_update_captures", before_id)
         after = self._get("domain_update_captures", after_id)
+        before, after = [
+            {
+                **panel,
+                "definitions": _knowledge_rows(panel["definitions"]),
+                "relations": _knowledge_rows(panel["relations"]),
+            }
+            for panel in (before, after)
+        ]
         if before["created_at"] > after["created_at"]:
             raise ProbeError("UPDATE_CAPTURE_ORDER_INVALID")
 
@@ -585,12 +635,35 @@ class DomainUpdateService:
             before.get(key) != after.get(key)
             for key in ("filters", "domain_id", "requested_job_ids")
         )
+        literal_matching_changed = before.get("literal_matching", "casefold") != after.get(
+            "literal_matching", "casefold"
+        )
+
+        def composition(panel):
+            rows = panel["sample"].get("source_composition")
+            return (
+                [(row["source"], row["data_kind"], row["jobs"]) for row in rows]
+                if rows is not None
+                else None
+            )
+
+        composition_changed = (
+            composition(before) != composition(after)
+            if composition(before) is not None and composition(after) is not None
+            else None
+        )
         gaps = [
             "只有两次用户冻结的观察面板；不能据此认定职业演化、需求上涨或下降。",
             "字面出现不是必备要求；缺画像、关系或未分类保留未知，不使用top-k作分母。",
         ]
         if not content:
             gaps.append("没有可核对的正文版本变化；重复观察不构成变化证据。")
+        if composition_changed:
+            gaps.append(
+                "来源或正文资料性质的样本构成改变；数量差异不能直接解释为外部招聘需求变化。"
+            )
+        if literal_matching_changed:
+            gaps.append("字面词项匹配方式发生变化；不同算法的计数差异不能解释为需求变化。")
         if after["sample"]["eligible_detail_denominator"] == 0:
             gaps.append("没有明确符合范围且可核验的正文分母，词项命中保持未知，不能认定没有需求。")
         if any(row["profile"] is None for row in after["jobs"]):
@@ -616,6 +689,7 @@ class DomainUpdateService:
                 "removed_job_ids": sorted(a.keys() - b.keys()),
                 "shared_job_ids": shared,
                 "scope_rule_changed": scope_changed,
+                "source_composition_changed": composition_changed,
                 "note": "样本加入/离开只描述观察面板，不推断新招聘/岗位关闭。",
             },
             "method_changes": {
@@ -623,6 +697,7 @@ class DomainUpdateService:
                 "profile_validity_changed": profile_validity,
                 "classifications": classifications,
                 "literal_terms_changed": before["terms"] != after["terms"],
+                "literal_matching_changed": literal_matching_changed,
                 "domain_definitions_changed": definition_changed,
                 "definition_validity_changed": definition_validity_changed,
                 "reviewed_relations_changed": relation_changed,
@@ -634,6 +709,8 @@ class DomainUpdateService:
                 "after": after["statistics"],
                 "comparable": not (
                     scope_changed
+                    or composition_changed
+                    or literal_matching_changed
                     or definition_changed
                     or definition_validity_changed
                     or relation_changed

@@ -1,0 +1,18 @@
+const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict"),path=require("node:path");
+const node=()=>({querySelector:node,querySelectorAll:()=>[],addEventListener(){}});
+const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:""},URL,console,setTimeout,clearTimeout,Intl};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),ctx);
+vm.runInContext(fs.readFileSync(path.join(path.dirname(process.argv[2]),"updates.js"),"utf8"),ctx);
+const row=(source,data_kind,jobs)=>({source,data_kind,jobs,eligible_details:jobs,missing_details:0,unknown_scope:0,known_published_time:0});
+ctx.report={sample:{before:{source_composition:[row("boss","unspecified",15)]},after:{source_composition:[row("boss","unspecified",15),row("manual","user_provided",30),row("<img>","<script>",1)]}},sample_changes:{source_composition_changed:true}};
+let html=vm.runInContext("renderUpdateComposition(report)",ctx);
+assert.ok(html.includes("招聘来源")&&html.includes("用户提供，未独立核实")&&html.includes("资料性质未标注"));
+assert.ok(html.includes("0 → 30")&&html.includes("15 → 15")&&html.includes("发布时间已知"));
+assert.ok(html.includes("数量差异不能直接解释为需求上涨或下降"));
+assert.ok(html.includes("&lt;img&gt;")&&!html.includes("<img>")&&!html.includes("<script>"));
+delete ctx.report.sample.before.source_composition;
+html=vm.runInContext("renderUpdateComposition(report)",ctx);
+assert.ok(html.includes("未记录 → 30"));
+delete ctx.report.sample.after.source_composition;
+assert.ok(vm.runInContext("renderUpdateComposition(report)",ctx).includes("不能补造"));
+console.log("Observation composition distinguishes sources, material identity, denominator and missing history.");
