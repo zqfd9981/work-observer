@@ -10,7 +10,7 @@ from test_review_feedback_repair import workspace as workspace
 
 from work_observer.config import Settings
 from work_observer.connectors.manual import ManualJD, import_jd
-from work_observer.research import agent, requirements, requirements_v3
+from work_observer.research import agent, requirements, requirements_v3, requirements_v4
 from work_observer.storage.archive import RawArchive
 from work_observer.storage.database import upgrade
 from work_observer.storage.repository import Repository
@@ -40,8 +40,8 @@ def test_only_the_denied_status_is_excluded(text, expected):
 
 
 class DenialModel:
-    def __init__(self, text):
-        self.text = text
+    def __init__(self, text, requirement="required"):
+        self.text, self.requirement = text, requirement
 
     async def turn(self, history):
         outputs = [
@@ -53,7 +53,7 @@ class DenialModel:
         else:
             name, arguments = "finish_research", {
                 "claims": [{
-                    "category": "ability", "basis": "direct", "requirement": "required",
+                    "category": "ability", "basis": "direct", "requirement": self.requirement,
                     "text": self.text,
                     "evidence_ids": [
                         next(o["evidence"][0]["id"] for o in outputs if o.get("evidence"))
@@ -101,9 +101,10 @@ def test_v3_contract_and_actual_rejection_stay_unchanged():
     assert all(requirements_v3.preferred_markers(text) == ["加分"] for text in OBSERVED)
 
 
-def test_interrupted_v3_preserves_checks_and_remaining_budget(workspace):
+@pytest.mark.parametrize("module", [requirements_v3, requirements_v4])
+def test_interrupted_historical_guard_preserves_checks_and_remaining_budget(workspace, module):
     repo, store, job, _, original, _, _ = workspace
-    contract = requirements_v3.guard_contract()
+    contract = module.guard_contract()
     params = dict(question=original["question"], job_ids=[job], max_calls=4, timeout=180,
                   allow_public=False, allow_proposals=False, approach="standard",
                   qualification_validation=contract)
@@ -119,7 +120,10 @@ def test_interrupted_v3_preserves_checks_and_remaining_budget(workspace):
     assert before["result"]["model_calls"] == 3
     result = asyncio.run(agent.research(
         repo, original["question"], Settings(), checkpoint=(store, run["id"]), resume=True,
-        model=DenialModel(OBSERVED[0]),
+        model=(
+            DenialModel(OBSERVED[0]) if module is requirements_v3
+            else DenialModel("代码能力强优先，不能改写成必备资格。", "preferred")
+        ),
     ))
     assert result["status"] == "incomplete" and result["model_calls"] == 4
     assert result["qualification_validation"] == contract

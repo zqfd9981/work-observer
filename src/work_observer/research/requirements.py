@@ -5,8 +5,11 @@ import re
 LEGACY_GUARD = "qualification-guard-v1"
 PREVIOUS_GUARD = "qualification-guard-v2-local-negation"
 MERGE_GUARD = "qualification-guard-v3-merge-negation"
-CURRENT_GUARD = "qualification-guard-v4-denied-preference-status"
-KNOWN_GUARDS = {LEGACY_GUARD, PREVIOUS_GUARD, MERGE_GUARD, CURRENT_GUARD}
+DENIED_STATUS_GUARD = "qualification-guard-v4-denied-preference-status"
+CURRENT_GUARD = "qualification-guard-v5-denied-qualification-rewrite"
+KNOWN_GUARDS = {
+    LEGACY_GUARD, PREVIOUS_GUARD, MERGE_GUARD, DENIED_STATUS_GUARD, CURRENT_GUARD
+}
 
 
 def guard_contract():
@@ -28,12 +31,14 @@ def implementation(version):
     import sys
 
     from work_observer.connectors.mcp_probe import ProbeError
-    from work_observer.research import requirements_v2, requirements_v3
+    from work_observer.research import requirements_v2, requirements_v3, requirements_v4
 
     if version in {LEGACY_GUARD, PREVIOUS_GUARD}:
         return requirements_v2
     if version == MERGE_GUARD:
         return requirements_v3
+    if version == DENIED_STATUS_GUARD:
+        return requirements_v4
     if version == CURRENT_GUARD:
         return sys.modules[__name__]
     raise ProbeError("RESEARCH_VALIDATION_INVALID")
@@ -78,7 +83,7 @@ NEGATED_PREFIX = re.compile(
     r"(?:无|没有|不含|不包含|不包括|不存在|未出现|未使用|未见|并非|不是|非|不属于|"
     r"(?:不(?:应|该|能)?|不可)(?:视为|看作|当作|标为|列为|记为)|"
     r"未(?:明确)?(?:标注|标为|列为|写明|说明))"
-    r"(?:任何|明确的|明确|所谓)?[\s“\"「『]*"
+    r"(?:任何|明确的|明确|所谓|一般)?[\s“\"「『]*"
     r"(?:(?:优先|加分)[\s”\"」』]*(?:[/／、或和及])[\s“\"「『]*)?$"
 )
 NEGATED_SUFFIX = re.compile(
@@ -88,7 +93,7 @@ NEGATED_SUFFIX = re.compile(
 FEEDBACK_NEGATED_REQUIRED_PREFIX = re.compile(
     r"(?:不(?:应|该|能)?|不可|不得)"
     r"(?:(?:将|把)[^，,。；;：:\n!?？！只仅]{1,16})?"
-    r"(?:归为|归类为|提升为|升级为|拆出|并入)[\s“\"「『]*$"
+    r"(?:归为|归类为|提升为|升级为|拆出|并入|改写成)[\s“\"「『]*$"
 )
 DENIED_PREFERENCE_STATUS = re.compile(r"(?:并非|不是|非)仅(?:列为|作为)[\s“\"「『]*$")
 
