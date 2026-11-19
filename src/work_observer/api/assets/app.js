@@ -574,13 +574,64 @@ document.addEventListener("submit",async event=>{
   }catch(error){notify(error.message,true);button.disabled=false;}
 });
 
+function mapInvestigationButton(result,section,index,label) {
+  if(!result.project_id||!result.run_id)return "";
+  return `<button type="button" class="text-button" data-map-investigation="${e(section)}" data-map-index="${index}" data-map-run="${e(result.run_id)}" data-map-project="${e(result.project_id)}">${e(label)} ↗</button>`;
+}
+function mapInvestigationPrompt(result,section,index) {
+  const map=result.work_map;if(!map)throw new Error("原工作地图目前不可读取。");
+  let title,details,kind="counterexample";
+  if(section==="boundary"){
+    const row=map.work_types[index];if(!row)throw new Error("原工作类型已无法定位。");
+    title="核实工作类型边界："+row.name;
+    details="原图待验证的边界："+row.boundary+"\n原图提出的核实方向："+row.next_check;
+  }else if(section==="relation"){
+    const row=map.work_relations?.[index];if(!row)throw new Error("原工作关系已无法定位。");
+    title="核实关系："+row.source_text+" → "+row.target_text;
+    details="原图解释："+row.rationale+"\n原图适用与迁移边界："+row.transfer_limit;
+  }else if(section==="ability"){
+    const row=map.ability_relations?.[index];if(!row)throw new Error("原能力关系已无法定位。");
+    title="核实任务与能力关系："+row.task+" → "+row.ability;
+    details="原图解释："+row.rationale+"\n原图迁移边界："+row.transfer_limit;
+  }else if(section==="unknown"){
+    const row=map.unknowns[index];if(typeof row!=="string")throw new Error("原未知项已无法定位。");
+    title="继续调查原图未知项";details=row;kind="investigate";
+  }else throw new Error("无法识别这条地图核实入口。");
+  const instruction=kind==="counterexample"?"请重读相关原文，查找不支持该解释的证据及其他合理解释；没有反例不等于解释已被证明。必要时保留、修订或撤回相关旧判断，区分认识变化与外部工作变化。":"请查现有范围内的证据，区分能回答的部分与仍然未知的部分，并说明下一步需要什么资料。";
+  let question=title+"\n"+details+"\n"+instruction;
+  if(question.length>4000)question=(title+"\n"+details).slice(0,3600)+"\n（这里只保留原图节选，请补齐要核实的条件。）\n"+instruction;
+  return {question,kind};
+}
+async function prepareMapInvestigation(button) {
+  const runId=button.dataset.mapRun,projectId=button.dataset.mapProject;
+  const run=await api("research/"+encodeURIComponent(runId));
+  if(run.state==="invalidated"||run.result?.status!=="completed"||run.result.project_id!==projectId)throw new Error("来源研究已不可用，未准备新的调查。");
+  const project=await api("projects/"+encodeURIComponent(projectId));
+  const step=project.steps?.find(row=>row.run_id===runId);
+  if(!step||!["completed","waiting_review","superseded"].includes(step.state)||project.state==="invalidated")throw new Error("原调查暂时不能作为追问对象，请先查看原研究记录。");
+  const prompt=mapInvestigationPrompt(run.result,button.dataset.mapInvestigation,Number(button.dataset.mapIndex));
+  await openResearchConversation(projectId);
+  if(conversation.id!==projectId||conversation.project?.state==="invalidated")throw new Error("研究已切换或不可用，未覆盖当前问题。");
+  const input=$("#conversation-question");
+  const combined=input.value.trim()?input.value+"\n\n"+prompt.question:prompt.question;
+  if(combined.length>4000)throw new Error("当前草稿与地图问题合计过长，请先精简；原草稿已保留。");
+  conversation.replyToStepId=step.id;renderConversationReply();
+  input.value=combined;
+  const select=$("#conversation-kind");if(select)select.value=prompt.kind;
+  input.focus();input.scrollIntoView({block:"center",behavior:"smooth"});
+  notify("已定位原轮并准备核实问题，可编辑后继续；尚未调用模型。");
+}
+document.addEventListener("click",async event=>{
+  const button=event.target.closest("[data-map-investigation]");if(!button)return;
+  button.disabled=true;try{await prepareMapInvestigation(button);}catch(error){notify(error.message,true);}finally{button.disabled=false;}
+});
 function renderWorkRelations(result,refs,claims,basis) {
   const rows=result.work_map.work_relations||[];if(!rows.length)return "";
-  return `<h2>业务与工作关系</h2><p class="form-note">关系连接具体工作，不自动表示招聘必备资格；要求强度与主体仍须展开支撑判断核对。</p>${rows.map(row=>{
+  return `<h2>业务与工作关系</h2><p class="form-note">关系连接具体工作，不自动表示招聘必备资格；要求强度与主体仍须展开支撑判断核对。</p>${rows.map((row,index)=>{
     const ids=new Set(row.claim_indices.flatMap(index=>result.claims[index]?.evidence_ids||[]));
     const sources=(result.evidence||[]).filter(ev=>ids.has(ev.id));
     const scope=sources.some(ev=>ev.job_id)?"仅适用于引用的岗位及本条解释边界":sources.some(ev=>ev.evidence_kind==="work_material")?"用户补充资料所述工作，未独立核实，不证明招聘资格或已执行":"公开业务/技术背景，不证明岗位个人责任或必备资格";
-    return `<article class="panel"><h3>${e(workDimensionLabels[row.source_kind])}：${e(row.source_text)} → ${e(workPredicateLabels[row.predicate])} → ${e(workDimensionLabels[row.target_kind])}：${e(row.target_text)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>适用与迁移边界：</strong>${e(row.transfer_limit)}</p><p class="form-note">来源范围：${e(scope)}</p>${refs(row)}<details><summary>查看要求性质、主体与支撑判断</summary>${claims(row)}</details></article>`;
+    return `<article class="panel"><h3>${e(workDimensionLabels[row.source_kind])}：${e(row.source_text)} → ${e(workPredicateLabels[row.predicate])} → ${e(workDimensionLabels[row.target_kind])}：${e(row.target_text)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>适用与迁移边界：</strong>${e(row.transfer_limit)}</p><p class="form-note">来源范围：${e(scope)}</p>${refs(row)}<details><summary>查看要求性质、主体与支撑判断</summary>${claims(row)}</details>${mapInvestigationButton(result,"relation",index,"查证这条关系与迁移条件")}</article>`;
   }).join("")}`;
 }
 function renderWorkMap(result, evidence) {
@@ -589,7 +640,7 @@ function renderWorkMap(result, evidence) {
   const refs = row => [...new Set(row.claim_indices.flatMap(index=>result.claims[index]?.evidence_ids || []))].filter(id=>evidence.has(id)).map(id=>`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`).join(" ");
   const claims = row => row.claim_indices.map(index=>`<p class="form-note">判断 ${index+1} · ${e(({direct:"原文明示",synthesis:"归纳",inference:"待验证解释"})[result.claims[index]?.basis] || "性质待核")} · ${e(requirementLabels[result.claims[index]?.requirement] || "性质待核")}：${e(result.claims[index]?.text || "引用失效，需核对")}</p>`).join("");
   const basis = row => badge(({direct:"原文明示",synthesis:"归纳",inference:"待验证解释"})[row.basis || "inference"],"muted");
-  return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${map.work_types.map(row=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details></article>`).join("")}${map.ability_relations?.length?'<h2>任务与能力关系</h2>':""}${(map.ability_relations||[]).map(row=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details></article>`).join("")}${renderWorkRelations(result,refs,claims,basis)}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map(text=>`<li>${e(text)}</li>`).join("")}</ul>${result.run_id&&result.status==="completed"&&state.serviceContract?.paths?.["/api/knowledge/research/{id}"]?`<div data-map-retention="${e(result.run_id)}"><button class="secondary" type="button" data-map-retention-open>保留工作类型与工作关系 ↗</button><div data-map-retention-body></div></div>`:""}</section>`;
+  return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${map.work_types.map((row,index)=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details>${mapInvestigationButton(result,"boundary",index,"查证这一边界与其他解释")}</article>`).join("")}${map.ability_relations?.length?'<h2>任务与能力关系</h2>':""}${(map.ability_relations||[]).map((row,index)=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details>${mapInvestigationButton(result,"ability",index,"查证这条能力迁移关系")}</article>`).join("")}${renderWorkRelations(result,refs,claims,basis)}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map((text,index)=>`<li>${e(text)} ${mapInvestigationButton(result,"unknown",index,"继续查这个未知项")}</li>`).join("")}</ul>${result.run_id&&result.status==="completed"&&state.serviceContract?.paths?.["/api/knowledge/research/{id}"]?`<div data-map-retention="${e(result.run_id)}"><button class="secondary" type="button" data-map-retention-open>保留工作类型与工作关系 ↗</button><div data-map-retention-body></div></div>`:""}</section>`;
 }
 
 function renderApplicationPlan(result,evidence,replyStepId=null) {
@@ -870,8 +921,9 @@ async function sendResearchConversation(question, options={}) {
   const receiptKey="wo-pending-question:"+project.id;
   const pending=conversationSendKeys.get(project.id)||sessionStorage.getItem(receiptKey);
   const saved=project.steps?.find(step=>step.key===pending);
+  const kind=options.kind||$("#conversation-kind")?.value||saved?.kind||"investigate";
   if(saved){
-    if(saved.question!==question.trim()||saved.offline!==offline||Boolean(saved.allow_public)!==allowPublic||(saved.approach||"standard")!==approach)throw new Error("上一条问题已保存，请先查看或继续原调查，再发送其他问题。");
+    if(saved.question!==question.trim()||saved.offline!==offline||Boolean(saved.allow_public)!==allowPublic||(saved.approach||"standard")!==approach||(saved.kind||"investigate")!==kind)throw new Error("上一条问题已保存，请先查看或继续原调查，再发送其他问题。");
     if(saved.scope_version!=null&&project.scope_version!=null&&saved.scope_version!==project.scope_version)throw new Error("原问题已保存，但资料范围已变化，请先在项目记录中处理原步骤。");
     if(!project.worker_running&&["queued","interrupted"].includes(saved.state))await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
     conversation.replyToStepId=undefined;
@@ -887,9 +939,9 @@ async function sendResearchConversation(question, options={}) {
   const replyTo=conversation.replyToStepId===undefined ? defaultConversationReply(project) : conversation.replyToStepId;
   const key=pending||crypto.randomUUID();
   conversationSendKeys.set(project.id,key);sessionStorage.setItem(receiptKey,key);
-  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:project.steps?.at(-1)?.coverage_mode||(project.job_ids?.length===0?"question":state.researchIds?.length?"all":"question")}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"回答本次问题，查阅适用范围原文，说明解释、未知及后续核实方向。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
+  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,kind,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:project.steps?.at(-1)?.coverage_mode||(project.job_ids?.length===0?"question":state.researchIds?.length?"all":"question")}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"回答本次问题，查阅适用范围原文，说明解释、未知及后续核实方向。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
   const acceptedStep=accepted.steps?.find(step=>step.key===key);
-  if(acceptedStep&&(acceptedStep.question!==question.trim()||acceptedStep.offline!==offline||Boolean(acceptedStep.allow_public)!==allocation.allowPublic||(acceptedStep.approach||"standard")!==approach))throw new Error("原问题已经保存且设置不同，请先查看原调查，未自动开始新调用。");
+  if(acceptedStep&&(acceptedStep.question!==question.trim()||acceptedStep.offline!==offline||Boolean(acceptedStep.allow_public)!==allocation.allowPublic||(acceptedStep.approach||"standard")!==approach||(acceptedStep.kind||"investigate")!==kind))throw new Error("原问题已经保存且设置不同，请先查看原调查，未自动开始新调用。");
   await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
   conversation.replyToStepId=undefined;
   await openResearchConversation(project.id);
@@ -1001,10 +1053,12 @@ async function openResearchConversation(id, navigate=true) {
   const offline=same ? $("#conversation-offline").checked : project.steps.at(-1)?.offline ?? $("#offline").checked;
   const allowPublic=same ? $("#conversation-allow-public").checked : project.steps.at(-1)?.allow_public ?? $("#allow-public").checked;
   const approach=(same?$("#conversation-approach")?.value:"")||project.steps.at(-1)?.approach||"standard";
+  const pendingKey=conversationSendKeys.get(id)||sessionStorage.getItem("wo-pending-question:"+id);
+  const investigationKind=(same?$("#conversation-kind")?.value:"")||project.steps.find(step=>step.key===pendingKey)?.kind||"investigate";
   const mapSupported=(state.serviceContract?.components?.schemas?.StepInput?.properties?.approach?.enum||[]).includes("work_map");
   const exhausted=Boolean(conversationAllocation(project,offline,allowPublic).issue);
   if(project.state==="invalidated"){root.innerHTML=empty("这项研究已忘记","可以从左侧开始新问题。");setBusy(false);return;}
-  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}${renderActionFeedback(project)}</article>${renderProjectUnderstanding(project,conversation.knowledge)}<div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea>${mapSupported?`<label>本轮成果<select id="conversation-approach"><option value="standard" ${approach==="standard"?"selected":""}>简明研究回答</option><option value="work_map" ${approach==="work_map"?"selected":""}>工作地图与工作关系</option></select></label>`:""}<label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
+  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}${renderActionFeedback(project)}</article>${renderProjectUnderstanding(project,conversation.knowledge)}<div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label>这轮重点<select id="conversation-kind"><option value="investigate" ${investigationKind==="investigate"?"selected":""}>继续查证</option><option value="counterexample" ${investigationKind==="counterexample"?"selected":""}>寻找反例与其他解释</option></select></label>${mapSupported?`<label>本轮成果<select id="conversation-approach"><option value="standard" ${approach==="standard"?"selected":""}>简明研究回答</option><option value="work_map" ${approach==="work_map"?"selected":""}>工作地图与工作关系</option></select></label>`:""}<label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
   $("#conversation-offline").addEventListener("change",()=>updateConversationAllocation(project));
   $("#conversation-allow-public").addEventListener("change",()=>updateConversationAllocation(project));
   updateConversationAllocation(project);
@@ -1152,6 +1206,7 @@ function renderConversationReply() {
 
 function prefillConversationFollowup(button) {
   conversation.replyToStepId=button.dataset.replyStep;
+  const kind=$("#conversation-kind");if(kind)kind.value=button.dataset.conversationClaim?"counterexample":"investigate";
   renderConversationReply();
   const input=$("#conversation-question");
   input.value=button.dataset.conversationClaim
@@ -1161,7 +1216,7 @@ function prefillConversationFollowup(button) {
 }
 
 document.addEventListener("click",event=>{
-  if(event.target.closest("[data-conversation-new-topic]")){conversation.replyToStepId=null;renderConversationReply();return;}
+  if(event.target.closest("[data-conversation-new-topic]")){conversation.replyToStepId=null;if($("#conversation-kind"))$("#conversation-kind").value="investigate";renderConversationReply();return;}
   const button=event.target.closest("[data-conversation-followup], [data-conversation-claim]");if(!button)return;
   prefillConversationFollowup(button);
 });

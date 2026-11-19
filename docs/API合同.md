@@ -29,6 +29,8 @@
 - `POST /api/knowledge/research/{id}`可用`work_relation_index`（0–17）保存本轮原生关系；与`work_type_index`、旧`ability_relation_index`三选一。方向及内容从原研究读取，客户端不能另填。派生关系的`scope.evidence_scope`区分job、work_material与public_context；公开背景不证明岗位个人责任/必备资格，用户资料不证明实际执行。来源范围、既有审核、冲突及失效机制保持有效。
 - 岗位画像补充分类改用已保存、已采纳且在当前资料范围内有效的工作类型定义，不再自动提供旧五类。`classification_definitions`保留本次使用的定义及边界，候选附`definition_id`/`definition_version`；没有有效定义时保持未分类，核实问题仍可生成。定义/范围变化会使旧缓存过时，旧画像内容不改写。
 - `GET /api/profiles/{id}`的`classification_options`供画像页使用同一组当前有效定义；人工归类复用`POST /api/knowledge/jobs/{id}/domains`。命令`product profiles correct`可用`{domain_ids,reason}`走同一服务；旧`domains`参数仅保留既有纠正兼容。分类采用的定义进入原研究依赖，遗忘其来源时连同派生画像及复制了定义名称的纠正清理，原始JD保持。
+- 研究页地图中的工作类型边界、工作关系、旧能力关系和未知项可以准备原项目的追问。准备时重读权威运行记录并定位原步骤，只填可编辑问题，不创建步骤、不启动模型；边界/关系默认`kind=counterexample`，未知项默认`investigate`。用户继续后才走既有`POST /api/projects/{id}/steps`和`/run`，精确绑定`reply_to_step_id`，保留原范围、方法和累计额度。
+- 主研究入口可选择“继续查证”或“寻找反例与其他解释”；`kind`随同已保存问题参与失败重试核对，掉响应后不因刷新丢失调查重点或重复消耗。原调查不可用/已遗忘时不准备新追问，过长问题不覆盖已有草稿。
 
 对应命令共用上述服务：`work-observer product research-knowledge get --id RUN_ID`；`product research-knowledge save --id RUN_ID --file INPUT.json`；`product updates report --id REPORT_ID`；`product updates followup --id REPORT_ID --file INPUT.json`。结构化文件字段与同名API相同，使用`--db`指定独立数据目录。
 
