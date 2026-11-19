@@ -1,0 +1,36 @@
+// One reopened research flow: revision, evidence, follow-up and knowledge candidate.
+const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
+const node=()=>({querySelector:node,querySelectorAll:()=>[],addEventListener(){}});
+const context={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:""},URL,console,setTimeout,clearTimeout,Intl};
+vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),context);
+const evidence={id:"e1",title:"合成原文",quote:"<script>接口开发，与平台协作</script>",document_id:"document",snapshot_id:"snapshot",start:0,end:16};
+const claim=text=>({text,category:"responsibility",basis:"inference",requirement:"unspecified",evidence_ids:["e1"]});
+const step=(id,text)=>({id,run_id:id,scope_version:1,state:"waiting_review",question:"合成"+id,result:{status:"completed",audit:{},claims:[claim(text)],evidence:[evidence],business_review:{status:"pending"},gaps:["如何核实实际上线权限？"]}});
+const first=step("first","个人可能独立上线"),second=step("second","接口协作不能证明独立上线权限");
+second.result.cognition_revisions=[{previous_run_id:"first",previous_claim_index:0,previous_statement:first.result.claims[0].text,decision:"revise",new_statements:[second.result.claims[0].text],new_claim_indices:[0],reason:"重读协作原文",evidence_relation:"reread"}];
+const failed={id:"failed",run_id:"failed",scope_version:1,state:"failed",question:"未完成的补查",result:{status:"incomplete",audit:{},claims:[]}};
+context.project={id:"project",state:"active",scope_version:1,steps:[first,second,failed]};
+const original=JSON.stringify(context.project);
+let view=vm.runInContext("projectUnderstanding(project)",context);
+assert.deepEqual(Array.from(view.claims,x=>x.claim.text),[second.result.claims[0].text]);
+assert.equal(view.changes[0].revision.previous_statement,first.result.claims[0].text);
+assert.equal(view.excluded[0].step.id,"failed");
+const html=vm.runInContext("renderProjectUnderstanding(project)",context);
+assert.ok(html.includes("本研究当前认识")&&html.includes("没有自动采纳为知识"));
+assert.ok(html.includes('data-open-run="first"')&&html.includes('data-open-run="second"'));
+assert.ok(html.includes('data-reply-step="second"')&&html.includes('data-knowledge-run="second"'));
+assert.ok(html.includes('data-source="document"')&&html.includes("如何核实实际上线权限"));
+assert.ok(html.includes("&lt;script&gt;接口开发")&&!html.includes("<script>"));
+assert.ok(!html.includes("人工核对通过"));
+assert.equal(JSON.stringify(context.project),original); // Reopening never changes adoption or results.
+second.result.business_review.status="rejected";
+view=vm.runInContext("projectUnderstanding(project)",context);
+assert.deepEqual(Array.from(view.claims,x=>x.claim.text),[first.result.claims[0].text]);
+assert.equal(view.changes.length,0); // A rejected revision cannot hide the previous statement.
+first.result.audit.stale_memory=true;
+assert.equal(vm.runInContext("projectUnderstanding(project).claims.length",context),0);
+first.result.audit={};second.result.business_review.status="pending";
+context.project.scope_version=2;
+assert.equal(vm.runInContext("projectUnderstanding(project).claims.length",context),0);
+assert.ok(vm.runInContext("renderProjectUnderstanding(project)",context).includes("研究范围已调整"));
+console.log("Reopened research: current understanding, revision, citations and reuse path passed.");
