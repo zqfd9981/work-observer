@@ -88,6 +88,23 @@ def web_profile(tmp_path):
     ) as client:
         token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
         auth = {"X-WO-Token": token}
+        defined = client.post(
+            "/api/knowledge/domains",
+            headers=auth,
+            json={
+                "domain_key": "business_application",
+                "name": "合成应用交付",
+                "definition": "开发业务应用和接口",
+            },
+        ).json()
+        assert (
+            client.post(
+                "/api/knowledge/domains/" + defined["id"] + "/review",
+                headers=auth,
+                json={"decision": "accept", "reason": "合成机制定义，非真实语义验收"},
+            ).status_code
+            == 200
+        )
         job = client.post(
             "/api/import",
             headers=auth,

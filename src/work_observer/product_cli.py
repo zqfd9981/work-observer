@@ -410,7 +410,17 @@ def register(app):
                     elif action == "analyze":
                         result = asyncio.run(service.analyze(id, settings, offline=offline))
                     elif action == "correct":
-                        result = service.set_domain_correction(id, data["domains"], data["reason"])
+                        if "domain_ids" in data:
+                            from work_observer.api.knowledge import KnowledgeDomainCorrection
+                            from work_observer.knowledge.service import DomainKnowledgeService
+
+                            result = DomainKnowledgeService(repo).correct_job_domains(
+                                id, **KnowledgeDomainCorrection.model_validate(data).model_dump()
+                            )
+                        else:
+                            result = service.set_domain_correction(
+                                id, data["domains"], data["reason"]
+                            )
                 elif area == "match":
                     service = ProfileService(repo)
                     if action in {"list", "run"}:

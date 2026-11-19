@@ -1638,11 +1638,13 @@ function renderProfile(profile,id) {
   else $("#profile-result").innerHTML=`<p class="form-note">${e(statusLabels[profile.status] || "画像已读取")}</p>`;
   const root=$("#profile-result");
   if(profile.id)root.insertAdjacentHTML("beforeend",`<p><button class="secondary" data-profile-quality-open="${e(profile.id)}">核对完整画像、领域与核实问题 ↗</button></p>`);
-  root.insertAdjacentHTML("beforeend",`<details class="research-context"><summary>纠正这个岗位的领域归类</summary><form data-domain-form="${e(id)}"><div class="domain-options">${Object.entries(domainLabels).map(([value,label])=>`<label class="checkbox-line"><input type="checkbox" name="domain" value="${e(value)}">${e(label)}</label>`).join("")}</div><label>纠正理由<textarea name="reason" required maxlength="1200" rows="3" placeholder="说明原文为何支持这项纠正。仅影响这个岗位。"></textarea></label><p class="form-note">可不选任何领域以撤销已有归类。人工纠正会保留版本，并优先用于后续画像。</p><button class="secondary" type="submit">保存本岗位领域纠正</button><p class="form-note" data-domain-feedback></p></form></details>`);
+  root.insertAdjacentHTML("beforeend",`<details class="research-context"><summary>纠正这个岗位的领域归类</summary><form data-domain-form="${e(id)}"><div class="domain-options">${(profile.classification_options||[]).map(row=>`<label class="checkbox-line"><input type="checkbox" name="domain" value="${e(row.id)}">${e(row.name)} · 第${e(row.version)}版</label>`).join("")||'<p class="form-note">当前没有可用的已采纳工作类型，可到<a href="#knowledge">领域与证据</a>建立或核对定义。</p>'}</div><label>纠正理由<textarea name="reason" required maxlength="1200" rows="3" placeholder="说明原文为何支持这项纠正。仅影响这个岗位。"></textarea></label><p class="form-note">可不选任何领域以撤销已有归类。人工纠正会保留版本，并优先用于后续画像。</p><button class="secondary" type="submit">保存本岗位领域纠正</button><p class="form-note" data-domain-feedback></p></form></details>`);
   const domains=result.effective_domains || result.domains || [];
   const questions=result.interview_questions || [];
+  const definitions=result.classification_definitions||[];
+  root.insertAdjacentHTML("beforeend",definitions.length?`<details class="research-context"><summary>本次采用的工作类型定义与边界</summary>${definitions.map(row=>`<h4>${e(row.name)} · 第${row.version}版</h4><p>${e(row.definition)}</p><p class="form-note">包括：${e(row.inclusion||"未细分")}；排除或未知：${e(row.exclusion||"未细分")}</p>`).join("")}</details>`:'<p class="form-note">本次未采用可用的工作类型定义；未分类不表示岗位没有相关工作。历史标签保留在原画像中。</p>');
   const corrections=result.corrections || [];
-  root.insertAdjacentHTML("beforeend",`${domains.length ? `<section class="research-context"><h3>领域归类（当前口径）</h3>${domains.map(item=>`<p>${e(typeof item === "string" ? item : item.label || domainLabels[item.domain] || item.name || "待核实领域")}${item.rationale ? "："+e(item.rationale) : item.reason ? "："+e(item.reason) : ""}${item.status === "user_corrected" ? "（人工纠正）" : ""}</p>`).join("")}</section>` : ""}${questions.length ? `<section class="research-context"><h3>适合继续核实的问题</h3><ul>${questions.map(item=>`<li>${e(typeof item === "string" ? item : item.question || "核对职责范围")}</li>`).join("")}</ul></section>` : ""}${corrections.length ? `<section class="research-context"><h3>本岗位的有效人工纠正</h3>${corrections.map(item=>`<p>${e(memoryText(item))}</p>`).join("")}</section>` : ""}`);
+  root.insertAdjacentHTML("beforeend",`${domains.length ? `<section class="research-context"><h3>工作类型归类</h3><p class="form-note">模型候选不等于已采纳分类；旧画像的历史标签不代表当前工作类型定义。</p>${domains.map(item=>`<p>${e(typeof item === "string" ? item : item.label || domainLabels[item.domain] || item.name || "待核实领域")}${item.rationale ? "："+e(item.rationale) : item.reason ? "："+e(item.reason) : ""}${item.definition_version?" · 第"+e(item.definition_version)+"版":""}${item.status === "user_corrected" ? "（人工纠正）" : ""}</p>`).join("")}</section>` : ""}${questions.length ? `<section class="research-context"><h3>适合继续核实的问题</h3><ul>${questions.map(item=>`<li>${e(typeof item === "string" ? item : item.question || "核对职责范围")}</li>`).join("")}</ul></section>` : ""}${corrections.length ? `<section class="research-context"><h3>本岗位的有效人工纠正</h3>${corrections.map(item=>`<p>${e(memoryText(item))}</p>`).join("")}</section>` : ""}`);
 }
 
 async function analyzeProfile(id,offline) {
@@ -2037,7 +2039,7 @@ document.addEventListener("submit",async event=>{
   event.preventDefault();
   const button=$("button[type=submit]",form);button.disabled=true;
   try {
-    await api("profiles/"+encodeURIComponent(form.dataset.domainForm)+"/correction",{method:"POST",body:JSON.stringify({domains:[...new FormData(form).getAll("domain")],reason:form.elements.reason.value.trim()})});
+    await api("knowledge/jobs/"+encodeURIComponent(form.dataset.domainForm)+"/domains",{method:"POST",body:JSON.stringify({domain_ids:[...new FormData(form).getAll("domain")],reason:form.elements.reason.value.trim()})});
     notify("已保存领域纠正；旧画像会标注变化，后续采用人工归类。");
     await showProfile(form.dataset.domainForm);
   } catch (error) {$("[data-domain-feedback]",form).textContent=error.message;button.disabled=false;}

@@ -487,6 +487,13 @@ class MemoryService:
         ):
             raise ProbeError("INVALID_RESEARCH_ID")
         with Session(self.repository.engine) as session, session.begin():
+            profiles = list(
+                session.scalars(
+                    select(JobAnalysis.id).where(
+                        JobAnalysis.result["run_id"].as_string().in_(run_ids)
+                    )
+                )
+            )
             roots = session.scalars(
                 select(MemoryRecord.root_id).where(MemoryRecord.source_run_id.in_(run_ids))
             ).all()
@@ -495,9 +502,12 @@ class MemoryService:
                 .where(MemoryRecord.root_id.in_(set(roots)))
                 .order_by(MemoryRecord.root_id, MemoryRecord.version)
             ).all()
+            deleted_profiles = self._forget_rows(session, rows)
+            if profiles:
+                session.execute(delete(JobAnalysis).where(JobAnalysis.id.in_(profiles)))
             return {
                 "affected_memory_ids": [row.id for row in rows],
-                "deleted_profile_ids": self._forget_rows(session, rows),
+                "deleted_profile_ids": sorted(set(profiles) | set(deleted_profiles)),
             }
 
     def activate(self, identity):

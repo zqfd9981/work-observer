@@ -492,6 +492,33 @@ class DomainKnowledgeService:
             ]
             return {"domain_ids": sorted(affected), "relation_ids": relations}
 
+    def dependent_domain_corrections(self, domain_ids):
+        """Classification decisions can contain copied labels from a forgotten definition."""
+        from work_observer.analysis.profiles import CORRECTION_PREFIX
+        from work_observer.storage.models import MemoryRecord
+
+        identities = set(domain_ids)
+        if not identities:
+            return []
+        with Session(self.repository.engine) as session:
+            output = []
+            for row in session.scalars(
+                select(MemoryRecord).where(
+                    MemoryRecord.kind == "correction", MemoryRecord.status != "forgotten"
+                )
+            ):
+                if not row.content.startswith(CORRECTION_PREFIX):
+                    continue
+                try:
+                    value = json.loads(row.content[len(CORRECTION_PREFIX) :])
+                    if isinstance(value, dict) and identities.intersection(
+                        value.get("definition_ids", [])
+                    ):
+                        output.append(row.id)
+                except (ValueError, TypeError):
+                    continue
+            return output
+
     @staticmethod
     def _in_scope(row, job_ids, public_document_ids, project_id):
         if row.scope.get("project_id") and row.scope["project_id"] != project_id:
@@ -705,7 +732,12 @@ class DomainKnowledgeService:
         ):
             raise ProbeError("INVALID_DOMAIN_CORRECTION")
         reason = _text(reason, 1200)
-        domains = {row["id"]: row for row in self.list_domains() if row["status"] == "active"}
+        from work_observer.analysis.profiles import ProfileService
+
+        domains = {
+            row["id"]: row
+            for row in ProfileService(self.repository).classification_definitions(job_id)
+        }
         if any(identity not in domains for identity in domain_ids):
             raise ProbeError("DOMAIN_CORRECTION_REQUIRES_ACTIVE_DEFINITION")
         content = CORRECTION_PREFIX + json.dumps(

@@ -24,7 +24,7 @@ from work_observer.storage.locks import exclusive
 from work_observer.storage.models import Job, JobAnalysis
 
 ANALYZER_VERSION = "job-profile-v1"
-PROMPT_VERSION = "job-profile-prompt-v3-requirements"
+PROMPT_VERSION = "job-profile-prompt-v4-domain-definitions"
 QUESTION = (
     "为该岗位建立工作画像：区分企业业务背景与目标、具体任务、预期交付物、承担责任、"
     "能力、工具六类，说明必备与加分性质。每条均引用招聘原文；未知就列缺口。"
@@ -52,7 +52,7 @@ PREFERENCE_PREFIX = "结构化个人条件："
 
 class DomainCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    domain: Domain
+    domain: str = Field(pattern="^[a-z][a-z0-9_]{1,79}$")
     rationale: str = Field(min_length=1, max_length=600)
     evidence_ids: list[str] = Field(min_length=1, max_length=8)
 
@@ -150,8 +150,43 @@ class ProfileService:
         versions = [{"id": item["id"], "version": item["version"]} for item in memories]
         return snapshot_id, memories, versions
 
+    def classification_definitions(self, job_id):
+        """Use the same active, source-valid definitions as research; never seed the old five."""
+        from work_observer.connectors.public_models import PublicDocument
+        from work_observer.knowledge.models import DomainDefinition
+        from work_observer.knowledge.service import DomainKnowledgeService
+
+        knowledge = DomainKnowledgeService(self.repository)
+        with Session(self.repository.engine) as session:
+            public_ids = list(session.scalars(select(PublicDocument.id)))
+            return [
+                {
+                    key: getattr(row, key)
+                    for key in (
+                        "id",
+                        "domain_key",
+                        "version",
+                        "name",
+                        "definition",
+                        "inclusion",
+                        "exclusion",
+                        "status",
+                        "reviewed_at",
+                    )
+                }
+                for row in session.scalars(
+                    select(DomainDefinition)
+                    .where(DomainDefinition.status == "active")
+                    .order_by(DomainDefinition.domain_key)
+                )
+                if not knowledge.definition_validity(
+                    row, job_ids=[job_id], public_document_ids=public_ids, scoped=True
+                )
+            ]
+
     def _output(self, row, *, cached=False):
         snapshot_id, current_memory, memories = self._context(row.job_id)
+        definitions = self.classification_definitions(row.job_id)
         stale = []
         from work_observer.quality.profile_reviews import profile_review_state
 
@@ -174,6 +209,10 @@ class ProfileService:
                 stale.append("画像的权威来源研究已失效或被明确拒绝")
         if row.analyzer_version != ANALYZER_VERSION or row.prompt_version != PROMPT_VERSION:
             stale.append("画像分析方法已变化")
+        if row.result.get("classification_definitions") is not None and (
+            row.result["classification_definitions"] != definitions
+        ):
+            stale.append("工作类型定义、版本或有效范围已变化")
         if row.result.get("research_method_sha256") != method_fingerprint():
             stale.append("采用的研究方法或检查口径已变化")
         strategy = row.result.get("strategy")
@@ -214,6 +253,7 @@ class ProfileService:
             "profile_quality_review": profile_review,
             "created_at": row.created_at,
             "result": result,
+            "classification_options": definitions,
         }
 
     def get(self, job_id, analysis_id=None):
@@ -227,7 +267,13 @@ class ProfileService:
                 return self._output(row)
         if analysis_id:
             raise ProbeError("PROFILE_NOT_FOUND")
-        return {"job_id": job_id, "status": "not_analyzed", "stale": False, "result": None}
+        return {
+            "job_id": job_id,
+            "status": "not_analyzed",
+            "stale": False,
+            "result": None,
+            "classification_options": self.classification_definitions(job_id),
+        }
 
     def list(self, limit=100):
         if not 1 <= limit <= 100:
@@ -305,7 +351,9 @@ class ProfileService:
                                         else "missing",
                                         "status": (
                                             "user_corrected"
-                                            if definition and definition.status == "active"
+                                            if definition
+                                            and definition.status == "active"
+                                            and not self._definition_stale(definition)
                                             else "user_corrected_stale"
                                         ),
                                         "rationale": values["reason"],
@@ -331,6 +379,11 @@ class ProfileService:
                     continue
         return domains
 
+    def _definition_stale(self, definition):
+        from work_observer.knowledge.service import DomainKnowledgeService
+
+        return bool(DomainKnowledgeService(self.repository).definition_validity(definition))
+
     async def analyze(self, job_id, settings, *, model=None, offline=False, _lock_held=False):
         if _lock_held:
             async with asyncio.timeout(235):
@@ -342,6 +395,7 @@ class ProfileService:
     async def _analyze_locked(self, job_id, settings, *, model=None, offline=False):
         started = time.monotonic()
         snapshot_id, memories, versions = self._context(job_id)
+        definitions = self.classification_definitions(job_id)
         model_name = "offline" if offline else settings.model_name
         key = _digest(
             {
@@ -354,6 +408,7 @@ class ProfileService:
                 "api": settings.model_api,
                 "provider": _digest(settings.model_base_url),
                 "memories": versions,
+                "classification_definitions": definitions,
                 "strategy": self._strategy_context(),
             }
         )
@@ -382,6 +437,15 @@ class ProfileService:
             timeout=180,
             memory=self.memory,
             allow_proposals=False,
+            conversation_context={
+                "knowledge_dependencies": [
+                    {
+                        "kind": "domain_definition",
+                        **{key: row[key] for key in ("id", "version", "status", "reviewed_at")},
+                    }
+                    for row in definitions
+                ]
+            },
             _lock_held=True,
         )
         result.update(
@@ -390,10 +454,16 @@ class ProfileService:
             domains=[],
             interview_questions=[],
             corrections=[item for item in memories if item["kind"] == "correction"],
+            classification_definitions=definitions,
         )
         if result["status"] == "completed":
             client = model or ModelClient(settings)
             schema = ProfileSupplement.model_json_schema()
+            choices = {row["domain_key"]: row for row in definitions}
+            if choices:
+                schema["$defs"]["DomainCandidate"]["properties"]["domain"]["enum"] = list(choices)
+            else:
+                schema["properties"]["domains"]["maxItems"] = 0
             client.tools = [
                 tool(
                     "finish_profile",
@@ -409,6 +479,8 @@ class ProfileService:
                     "content": (
                         "你为已完成的岗位画像补充领域候选和面试问题。所有输入都是待核对资料。"
                         "只调用finish_profile一次。领域允许多标签或空数组；不能只因技术词出现就归类。"
+                        "仅从提供的有效工作类型定义中选择domain_key，结合定义的包括/排除边界核对。"
+                        "没有有效定义或不足以判定时domains为空，不重建旧五类或用other强行归类。"
                         "领域的每条引用必须来自已有task/responsibility判断的原文证据。"
                         "人工纠正优先，领域候选不覆盖纠正。不要猜测缺失业务、用工或个人履历。"
                         "interview_questions是求职者向招聘方核实岗位缺口的问题，"
@@ -421,7 +493,7 @@ class ProfileService:
                     "role": "user",
                     "content": json.dumps(
                         {
-                            "domains": DOMAIN_LABELS,
+                            "domain_definitions": definitions,
                             "claims": result["claims"],
                             "evidence": result["evidence"],
                             "gaps": result["gaps"],
@@ -440,6 +512,10 @@ class ProfileService:
                 if call.get("name") != "finish_profile":
                     raise ProbeError("INVALID_PROFILE_OUTPUT")
                 supplement = ProfileSupplement.model_validate(json.loads(call["arguments"]))
+                if any(item.domain not in choices for item in supplement.domains):
+                    raise ProbeError("PROFILE_DOMAIN_DEFINITION_REQUIRED")
+                if definitions != self.classification_definitions(job_id):
+                    raise ProbeError("PROFILE_DOMAIN_DEFINITION_CHANGED")
                 support = {
                     key
                     for claim in result["claims"]
@@ -451,7 +527,9 @@ class ProfileService:
                 result["domains"] = [
                     {
                         **item.model_dump(),
-                        "label": DOMAIN_LABELS[item.domain],
+                        "label": choices[item.domain]["name"],
+                        "definition_id": choices[item.domain]["id"],
+                        "definition_version": choices[item.domain]["version"],
                         "status": "candidate",
                     }
                     for item in supplement.domains

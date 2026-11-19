@@ -274,6 +274,18 @@ def _cascade(
             structured = DomainKnowledgeService(repository).research_dependencies(
                 closure | affected_runs
             )
+            corrections = DomainKnowledgeService(repository).dependent_domain_corrections(
+                structured["domain_ids"]
+            )
+            if corrections:
+                _journal(
+                    store, operation_id, memory_ids=identities | pending_memories | set(corrections)
+                )
+                for correction_id in corrections:
+                    forgotten = memory.forget(correction_id)
+                    pending_memories.update(forgotten["forgotten_memory_ids"])
+                    deleted_profiles.update(forgotten.get("deleted_profile_ids", []))
+                closure.update(_runs_using_memories(store, pending_memories))
             closure.update(store.dependent_knowledge_runs(**structured))
             for project in projects.list(all_records=True):
                 if set(s.get("run_id") for s in project.get("steps", [])) & closure:

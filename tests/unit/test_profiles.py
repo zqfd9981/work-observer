@@ -34,6 +34,13 @@ def profile_store(tmp_path):
             external_id="a",
         ),
     )["job_id"]
+    from work_observer.knowledge.service import DomainKnowledgeService
+
+    knowledge = DomainKnowledgeService(repository)
+    definition = knowledge.propose_domain(
+        "business_application", "合成应用交付", "开发业务应用与接口"
+    )
+    knowledge.review_domain(definition["id"], "accept", "合成机制定义，非真实语义验收")
     yield ProfileService(repository), repository, archive, job_id
     repository.close()
 

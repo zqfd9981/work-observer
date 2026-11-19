@@ -106,6 +106,13 @@ def profile_quality(tmp_path):
     store = ResearchStore(tmp_path / "custom-checkpoints.db", str(path.resolve()))
     repo.bind_research_store(store)
     personal = MemoryService(repo).create("preference", "合成明确偏好：RAG服务开发")
+    from work_observer.knowledge.service import DomainKnowledgeService
+
+    knowledge = DomainKnowledgeService(repo)
+    definition = knowledge.propose_domain(
+        "business_application", "合成应用交付", "开发业务应用与接口"
+    )
+    knowledge.review_domain(definition["id"], "accept", "合成机制定义，非真实语义验收")
     profiles = ProfileService(repo)
     settings = Settings(model_name="synthetic-test")
     output = asyncio.run(
