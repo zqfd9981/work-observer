@@ -116,10 +116,158 @@ def source_context(result, repository):
                 source["units"].append(
                     {"start": start, "end": end, "text": match.group(), "claim_indices": references}
                 )
+    archive_sources, archive_truncated = _archive_sources(
+        result, repository, evidence, max(0, 600_000 - characters), max(0, 2000 - paragraphs)
+    )
+    sources.extend(archive_sources)
     return {
         "sources": sources,
-        "scope_truncated": len(jobs) > 20,
-        "notice": "按研究当时的岗位正文逐段核对学历、年限、条件限定及其他遗漏。"
+        "scope_truncated": len(jobs) > 20 or archive_truncated,
+        "notice": "按研究当时的原文版本核对任务、交付物、责任、条件限定及其他遗漏。"
         "判断编号仅表示其引用片段与该段相交，不表示回答已覆盖该段，也不表示语义支持。"
-        "本面板只对照岗位正文；公开资料引用仍在逐条判断中核对。",
+        + (
+            "归档资料按本轮已读版本对照，超长正文只显示引用附近上下文并注明范围；"
+            "用户粘贴资料及来源说明未经独立核实。"
+            if archive_sources
+            else "本面板只对照岗位正文；公开资料引用仍在逐条判断中核对。"
+        ),
     }
+
+
+def _merged(ranges):
+    merged = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _archive_sources(result, repository, evidence, characters, paragraphs):
+    from work_observer.connectors.public_documents import is_work_material
+    from work_observer.connectors.public_models import PublicDocument
+
+    identities = list(
+        dict.fromkeys(
+            item["public_document_id"]
+            for item in evidence.values()
+            if item.get("public_document_id")
+        )
+    )
+    sources = []
+    claims = result.get("claims", [])
+    cited = {key for claim in claims for key in claim.get("evidence_ids", [])}
+    cited.update(
+        key
+        for action in (result.get("application_plan") or {}).get("actions", [])
+        for key in action.get("evidence_ids", [])
+    )
+    for identity in identities[:20]:
+        source = {"public_document_id": identity, "title": "归档资料", "units": []}
+        sources.append(source)
+        if repository is None:
+            source["state"] = "unavailable"
+            continue
+        with Session(repository.engine) as session:
+            document = session.get(PublicDocument, identity)
+            if document is None or not isinstance(document.text, str) or not document.text.strip():
+                source["state"] = "unavailable"
+                continue
+            text = document.text
+            bound = {
+                key: item
+                for key, item in evidence.items()
+                if item.get("public_document_id") == identity
+            }
+            path = Path(document.path)
+            try:
+                intact = (
+                    path.is_file()
+                    and path.stat().st_size <= 10_000_000
+                    and hashlib.sha256(path.read_bytes()).hexdigest() == document.sha256
+                    and hashlib.sha256(text.encode()).hexdigest() == document.text_sha256
+                    and all(
+                        item.get("document_sha256", document.sha256) == document.sha256
+                        and item.get("content_sha256", document.text_sha256) == document.text_sha256
+                        for item in bound.values()
+                    )
+                )
+            except OSError:
+                intact = False
+            source.update(
+                title=document.title,
+                evidence_kind="work_material" if is_work_material(document) else "public_document",
+                observed_at=document.observed_at,
+                document_sha256=document.sha256,
+                text_sha256=document.text_sha256,
+                full_text_length=len(text),
+            )
+            if not intact:
+                source["state"] = "integrity_failed"
+                continue
+            valid = {}
+            for key, item in bound.items():
+                start, end = item.get("start"), item.get("end")
+                if (
+                    type(start) is int
+                    and type(end) is int
+                    and 0 <= start < end <= len(text)
+                    and text[start:end] == item.get("quote")
+                ):
+                    valid[key] = (start, end)
+            source["unresolved_evidence_ids"] = sorted(set(bound) - set(valid))
+            budget = min(50_000, characters)
+            complete = len(text) <= budget
+            ranges = [(0, len(text))] if complete else []
+            if not complete:
+                for key in sorted(valid, key=lambda key: (key not in cited, valid[key][0])):
+                    start, end = valid[key]
+                    expanded = _merged([*ranges, (max(0, start - 300), min(len(text), end + 300))])
+                    if sum(right - left for left, right in expanded) <= budget:
+                        ranges = expanded
+            source["context_kind"] = "full_text" if complete else "cited_windows"
+            source["shown_ranges"] = []
+            source["state"] = "available" if complete else "cited_windows"
+            for left, right in ranges:
+                shown_end = left
+                for match in re.finditer(r"[^\r\n]+", text[left:right]):
+                    if not match.group().strip():
+                        shown_end = left + match.end()
+                        continue
+                    if paragraphs <= 0:
+                        source["state"] = "display_limit"
+                        complete = False
+                        break
+                    start, end = left + match.start(), left + match.end()
+                    references = [
+                        index
+                        for index, claim in enumerate(claims)
+                        if any(
+                            key in valid and valid[key][0] < end and valid[key][1] > start
+                            for key in claim.get("evidence_ids", [])
+                        )
+                    ]
+                    source["units"].append(
+                        {
+                            "start": start,
+                            "end": end,
+                            "text": match.group(),
+                            "claim_indices": references,
+                        }
+                    )
+                    shown_end = end
+                    paragraphs -= 1
+                else:
+                    shown_end = right
+                if shown_end > left:
+                    source["shown_ranges"].append({"start": left, "end": shown_end})
+                if source["state"] == "display_limit":
+                    break
+            used = sum(row["end"] - row["start"] for row in source["shown_ranges"])
+            characters -= used
+            source["shown_characters"] = used
+            source["complete"] = complete
+            if not ranges:
+                source["state"] = "display_limit" if not budget else "unresolved_citations"
+    return sources, len(identities) > 20

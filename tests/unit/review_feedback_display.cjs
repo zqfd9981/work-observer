@@ -44,4 +44,12 @@ vm.runInContext('api=async(route,options)=>{calls.push({route,options});return o
   assert.ok(sources.includes("&lt;img")&&sources.includes("&lt;script&gt;合成岗位"));
   assert.ok(!sources.includes("<img")&&!sources.includes("<script>"));
   assert.equal(vm.runInContext("renderQualitySources({})",context),"");
+  context.archivePacket={source_context:{notice:"按归档版本查看",sources:[{public_document_id:"c".repeat(32),title:"合成工作资料",state:"cited_windows",evidence_kind:"work_material",shown_characters:200,full_text_length:90000,unresolved_evidence_ids:["missing"],units:[{start:80000,end:80100,text:"<script>合成原文</script>",claim_indices:[0]}]}]}};
+  const archive=vm.runInContext("renderQualitySources(archivePacket)",context);
+  assert.ok(archive.includes("引用附近上下文（非全文）"));
+  assert.ok(archive.includes("未经独立核实")&&archive.includes("200 / 90000"));
+  assert.ok(archive.includes('data-public-source="'+"c".repeat(32)+'"'));
+  assert.ok(archive.includes("&lt;script&gt;合成原文"));assert.ok(!archive.includes("<script>"));
+  assert.ok(!archive.includes("研究当时的完整正文"));
+  assert.ok(archive.includes("部分引用未能在这一版本中定位"));
 })().catch(error=>{console.error(error);process.exitCode=1;});
