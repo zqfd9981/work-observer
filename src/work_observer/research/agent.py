@@ -58,6 +58,16 @@ REQUIREMENT_POLICY = (
     "preferred判断也不能夹入没有优先修饰的一般资格；每条判断只表达一种要求性质。"
     "同一原文各轮采用一致口径；若修订旧判断，说明原判断、修订理由与引用，不能静默改变。"
 )
+ANSWER_DELIVERY_POLICY = (
+    "按用户问题和指定条数选择最必要的判断，不按category逐类凑条。"
+    "同一信息只说一次：比较说明中已提到的背景、任务或技术资格，不再另起一条重复。"
+    "可在一条inference判断中先说明有引用的原文任务，再明确标出据此推导的产物与边界，"
+    "不必为同一个方向分别重复任务和产物；仍须保留直接陈述与推断的区别。"
+    "问题涉及共同任职门槛或一般资格时，核对原文中的学历、专业、经验年限、明确强度和例外，"
+    "不能只列热门技术而漏掉已明示的硬性条件。只讨论局部任务时，不扩写完整资格画像。"
+    "要求性质不同的条件仍分开；不能靠删除门槛、把资格改成unspecified或省略重要限制来缩短。"
+    "提交前对照用户的问题检查遗漏和重复；未完成的部分在gaps说明，不宣称全面回答。"
+)
 
 
 class Claim(BaseModel):
@@ -318,7 +328,24 @@ def method_fingerprint(
     archive_versions=False,
     archive_version=None,
     application_actions=False,
+    answer_delivery_policy=None,
 ):
+    if answer_delivery_policy:
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "base": method_fingerprint(
+                        approach, review_feedback=review_feedback,
+                        requirement_guard=requirement_guard, coverage_mode=coverage_mode,
+                        public_only=public_only, work_materials=work_materials,
+                        dialogue_revisions=dialogue_revisions, archive_versions=archive_versions,
+                        archive_version=archive_version, application_actions=application_actions,
+                    ),
+                    "answer_delivery_policy": answer_delivery_policy,
+                },
+                ensure_ascii=False, sort_keys=True,
+            ).encode()
+        ).hexdigest()
     if application_actions:
         from work_observer.research import applications
 
@@ -962,8 +989,14 @@ async def _research(
         (conversation_context or {}).get("previous_findings")
         or (conversation_context or {}).get("historical_reply")
     )
+    delivery_policy = (
+        ANSWER_DELIVERY_POLICY
+        if approach == "standard" and coverage_mode == "question" and job_ids != [] and not offline
+        else None
+    )
     if resume and checkpoint:
         frozen = checkpoint[0].load_checkpoint(checkpoint[1]) or {}
+        delivery_policy = frozen.get("result", {}).get("answer_delivery_policy")
         has_work_materials = bool(
             frozen.get("result", {}).get("scope", {}).get("work_material_ids")
         )
@@ -1022,6 +1055,7 @@ async def _research(
             archive_versions=archive_enabled,
             archive_version=archive_contract_version,
             application_actions=application_enabled,
+            answer_delivery_policy=delivery_policy,
         ),
         "approach": approach,
         "coverage_mode": coverage_mode,
@@ -1066,6 +1100,8 @@ async def _research(
     }
     if dialogue_enabled:
         result["dialogue_revisions_version"] = dialogue_version
+    if delivery_policy:
+        result["answer_delivery_policy"] = delivery_policy
     if archive_enabled:
         result["archive_versions_version"] = archive_contract_version
         result["archive_comparisons"] = []
@@ -1140,6 +1176,7 @@ async def _research(
             archive_versions=archive_enabled,
             archive_version=archive_contract_version,
             application_actions=True,
+            answer_delivery_policy=delivery_policy,
         )
     result["continued_from"] = [
         item["run_id"] for item in (conversation_context or {}).get("previous_findings", [])
@@ -1216,6 +1253,8 @@ async def _research(
         else set()
     )
     system = SYSTEM
+    if delivery_policy:
+        system += delivery_policy
     if application_enabled:
         system += applications.POLICY
     if archive_enabled:
@@ -1328,6 +1367,7 @@ async def _research(
                 archive_versions=archive_enabled,
                 archive_version=archive_contract_version,
                 application_actions=application_enabled,
+                answer_delivery_policy=delivery_policy,
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
@@ -1348,6 +1388,7 @@ async def _research(
             archive_versions=archive_enabled,
             archive_version=archive_contract_version,
             application_actions=application_enabled,
+            answer_delivery_policy=delivery_policy,
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
@@ -1364,6 +1405,7 @@ async def _research(
                 archive_versions=archive_enabled,
                 archive_version=archive_contract_version,
                 application_actions=application_enabled,
+                answer_delivery_policy=delivery_policy,
             )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")

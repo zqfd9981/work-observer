@@ -135,7 +135,9 @@ def test_partial_relevant_answer_is_deliverable_but_explicit_full_comparison_is_
     )
     assert result["status"] == expected
     assert result["scope"]["counts"]["candidate_details"] == 2
-    assert result["research_method_sha256"] == method_fingerprint(coverage_mode=mode)
+    assert result["research_method_sha256"] == method_fingerprint(
+        coverage_mode=mode, answer_delivery_policy=result.get("answer_delivery_policy")
+    )
     if mode == "question":
         assert result["model_calls"] == 3
         assert result["question_scope"]["read_job_fragments"] == 1
@@ -321,3 +323,74 @@ def test_cli_public_only_excludes_existing_jobs(source_workspace, monkeypatch, t
     assert run["input"]["job_ids"] == [] and run["input"]["coverage_mode"] == "question"
     assert run["result"]["scope"]["jobs"] == []
     assert "公开资料范围：1份归档正文" in response.output
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_answer_guidance_is_frozen_with_the_original_progress(
+    source_workspace, monkeypatch, legacy
+):
+    from work_observer.research import agent
+
+    repo, store, jobs = source_workspace
+    question = "合成共同任职门槛与接口任务"
+    run = store.create(
+        dict(
+            question=question,
+            job_ids=jobs[:1],
+            coverage_mode="question",
+            max_calls=5,
+        )
+    )
+
+    class InterruptBeforeFinish(SubsetModel):
+        async def turn(self, history):
+            outputs, call = await super().turn(history)
+            if call["name"] == "finish_research":
+                raise asyncio.CancelledError()
+            return outputs, call
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            research(
+                repo,
+                question,
+                Settings(),
+                job_ids=jobs[:1],
+                coverage_mode="question",
+                max_calls=5,
+                model=InterruptBeforeFinish(),
+                checkpoint=(store, run["id"]),
+            )
+        )
+    saved = store.load_checkpoint(run["id"])
+    policy = saved["result"]["answer_delivery_policy"]
+    assert "学历、专业、经验年限" in policy
+    assert policy in saved["history"][0]["content"]
+    if legacy:
+        saved["result"].pop("answer_delivery_policy")
+        saved["history"][0]["content"] = saved["history"][0]["content"].replace(policy, "")
+        saved["result"]["research_method_sha256"] = method_fingerprint(coverage_mode="question")
+        store.checkpoint(run["id"], saved)
+    original_hash = saved["result"]["research_method_sha256"]
+    original_system = saved["history"][0]["content"]
+    monkeypatch.setattr(agent, "ANSWER_DELIVERY_POLICY", "后续修改的提示，不能进入旧进度")
+
+    class ResumeModel(SubsetModel):
+        async def turn(self, history):
+            assert history[0]["content"] == original_system
+            return await super().turn(history)
+
+    result = asyncio.run(
+        research(
+            repo,
+            question,
+            Settings(),
+            checkpoint=(store, run["id"]),
+            resume=True,
+            model=ResumeModel(),
+        )
+    )
+    assert result["status"] == "completed" and result["model_calls"] == 4
+    assert result["research_method_sha256"] == original_hash
+    assert result.get("answer_delivery_policy") == (None if legacy else policy)
+    assert store.load_checkpoint(run["id"])["max_calls"] == 5
