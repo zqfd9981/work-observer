@@ -16,6 +16,8 @@ class UpdateCaptureInput(BaseModel):
     job_ids: list[str] | None = Field(default=None, max_length=2000)
     terms: list[str] = Field(default_factory=list, max_length=10)
     include_personal: bool = False
+    include_archived: bool = False
+    public_document_ids: list[str] | None = Field(default=None, max_length=20)
 
 
 class UpdateCompareInput(BaseModel):

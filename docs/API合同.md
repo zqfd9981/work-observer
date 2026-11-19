@@ -22,6 +22,9 @@
 - `GET /api/updates/reports/{id}`增加动态`research_impact`：直接引用旧版本的判断、通过知识/记忆/研究背景关联的下游研究、原项目及步骤定位。返回完整关联计数及最近50轮；这些是待复核关联，不是语义错误裁决。关联文本不另存副本，已遗忘研究不再展示。
 - `POST /api/updates/reports/{id}/followup`的`{note,run_id?}`：省略`run_id`仍保存待补查；指定报告中可继续的关联研究时，将问题保存回原项目，绑定原步骤、沿用方法/当前资料范围和累计预算，不启动模型。同一报告/原轮/说明的重试复用已存步骤。
 - 定义的文字/版本变更与来源有效性变化分别在`domain_definitions_changed`和`definition_validity_changed`中表示，避免将来源失效当成工作类型定义被修订。
+- 观察面板的`include_archived:true`可同时冻结每个来源最近的归档版本；`public_document_ids`可限定至多20个版本，显式提供该列表即启用归档观察。该操作不访问网页。归档来源数与岗位分母分开；未观察过的旧面板不能作为“零资料”基线。
+- 比较报告的`archived_changes`区分网页正文、用户修订、提取结果、换行、原始文件/元数据、归档不可用及观察范围变化；复用`PublicDocumentService.compare`，不把资料变化解释为岗位职责变化。`archived_documents`/`public_document_ids`可用于建立只有归档资料的新研究。
+- `research_impact.runs[].document_updates`明确原研究限定的旧归档及同来源较晚版本。用户保存对应复核问题时，沿用既有范围修订服务替换这些版本，保留`scope_history`与旧回答，不增加其他来源；重复保存不再次改范围或重置预算。旧判断只作为历史对照，须读取当前原文后再说明修订。
 
 对应命令共用上述服务：`work-observer product research-knowledge get --id RUN_ID`；`product research-knowledge save --id RUN_ID --file INPUT.json`；`product updates report --id REPORT_ID`；`product updates followup --id REPORT_ID --file INPUT.json`。结构化文件字段与同名API相同，使用`--db`指定独立数据目录。
 

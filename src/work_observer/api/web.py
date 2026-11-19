@@ -703,6 +703,7 @@ def create_app(
                 "KNOWLEDGE_MAP_ITEM_REQUIRED": "请选择地图中的一个工作类型或一条任务能力关系。",
                 "DOMAIN_RESEARCH_SOURCE_STALE": "这个工作类型的来源需要重新核对，暂时不能采纳。",
                 "UPDATE_LINKED_RESEARCH_UNAVAILABLE": "这条关联研究目前无法继续，请刷新变化报告。",
+                "UPDATE_ARCHIVE_SCOPE_LIMIT_2000": "归档来源超过2000个，请限定要观察的资料。",
                 "UPDATE_PROJECT_BUDGET_EXHAUSTED": (
                     "原研究预留额度已用完；旧问题和预算保留，请另建明确范围的研究。"
                 ),

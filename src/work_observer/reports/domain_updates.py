@@ -245,10 +245,20 @@ class DomainUpdateService:
         job_ids=None,
         terms=None,
         include_personal=False,
+        include_archived=False,
+        public_document_ids=None,
     ):
         if not isinstance(title, str) or not title.strip() or len(title) > 150:
             raise ProbeError("INVALID_UPDATE_TITLE")
         terms = validated_terms(terms) if terms else []
+        from work_observer.reports.archived_updates import capture_archived
+
+        archived = capture_archived(
+            self.repository,
+            include_archived or public_document_ids is not None,
+            public_document_ids,
+        )
+        archived_ids = {row["id"] for row in archived["documents"]}
         filters = Filters.model_validate(filters or {})
         records, actual_filters, cutoff = RetrievalService(self.repository)._records(
             filters, job_ids, None
@@ -283,7 +293,10 @@ class DomainUpdateService:
             row
             for row in knowledge.list_relations(include_history=True)
             if (not domain_id or row["domain_id"] == domain_id)
-            and (set(row["scope"].get("job_ids", [])) & set(scope_ids))
+            and (
+                set(row["scope"].get("job_ids", [])) & set(scope_ids)
+                or set(row["scope"].get("public_document_ids", [])) & archived_ids
+            )
         ]
         definitions = knowledge.list_domains(include_history=True)
         profiles = {}
@@ -399,10 +412,16 @@ class DomainUpdateService:
                     job["source"] is not None and job["source"]["integrity"] != "verified"
                     for job in jobs
                 ),
+                "archived_documents": len(archived["documents"]),
+                "archived_observed": archived["enabled"],
+                "invalid_archived_documents": sum(
+                    row["integrity"] != "verified" for row in archived["documents"]
+                ),
                 "domain_counts": page["counts"],
             },
             "jobs": jobs,
             "terms": terms,
+            "archived_scope": archived,
             "statistics": stats,
             "definitions": definitions,
             "relations": relations,
@@ -423,6 +442,8 @@ class DomainUpdateService:
         return self._write("domain_update_captures", _json(payload))
 
     def compare(self, before_id, after_id):
+        from work_observer.reports.archived_updates import compare_archived
+
         before = self._get("domain_update_captures", before_id)
         after = self._get("domain_update_captures", after_id)
         if before["created_at"] > after["created_at"]:
@@ -589,6 +610,7 @@ class DomainUpdateService:
             "sample": {"before": before["sample"], "after": after["sample"]},
             "content_changes": content,
             "metadata_changes": metadata,
+            "archived_changes": compare_archived(self.repository, before, after),
             "sample_changes": {
                 "added_job_ids": sorted(b.keys() - a.keys()),
                 "removed_job_ids": sorted(a.keys() - b.keys()),
@@ -638,6 +660,10 @@ class DomainUpdateService:
                 "note": "只解释明确条件与原文/披露字段；不推测个人履历、能力或适配分数。",
             },
             "job_ids": sorted(b),
+            "public_document_ids": [
+                row["id"] for row in after.get("archived_scope", {}).get("documents", [])
+            ],
+            "archived_documents": after.get("archived_scope", {}).get("documents", []),
             "source_run_ids": sorted(set(before["source_run_ids"] + after["source_run_ids"])),
             "memory_refs": list(
                 {row["id"]: row for row in before["memory_refs"] + after["memory_refs"]}.values()
@@ -694,6 +720,21 @@ class DomainUpdateService:
                 seconds = min(180, int(budget["max_seconds"] - used["reserved_seconds"]))
                 if calls < 1 or seconds < 1:
                     raise ProbeError("UPDATE_PROJECT_BUDGET_EXHAUSTED")
+                if len(project["steps"]) >= budget["max_rounds"]:
+                    raise ProbeError("PROJECT_ROUND_LIMIT")
+                if source.get("document_updates"):
+                    replacements = {
+                        row["before_id"]: row["after_id"] for row in source["document_updates"]
+                    }
+                    project = projects.revise(
+                        project["id"],
+                        revision=project["revision"],
+                        goal=project["goal"],
+                        job_ids=project["job_ids"],
+                        public_document_ids=[
+                            replacements.get(key, key) for key in project["public_document_ids"]
+                        ],
+                    )
                 project = projects.add(
                     project["id"],
                     note.strip(),

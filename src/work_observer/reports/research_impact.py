@@ -19,6 +19,27 @@ def research_impact(repository, store, before, after, report):
         for row in before["jobs"]
         if row.get("source") and row["job_id"] in changed_jobs
     }
+    archived = {
+        row["before"]["id"]: row
+        for row in report.get("archived_changes", {}).get("changes", [])
+        if row.get("text_changed") is True or row.get("change_kind") == "integrity_unavailable"
+    }
+
+    def evidence_reason(item):
+        if (
+            item.get("job_id") in old_sources
+            and item.get("snapshot_id") == old_sources[item["job_id"]]
+        ):
+            return changed_jobs[item["job_id"]]
+        if item.get("public_document_id") in archived:
+            change = archived[item["public_document_id"]]
+            return (
+                "archive_integrity_changed"
+                if change["change_kind"] == "integrity_unavailable"
+                else "archived_text_changed"
+            )
+        return None
+
     knowledge = set()
     for field, kind in (("definitions", "domain_definition"), ("relations", "work_relation")):
         later = {row["id"]: row for row in after[field]}
@@ -42,10 +63,9 @@ def research_impact(repository, store, before, after, report):
     for run in runs:
         result = run["result"]
         evidence = {
-            item["id"]: changed_jobs[item["job_id"]]
+            item["id"]: reason
             for item in result.get("evidence", [])
-            if item.get("job_id") in old_sources
-            and item.get("snapshot_id") == old_sources[item["job_id"]]
+            if (reason := evidence_reason(item))
         }
         claims = [
             {
@@ -67,11 +87,7 @@ def research_impact(repository, store, before, after, report):
         memories = list(session.scalars(select(MemoryRecord)))
 
         def changed_evidence(items):
-            return any(
-                item.get("job_id") in old_sources
-                and item.get("snapshot_id") == old_sources[item["job_id"]]
-                for item in items
-            )
+            return any(evidence_reason(item) for item in items)
 
         knowledge.update(
             ("work_relation", row.id)
@@ -135,6 +151,20 @@ def research_impact(repository, store, before, after, report):
             if project
             else None
         )
+        selected = project.get("public_document_ids") if project else None
+        document_updates = [
+            {
+                "before_id": old_id,
+                "after_id": change["after"]["id"],
+                "title": change["after"]["title"],
+            }
+            for old_id, change in archived.items()
+            if selected is not None
+            and old_id in selected
+            and change.get("text_changed") is True
+            and change["after"]["integrity"] == "verified"
+            and change["after"]["observed_at"] > change["before"]["observed_at"]
+        ]
         output.append(
             {
                 "run_id": run["id"],
@@ -145,6 +175,7 @@ def research_impact(repository, store, before, after, report):
                 "project_id": project["id"] if step else None,
                 "step_id": step["id"] if step else None,
                 "can_followup": bool(step and step["state"] in {"completed", "waiting_review"}),
+                "document_updates": document_updates,
             }
         )
     output.sort(key=lambda row: (row["created_at"], row["run_id"]), reverse=True)
