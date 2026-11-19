@@ -395,6 +395,7 @@ class ProjectService:
         approach="standard",
         coverage_mode="all",
         reply_to_step_id=None,
+        origin="user",
     ):
         if (
             not question.strip()
@@ -406,6 +407,7 @@ class ProjectService:
             or not 1 <= timeout <= 300
             or approach not in {"standard", "work_map"}
             or coverage_mode not in {"all", "question"}
+            or origin not in {"user", "agent"}
         ):
             raise ProbeError("INVALID_INVESTIGATION_STEP")
         with self.store.lock, self.store.db:
@@ -437,6 +439,7 @@ class ProjectService:
                     id=step_id,
                     key=key,
                     question=question.strip(),
+                    origin=origin,
                     kind=kind,
                     completion=completion.strip(),
                     depends_on=parents,
@@ -463,7 +466,7 @@ class ProjectService:
             record["turns"].append(
                 dict(
                     id=step_id,
-                    role="user",
+                    role="assistant" if origin == "agent" else "user",
                     text=question.strip(),
                     scope_version=record["scope_version"],
                     created_at=now(),
@@ -575,6 +578,7 @@ class ProjectService:
                 "created_at": now(),
                 "stop_reason": None,
                 "replaces_step_id": step_id,
+                "origin": "user",
                 "refresh_note": note.strip(),
                 "refresh_material_signature": material["signature"],
                 "legacy_material_basis": old is None,
@@ -884,10 +888,15 @@ class ProjectService:
         candidates, eligible = [], []
         historical_reply = None
         for previous in record["steps"]:
-            if previous["id"] == step["id"] or previous["state"] not in {
-                "completed",
-                "waiting_review",
-            }:
+            if (
+                not previous.get("run_id")
+                or previous["id"] == step["id"]
+                or previous["state"]
+                not in {
+                    "completed",
+                    "waiting_review",
+                }
+            ):
                 continue
             is_reply = previous["id"] == reply_id
             run = self.store.get(previous["run_id"])
@@ -1008,6 +1017,7 @@ class ProjectService:
             scope_version=step["scope_version"],
             completion=step["completion"],
             investigation_kind=step["kind"],
+            investigation_origin=step.get("origin", "unspecified"),
             previous_findings=[],
             excluded_prior_findings=[
                 {"run_id": s["run_id"], "reason": "quality_rejected"}
@@ -1021,6 +1031,7 @@ class ProjectService:
             selection_note=(
                 "仅选择同范围、仍有效的相关研究；omitted_claims是未放入上下文的判断数，"
                 "work_map_omitted表示整份地图未带入时各类省略数；未展示不能当作不存在。"
+                "origin为agent的问题由Agent提出，不是用户新增偏好或知识采纳。"
             ),
         )
         if reply_id:
@@ -1029,6 +1040,7 @@ class ProjectService:
                 "step_id": reply_id,
                 "run_id": reply.get("run_id"),
                 "question": reply["question"][:1000],
+                "question_origin": reply.get("origin", "unspecified"),
                 "review_state": reply["state"],
                 "source_scope_version": reply["scope_version"],
                 "findings_included": False,
@@ -1043,6 +1055,7 @@ class ProjectService:
             historical = dict(
                 run_id=previous["run_id"],
                 question=previous["question"][:1000],
+                question_origin=previous.get("origin", "unspecified"),
                 review_state=previous["state"],
                 reason="source_version_changed",
                 derived_claims=[],
@@ -1300,12 +1313,14 @@ async def _execute_project_locked(
             if status == "completed":
                 for index, proposal in enumerate(result.get("investigation_proposals", [])[:2]):
                     current = service.get(identity)
-                    planned_calls = sum(
-                        s["max_calls"] for s in current["steps"] if not s["offline"]
-                    )
-                    planned_seconds = sum(
-                        s["timeout"] for s in current["steps"] if not s["offline"]
-                    )
+                    used = service.usage(current)
+                    pending = [
+                        s
+                        for s in current["steps"]
+                        if s["state"] == "queued" and not s["run_id"] and not s["offline"]
+                    ]
+                    planned_calls = used["reserved_calls"] + sum(s["max_calls"] for s in pending)
+                    planned_seconds = used["reserved_seconds"] + sum(s["timeout"] for s in pending)
                     calls = min(8, current["budget"]["max_calls"] - planned_calls)
                     seconds = min(120, current["budget"]["max_seconds"] - planned_seconds)
                     if (
@@ -1314,11 +1329,12 @@ async def _execute_project_locked(
                         or seconds < 30
                     ):
                         break
-                    if any(s["question"] == proposal["question"] for s in current["steps"]):
+                    question = proposal["question"].strip()
+                    if any(s["question"] == question for s in current["steps"]):
                         continue
                     service.add(
                         identity,
-                        proposal["question"],
+                        question,
                         revision=current["revision"],
                         kind=proposal["kind"],
                         max_calls=calls,
@@ -1326,6 +1342,7 @@ async def _execute_project_locked(
                         approach=step.get("approach", "standard"),
                         coverage_mode=step.get("coverage_mode", "all"),
                         reply_to_step_id=step["id"],
+                        origin="agent",
                         completion=(
                             proposal["completion"] + "；所需证据：" + proposal["evidence_needed"]
                         )[:1000],

@@ -887,6 +887,9 @@ async function startResearchConversation(question, options={}) {
   finally{conversationStarting=false;}
 }
 
+function projectStepOriginLabel(step) {
+  return step.origin==="agent"?"Agent提出的补查":step.origin==="user"?"你安排的调查":"历史调查 · 提问来源未记录";
+}
 function conversationAllocation(project, offline, allowPublic=false) {
   const budget=project.budget||{},usage=project.usage||{};
   const pending=(project.steps||[]).filter(step=>step.state==="queued"&&!step.run_id&&!step.offline);
@@ -1109,7 +1112,7 @@ async function openResearchConversation(id, navigate=true) {
   for(const step of project.steps){
     const item=document.createElement("details");item.className="detail-section";
     item.open=step===project.steps.at(-1);
-    item.innerHTML=`<summary>${e(step.question)}</summary><div></div>`;turns.append(item);
+    item.innerHTML=`<summary>${e(step.question)} <small>${e(projectStepOriginLabel(step))}</small></summary><div></div>`;turns.append(item);
     const target=item.querySelector("div");
     if(step.result?.scope){
       renderResult({...step.result,...(conversation.reports.get(step.run_id)||{})},target,step.run_id,step.id);

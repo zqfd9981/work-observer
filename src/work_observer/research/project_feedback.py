@@ -168,6 +168,7 @@ def repair_reviewed(
             **source,
             "id": uuid4().hex,
             "key": "review-repair:" + feedback["review_id"],
+            "origin": "user",
             "state": "queued",
             "run_id": None,
             "offline": offline,
