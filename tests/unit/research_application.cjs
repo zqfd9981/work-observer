@@ -51,6 +51,22 @@ vm.runInContext('conversation.id=project.id;api=async(path,options)=>{calls.push
  await vm.runInContext('reloadResearchApplication()',context);
  assert.equal(node("#application-background").value,"无相关经历（合成）");assert.equal(node("#application-memory-id").value,current.id);
  assert.equal(node("#conversation-question").value,recovered);
+ current.validity={eligible:false,reasons:["outside_effective_time"]};
+ vm.runInContext('conversation.notes=notes.filter(n=>n.status==="active")',context);
+ const writesBeforeUnavailable=context.calls.filter(call=>call.options?.method==="POST").length;
+ await assert.rejects(vm.runInContext('prepareResearchApplication("无相关经历（合成）","合成入门目标","",notes.at(-1).id)',context),/不可用于研究/);
+ await assert.rejects(vm.runInContext('reloadResearchApplication()',context),/不可用于研究/);
+ assert.equal(context.calls.filter(call=>call.options?.method==="POST").length,writesBeforeUnavailable);
+ assert.equal(node("#conversation-question").value,recovered);
+ assert.ok(vm.runInContext('renderConversationApplication(project)',context).includes("不可用于研究"));
+ const usable={...current,id:"c".repeat(32),root_id:"c".repeat(32),previous_id:null,validity:{eligible:true}};
+ context.notes.push(usable);
+ await vm.runInContext('reloadResearchApplication()',context);
+ assert.equal(node("#application-memory-id").value,usable.id); // An expired old root cannot hide the current valid background.
+ assert.equal(node("#conversation-question").value,recovered);
+ context.notes.pop();
+ delete current.validity;
+ await vm.runInContext('reloadResearchApplication()',context);
  context.legacy={...current,content:"个人应用背景（用户自述）：\n已有经历或能力：合成旧版经历\n本次目标：合成旧目标\n投入与限制：未说明，不作假设"};
  assert.equal(vm.runInContext('applicationProfile(legacy,project.id).constraints',context),"");
  assert.equal(vm.runInContext('applicationProfile(legacy,"b".repeat(32))',context),null);

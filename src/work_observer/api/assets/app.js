@@ -916,6 +916,7 @@ function defaultConversationReply(project) {
 }
 
 const APPLICATION_PREFIX="个人应用背景（用户自述，结构化）：\n";
+const APPLICATION_UNAVAILABLE="已保存背景目前不可用于研究。请在知识与偏好查看当前状态或有效期；当前输入保留。";
 
 function applicationProfile(note,projectId) {
   if(note.project_id!==projectId||note.scope!=="project"||note.kind!=="preference"||note.origin!=="user"||note.status!=="active")return null;
@@ -935,10 +936,11 @@ function applicationProfile(note,projectId) {
 }
 
 function renderConversationApplication(project,draft=null) {
-  const profiles=conversation.notes.map(note=>applicationProfile(note,project.id)).filter(Boolean);
+  const profiles=conversation.notes.filter(note=>note.validity?.eligible!==false).map(note=>applicationProfile(note,project.id)).filter(Boolean);
+  const unavailable=conversation.notes.some(note=>note.validity?.eligible===false&&applicationProfile(note,project.id));
   const values=draft || (profiles.length===1?profiles[0]:{});
   const saved=profiles.find(row=>row.memoryId===values.memoryId);
-  const notice=profiles.length>1?"有多份个人应用背景并存，请到知识与偏好选择当前背景后再修改。":values.memoryId&&!saved?"背景已在别处更新；当前输入仍保留，可载入已保存的新版。":saved?`已载入第 ${saved.version} 版背景；修改后新增版本，旧研究保留当时背景。`:"尚未保存这项研究的个人应用背景。";
+  const notice=profiles.length>1?"有多份个人应用背景并存，请到知识与偏好选择当前背景后再修改。":!profiles.length&&unavailable?APPLICATION_UNAVAILABLE:values.memoryId&&!saved?"背景已在别处更新；当前输入仍保留，可载入已保存的新版。":saved?`已载入第 ${saved.version} 版背景；修改后新增版本，旧研究保留当时背景。`:"尚未保存这项研究的个人应用背景。";
   return `<details id="conversation-application-panel" class="detail-section" ${values.open?"open":""}><summary>把研究用于我的目标</summary><p class="form-note">${e(notice)} ${profiles.length>1?'<a href="#memory">查看知识与偏好</a>':""}</p><form id="conversation-application"><input type="hidden" id="application-memory-id" name="memory_id" value="${e(values.memoryId||"")}"><label>我已有的经历或能力<textarea id="application-background" name="background" rows="3" required maxlength="1500" placeholder="写你实际做过的工作或项目；没有相关经历也可以直接说明。">${e(values.background||"")}</textarea></label><label>这次想达到什么目标<textarea id="application-goal" name="goal" rows="2" required maxlength="1000" placeholder="例如：做一个可展示的项目，验证自己能否承担这类工作。">${e(values.goal||"")}</textarea></label><label>时间、资源或其他限制（可选）<textarea id="application-constraints" name="constraints" rows="2" maxlength="500" placeholder="例如：每周能投入的时间、可用资料、无法接触的系统。">${e(values.constraints||"")}</textarea></label><div class="result-actions"><button class="secondary" ${project.worker_running?"disabled":""}>保存背景并准备应用问题</button><button type="button" class="text-button" data-application-reload ${project.worker_running?"disabled":""}>载入已保存背景</button></div><p class="form-note">只用于这项研究。保存后可编辑下方追问，点击“继续调查”才调用模型；回答会区分原文要求与建议，给出可检查的产物和待核实信息。</p></form></details>`;
 }
 
@@ -946,8 +948,9 @@ async function reloadResearchApplication() {
   const id=conversation.id;
   const notes=await api("memories?project_id="+encodeURIComponent(id));
   if(conversation.id!==id)return;
-  const profiles=notes.map(note=>applicationProfile(note,id)).filter(Boolean);
+  const profiles=notes.filter(note=>note.validity?.eligible!==false).map(note=>applicationProfile(note,id)).filter(Boolean);
   if(profiles.length>1)throw new Error("有多份背景并存，请先到知识与偏好选择当前背景；当前输入保留。");
+  if(!profiles.length&&notes.some(note=>note.validity?.eligible===false&&applicationProfile(note,id)))throw new Error(APPLICATION_UNAVAILABLE);
   const values=profiles[0]||{};
   conversation.notes=notes.filter(note=>note.project_id===id&&note.status==="active"&&["preference","correction"].includes(note.kind));
   conversation.notesFor=id;
@@ -982,8 +985,9 @@ async function prepareResearchApplication(background,goal,constraints="",memoryI
   // Read current versions even when the form was restored from a cached conversation.
   const known=await api("memories?project_id="+encodeURIComponent(targetProject));
   if(conversation.id!==targetProject)throw new Error("研究已切换，请在当前研究重新准备应用问题。");
-  const candidates=known.filter(note=>applicationProfile(note,targetProject));
+  const candidates=known.filter(note=>note.validity?.eligible!==false&&applicationProfile(note,targetProject));
   if(known.some(note=>note.status==="conflict"&&applicationProfile({...note,status:"active"},targetProject)))throw new Error("背景存在冲突，请到知识与偏好选择当前背景；当前输入保留。");
+  if(known.some(note=>note.validity?.eligible===false&&applicationProfile(note,targetProject)&&(!candidates.length||note.id===memoryId)))throw new Error(APPLICATION_UNAVAILABLE);
   if(candidates.length>1)throw new Error("有多份背景并存，请先到知识与偏好选择当前背景；当前输入保留。");
   const old=candidates.find(note=>note.id===memoryId);
   const matching=candidates.find(note=>{const row=applicationProfile(note,targetProject);return row.background===background&&row.goal===goal&&row.constraints===constraints;});
@@ -1591,6 +1595,7 @@ function renderMemory(item) {
 }
 
 async function loadMemories() {
+  conversation.notesFor=null;
   const root = $("#memory-list");
   try {
     const items = await api("memories" + ($("#memory-history").checked ? "?history=1" : ""));

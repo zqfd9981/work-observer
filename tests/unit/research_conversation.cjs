@@ -200,6 +200,23 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(refreshed.includes("合成目标草稿"));assert.ok(refreshed.includes("合成投入限制"));
  assert.ok(refreshed.includes('id="conversation-application-panel" class="detail-section" open'));
 
+ // Returning from memory editing must show the new record, while preserving the question draft.
+ context.memoNotes=[{id:"8".repeat(32),kind:"correction",scope:"project",project_id:"project-1",status:"active",origin:"user",version:1,content:"合成旧纠正：个人可以独立上线"}];
+ vm.runInContext('conversation.notesFor=null;api=async path=>path.startsWith("memories")?memoNotes:project',context);
+ await vm.runInContext('openResearchConversation("project-1",false)',context);
+ assert.ok(node("#research-output").innerHTML.includes("合成旧纠正：个人可以独立上线"));
+ context.memoNotes=[{...context.memoNotes[0],id:"9".repeat(32),version:2,content:"合成新版纠正：上线需平台团队确认"}];
+ node("#conversation-question").value="保留我正在写的追问";
+ await vm.runInContext('loadMemories();',context);
+ await vm.runInContext('openResearchConversation("project-1",false)',context);
+ assert.ok(node("#research-output").innerHTML.includes("合成新版纠正：上线需平台团队确认"));
+ assert.ok(!node("#research-output").innerHTML.includes("合成旧纠正：个人可以独立上线"));
+ assert.equal(node("#conversation-question").value,"保留我正在写的追问");
+ context.memoNotes=[];
+ await vm.runInContext('loadMemories();',context);
+ await vm.runInContext('openResearchConversation("project-1",false)',context);
+ assert.ok(!node("#research-output").innerHTML.includes("合成新版纠正：上线需平台团队确认"));
+
  const projectsBeforePastedOnly=context.calls.filter(c=>c.path==="projects").length;
  node("#research-source-mode").value="jobs";
  vm.runInContext('selectedResearchDocuments.clear();selectResearchDocument("f".repeat(32),"已有工作资料");state.researchIds=null;globalThis.messages=[];notify=message=>messages.push(message);openResearchConversation=async id=>opened.push(id);api=async(path,options)=>{calls.push({path,options});if(path.startsWith("jobs?"))return {jobs:[]};if(path.startsWith("public-documents?"))return {documents:[],total:0};return {id:"pasted-only",revision:1,job_ids:[],steps:[],ready_step_ids:[],budget:{max_calls:24,max_seconds:720,max_rounds:6,max_public:0},usage:{calls:0,reserved_calls:0,reserved_seconds:0,public:0},worker_running:false};}',context);
