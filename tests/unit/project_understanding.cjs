@@ -23,6 +23,14 @@ assert.ok(html.includes('data-source="document"')&&html.includes("如何核实�
 assert.ok(html.includes("&lt;script&gt;接口开发")&&!html.includes("<script>"));
 assert.ok(!html.includes("人工核对通过"));
 assert.equal(JSON.stringify(context.project),original); // Reopening never changes adoption or results.
+context.knowledge=[{id:"saved",source_run_id:"second",content:second.result.claims[0].text,status:"active",scope:"job",validity:{eligible:true}}];
+let savedHtml=vm.runInContext("renderProjectUnderstanding(project,knowledge)",context);
+assert.ok(savedHtml.includes("已采纳为岗位知识"));
+assert.ok(!savedHtml.includes('data-knowledge-run="second"'));
+assert.ok(savedHtml.includes('href="#memory"'));
+context.knowledge[0].status="withdrawn";
+savedHtml=vm.runInContext("renderProjectUnderstanding(project,knowledge)",context);
+assert.ok(savedHtml.includes("知识已撤回")&&!savedHtml.includes('data-knowledge-run="second"'));
 second.result.business_review.status="rejected";
 view=vm.runInContext("projectUnderstanding(project)",context);
 assert.deepEqual(Array.from(view.claims,x=>x.claim.text),[first.result.claims[0].text]);
