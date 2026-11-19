@@ -118,7 +118,7 @@ class DependencyAudit:
             "project_id": result.get("project_id"),
         }
 
-    def _evidence(self, session, evidence, *, kind, identity, required=False):
+    def _evidence(self, session, evidence, *, kind, identity, required=False, require_current=True):
         from work_observer.memory.service import MemoryService
 
         if not evidence:
@@ -134,7 +134,7 @@ class DependencyAudit:
                 for key in ("document_sha256", "content_sha256")
             ):
                 return [self._issue(kind, identity, "source_reference_changed")]
-            if not service._sources_current(session, canonical):
+            if require_current and not service._sources_current(session, canonical):
                 return [self._issue(kind, identity, "source_changed")]
         except (ProbeError, OSError, TypeError, KeyError):
             return [self._issue(kind, identity, "source_missing_or_invalid")]
@@ -416,6 +416,9 @@ class DependencyAudit:
         return issues
 
     def _result(self, result, *, evidence_ids=None):
+        from work_observer.research.archive_versions import historical_evidence_ids
+
+        historical = historical_evidence_ids(self.repository, result)
         issues, scope = [], self._scope(result)
         refs = [
             *result.get("memory_used", result.get("memories", [])),
@@ -452,7 +455,11 @@ class DependencyAudit:
                 if evidence.get("snapshot_id") or evidence.get("public_document_id"):
                     issues.extend(
                         self._evidence(
-                            session, [evidence], kind="run_evidence", identity=evidence.get("id")
+                            session,
+                            [evidence],
+                            kind="run_evidence",
+                            identity=evidence.get("id"),
+                            require_current=evidence.get("id") not in historical,
                         )
                     )
             strategy = result.get("strategy") or result.get("retrieval_strategy") or {}

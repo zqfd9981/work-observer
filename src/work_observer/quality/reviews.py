@@ -98,6 +98,7 @@ class QualityReviewService:
             "question": result.get("question"),
             "scope": result.get("scope", {}),
             "claims": claims,
+            "archive_comparisons": result.get("archive_comparisons", []),
             "gaps": result.get("gaps", []),
             "audit": audit,
             "approve_allowed": approve_allowed,

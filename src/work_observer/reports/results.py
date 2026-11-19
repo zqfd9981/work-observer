@@ -324,6 +324,38 @@ def render(result):
 
     if result.get("analysis_origin") == "developer_sample":
         lines.extend(["", "产出来源：开发分析样稿，非产品Agent运行，非独立人审。", ""])
+    if result.get("archive_comparisons"):
+        lines.extend(["", "## 所选归档版本对照", ""])
+        kinds = {
+            "user_text_revision": "用户修订正文",
+            "archive_text_changed": "归档正文变化",
+            "extraction_changed": "同一原始文件的文本提取结果变化",
+            "metadata_only": "正文未变，说明变化",
+            "raw_archive_changed": "响应变化，提取正文未变",
+            "observed_again": "再次保存，正文未变",
+            "line_endings_changed": "行内容相同，换行形式变化",
+        }
+        for row in result["archive_comparisons"]:
+            references = " ".join(
+                f"[{labels[key]}](#{labels[key].lower()})"
+                for key in row["evidence_ids"]
+                if key in labels
+            )
+            lines.extend(
+                [
+                    f"- {kinds.get(row['change_kind'], '变化类型待核对')}："
+                    f"{row['earlier']['observed_at']} → "
+                    f"{row['later']['observed_at']}。{references}",
+                    "  程序核对：原始文件指纹"
+                    + ("不同" if row["raw_changed"] else "相同")
+                    + f"；提取正文 {row['earlier']['full_text_length']} → "
+                    + f"{row['later']['full_text_length']} 字符。",
+                    "  " + row["notice"],
+                    "  程序差异范围："
+                    + ("完整" if row["complete"] else "受展示上限限制，不能视为完整差异")
+                    + "；引用仅为局部原文。",
+                ]
+            )
     lines.extend(render_map(result, labels))
     lines.extend(render_revisions(result, labels))
     lines.extend(_render_source_findings(result, labels))

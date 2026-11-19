@@ -316,7 +316,32 @@ def method_fingerprint(
     public_only=False,
     work_materials=False,
     dialogue_revisions=False,
+    archive_versions=False,
+    archive_version=None,
 ):
+    if archive_versions:
+        from work_observer.research.archive_versions import TOOL, VERSION, policy
+
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "base": method_fingerprint(
+                        approach,
+                        review_feedback=review_feedback,
+                        requirement_guard=requirement_guard,
+                        coverage_mode=coverage_mode,
+                        public_only=public_only,
+                        work_materials=work_materials,
+                        dialogue_revisions=dialogue_revisions,
+                    ),
+                    "archive_versions_policy": policy(archive_version or VERSION),
+                    "tool": TOOL,
+                    "version": archive_version or VERSION,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     if dialogue_revisions:
         from work_observer.research.dialogue import POLICY, VERSION, tools
 
@@ -898,6 +923,11 @@ async def _research(
                 "本轮只研究本机归档资料，不使用岗位。网页正文与粘贴工作资料分别标记；"
                 "标题只用于定位，须检索并引用原文；来源说明不等于独立核实或执行结果。"
             )
+    from work_observer.research import archive_versions as archive_history
+
+    archive_pairs = archive_history.pairs(repository, archived_public_ids)
+    archive_enabled = approach == "standard" and bool(archive_pairs)
+    archive_contract_version = archive_history.VERSION
     has_work_materials = bool(work_material_ids)
     from work_observer.research.dialogue import VERSION as dialogue_version
 
@@ -913,6 +943,15 @@ async def _research(
         if frozen_dialogue and frozen_dialogue != dialogue_version:
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         dialogue_enabled = frozen_dialogue == dialogue_version
+        frozen_archive = frozen.get("result", {}).get("archive_versions_version")
+        if frozen_archive and frozen_archive not in archive_history.KNOWN_VERSIONS:
+            raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
+        archive_enabled = frozen_archive in archive_history.KNOWN_VERSIONS
+        if archive_enabled:
+            archive_contract_version = frozen_archive
+        archive_pairs = frozen.get("result", {}).get("scope", {}).get("archive_version_pairs", [])
+    if archive_enabled:
+        scope["archive_version_pairs"] = archive_pairs
     validation = (
         qualification.guard_contract()
         if _qualification_guard == qualification.CURRENT_GUARD
@@ -939,6 +978,8 @@ async def _research(
         method_version += "-work-materials-v1"
     if dialogue_enabled:
         method_version += "-" + dialogue_version
+    if archive_enabled:
+        method_version += "-" + archive_contract_version
     result = {
         "format_version": 1,
         "research_method_version": method_version,
@@ -950,6 +991,8 @@ async def _research(
             public_only=job_ids == [],
             work_materials=has_work_materials,
             dialogue_revisions=dialogue_enabled,
+            archive_versions=archive_enabled,
+            archive_version=archive_contract_version,
         ),
         "approach": approach,
         "coverage_mode": coverage_mode,
@@ -994,6 +1037,9 @@ async def _research(
     }
     if dialogue_enabled:
         result["dialogue_revisions_version"] = dialogue_version
+    if archive_enabled:
+        result["archive_versions_version"] = archive_contract_version
+        result["archive_comparisons"] = []
     if validation:
         result["qualification_validation"] = validation
     if memory is None:
@@ -1116,6 +1162,8 @@ async def _research(
         else set()
     )
     system = SYSTEM
+    if archive_enabled:
+        system += archive_history.policy(archive_contract_version)
     if coverage_mode == "question":
         system += QUESTION_COVERAGE_POLICY
     if job_ids == []:
@@ -1216,6 +1264,8 @@ async def _research(
                 public_only=job_ids == [],
                 work_materials=has_work_materials,
                 dialogue_revisions=dialogue_enabled,
+                archive_versions=archive_enabled,
+                archive_version=archive_contract_version,
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
@@ -1233,6 +1283,8 @@ async def _research(
             public_only=job_ids == [],
             work_materials=has_work_materials,
             dialogue_revisions=dialogue_enabled,
+            archive_versions=archive_enabled,
+            archive_version=archive_contract_version,
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
@@ -1246,6 +1298,8 @@ async def _research(
                 public_only=job_ids == [],
                 work_materials=has_work_materials,
                 dialogue_revisions=dialogue_enabled,
+                archive_versions=archive_enabled,
+                archive_version=archive_contract_version,
             )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
@@ -1332,6 +1386,7 @@ async def _research(
                         else TOOLS
                     )
                     + EXTRA_TOOLS
+                    + ([archive_history.TOOL] if archive_enabled else [])
                     + ([PUBLIC_TOOL, PUBLIC_READ_TOOL] if allow_public else [])
                     + (PROPOSAL_TOOLS if allow_proposals else [])
                     + ([INVESTIGATION_TOOL] if project_id else [])
@@ -1617,6 +1672,37 @@ async def _research(
                         arguments["job_id"], observed_before=result["created_at"]
                     )
                     entry["job_id"] = arguments["job_id"]
+                elif name == "compare_archived_versions" and set(arguments) == {
+                    "earlier_id",
+                    "later_id",
+                }:
+                    if not archive_enabled:
+                        raise ProbeError("RESEARCH_TOOL_DENIED")
+                    allowed = scope.get("archived_public_ids", [])
+                    if not {arguments["earlier_id"], arguments["later_id"]} <= set(allowed):
+                        raise ProbeError("RESEARCH_SCOPE_VIOLATION")
+                    previous = next(
+                        (
+                            row
+                            for row in result["archive_comparisons"]
+                            if (row["earlier"]["id"], row["later"]["id"])
+                            == (arguments["earlier_id"], arguments["later_id"])
+                        ),
+                        None,
+                    )
+                    if previous is None and len(result["archive_comparisons"]) >= 2:
+                        data = {
+                            "gap": (
+                                "本轮已比较两组归档版本，请用现有依据回答，其他差异留待后续核实。"
+                            )
+                        }
+                    else:
+                        data = archive_history.compare(
+                            repository, arguments["earlier_id"], arguments["later_id"], allowed
+                        )
+                        if previous is None:
+                            result["archive_comparisons"].append(data["comparison"])
+                    entry.update(earlier_id=arguments["earlier_id"], later_id=arguments["later_id"])
                 elif name == "sample_statistics" and set(arguments) == {"terms"}:
                     from work_observer.retrieval.enhanced import RetrievalService
 
