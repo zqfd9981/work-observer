@@ -277,7 +277,9 @@ def test_reply_cannot_reference_other_project_or_unfinished_step(setup):
 def test_restart_recovery_does_not_consume_and_http_followup(tmp_path):
     settings = Settings(database_path=tmp_path / "app.db", raw_directory=tmp_path / "raw")
     upgrade(settings.database_path)
-    with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+    with TestClient(
+        create_app(settings, reports_dir=tmp_path / "reports"), base_url="http://127.0.0.1"
+    ) as client:
         token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
         headers = {"X-WO-Token": token}
         job_id = client.post(
@@ -314,11 +316,18 @@ def test_restart_recovery_does_not_consume_and_http_followup(tmp_path):
         assert detail["steps"][0]["result"]["coverage_mode"] == "question"
         assert "work_map" not in detail["steps"][0]["result"]
         assert detail["usage"]["calls"] == 0
-    with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+        saved = client.post(
+            f"/api/research/{detail['steps'][0]['run_id']}/save",
+            headers=headers,
+        ).json()
+    with TestClient(
+        create_app(settings, reports_dir=tmp_path / "reports"), base_url="http://127.0.0.1"
+    ) as client:
         token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
         headers = {"X-WO-Token": token}
         detail = client.get(f"/api/projects/{p['id']}").json()
         assert detail["steps"][0]["result"]["status"] == "evidence_only"
+        assert detail["steps"][0]["result"]["report_id"] == saved["report_id"]
         assert not detail["worker_running"]
         schema = client.get("/api/openapi.json").json()
         assert "/api/projects/{id}/steps/{step_id}/review" in schema["paths"]

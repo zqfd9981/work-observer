@@ -413,7 +413,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
   const completed = ["completed","evidence_only","analysis_draft"].includes(result.status);
   const reportId = result.report_id;
   const runIdentity = runId || result.run_id;
-  target.innerHTML = `<article class="panel result-card"><div class="result-top"><h2>${e(result.mode === "offline" ? "原文证据" : "研究结果")}</h2>${badge(statusLabels[result.status] || result.status,completed ? "" : "amber")}</div><p class="result-question">${e(result.question)}</p><div class="scope-summary"><span>${counts.matched} 个匹配</span>·<span>${counts.unknown} 个条件未知</span>·<span>${counts.candidate_details} 份候选岗位正文</span>·<span>${e(result.scope.archived_public_total || 0)} 份归档资料</span>·<span>${e(when(result.created_at))}</span></div>
+  target.innerHTML = `<article class="panel result-card"><div class="result-top"><h2>${e(result.mode === "offline" ? "原文证据" : "研究结果")}</h2>${badge(statusLabels[result.status] || result.status,completed ? "" : "amber")}</div><p class="result-question">${e(result.question)}</p><div class="scope-summary"><span>${counts.matched} 个匹配</span>·<span>${counts.unknown} 个条件未知</span>·<span>${counts.candidate_details} 份候选岗位正文</span>·<span>${e(result.scope.archived_public_total || 0)} 份可用归档资料</span>·<span>${e(when(result.created_at))}</span></div>
     ${result.scope.source_note ? `<p class="form-note">${e(result.scope.source_note)}</p>` : ""}
     ${result.question_scope && result.scope.jobs.length ? `<p class="form-note">本轮查阅了 ${e(result.question_scope.read_job_fragments)} 份岗位材料的片段，范围内有 ${e(result.question_scope.available_details)} 份可用正文。${e(result.question_scope.notice)}</p>` : ""}
     ${renderResearchContext({...result,run_id:runIdentity})}

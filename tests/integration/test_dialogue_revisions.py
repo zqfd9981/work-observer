@@ -12,7 +12,7 @@ from work_observer.connectors.public_documents import PublicDocumentService
 from work_observer.quality.reviews import QualityReviewService
 from work_observer.reports.results import render
 from work_observer.research.agent import TOOLS, method_fingerprint, research
-from work_observer.research.dialogue import POLICY, DialogueAnswer, tools, validate
+from work_observer.research.dialogue import POLICY, VERSION, DialogueAnswer, tools, validate
 from work_observer.research.projects import ProjectService, execute_project
 from work_observer.research.store import ResearchStore
 
@@ -126,7 +126,7 @@ def test_three_turn_reopened_conversation_carries_pending_revision_without_a_map
         second = reopened.get(project["steps"][1]["run_id"])["result"]
         revision = second["cognition_revisions"][0]
         assert second["status"] == "completed" and "work_map" not in second
-        assert second["dialogue_revisions_version"] == "standard-dialogue-v1"
+        assert second["dialogue_revisions_version"] == VERSION
         assert revision["previous_statement"] == first["claims"][0]["text"]
         assert revision["previous_review_state"] == "waiting_review"
         assert revision["evidence_relation"] == "reread"
@@ -283,7 +283,7 @@ def test_legacy_checkpoint_keeps_its_original_finish_contract(source_workspace):
     frozen["result"]["research_method_sha256"] = method_fingerprint(coverage_mode="question")
     frozen["result"]["research_method_version"] = frozen["result"][
         "research_method_version"
-    ].replace("-standard-dialogue-v1", "")
+    ].replace("-" + VERSION, "")
     frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(POLICY, "")
     store.checkpoint(run["id"], frozen)
     store.save(run["id"], result=frozen["result"])

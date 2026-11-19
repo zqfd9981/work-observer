@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from test_question_scope import PublicToolModel, SubsetModel
 from test_source_first_research import source_workspace as source_workspace
 from test_web import web as web
 from typer.testing import CliRunner
@@ -239,3 +240,34 @@ def test_materials_only_cli_uses_local_archive_without_jobs(
     assert store.list()[0]["result"]["scope"]["jobs"] == []
     assert "归档资料范围：1份归档正文" in response.output
     assert "粘贴工作资料" in response.output
+
+
+@pytest.mark.parametrize("web_only", [False, True])
+def test_scope_notice_describes_read_sources_instead_of_unused_pasted_material(
+    source_workspace, tmp_path, monkeypatch, web_only
+):
+    repo, _, jobs = source_workspace
+    service = PublicDocumentService(repo, tmp_path / "materials")
+    service.archive_text("未用于本题的合成资料", "交付事项", "合成说明")
+    if web_only:
+
+        async def fetch(url):
+            return 200, {"content-type": "text/plain"}, b"checkpoint documentation."
+
+        monkeypatch.setattr(public_documents, "pinned_request", fetch)
+        asyncio.run(service.read("https://example.com/docs"))
+    result = asyncio.run(
+        research(
+            repo,
+            "checkpoint" if web_only else "接口任务",
+            Settings(),
+            job_ids=[] if web_only else jobs[:1],
+            coverage_mode="question",
+            max_calls=3,
+            model=PublicToolModel("tool") if web_only else SubsetModel(),
+        )
+    )
+    assert result["status"] == "completed"
+    assert all(ev.get("evidence_kind") != "work_material" for ev in result["evidence"])
+    assert all("粘贴材料" not in gap for gap in result["gaps"])
+    assert "公开正文" in result["gaps"][0] if web_only else "不代表全市场" in result["gaps"][0]

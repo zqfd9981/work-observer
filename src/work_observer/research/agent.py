@@ -879,6 +879,8 @@ async def _research(
                 "标题只用于定位，须检索并引用原文；来源说明不等于独立核实或执行结果。"
             )
     has_work_materials = bool(work_material_ids)
+    from work_observer.research.dialogue import VERSION as dialogue_version
+
     dialogue_enabled = approach == "standard" and bool(
         (conversation_context or {}).get("previous_findings")
     )
@@ -887,9 +889,10 @@ async def _research(
         has_work_materials = bool(
             frozen.get("result", {}).get("scope", {}).get("work_material_ids")
         )
-        dialogue_enabled = (
-            frozen.get("result", {}).get("dialogue_revisions_version") == "standard-dialogue-v1"
-        )
+        frozen_dialogue = frozen.get("result", {}).get("dialogue_revisions_version")
+        if frozen_dialogue and frozen_dialogue != dialogue_version:
+            raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
+        dialogue_enabled = frozen_dialogue == dialogue_version
     validation = (
         qualification.guard_contract()
         if _qualification_guard == qualification.CURRENT_GUARD
@@ -915,7 +918,7 @@ async def _research(
     if has_work_materials:
         method_version += "-work-materials-v1"
     if dialogue_enabled:
-        method_version += "-standard-dialogue-v1"
+        method_version += "-" + dialogue_version
     result = {
         "format_version": 1,
         "research_method_version": method_version,
@@ -970,7 +973,7 @@ async def _research(
         },
     }
     if dialogue_enabled:
-        result["dialogue_revisions_version"] = "standard-dialogue-v1"
+        result["dialogue_revisions_version"] = dialogue_version
     if validation:
         result["qualification_validation"] = validation
     if memory is None:
@@ -2123,6 +2126,16 @@ async def _research(
 def finalize(result):
     """固定复盘只检查可计算合同，不以结构合格声称语义正确。"""
     evidence = {ev["id"]: ev for ev in result["evidence"]}
+    manual_read = any(ev.get("evidence_kind") == "work_material" for ev in evidence.values())
+    if evidence and not manual_read:
+        scope_notice = (
+            JOB_SCOPE_NOTICE
+            if any(ev.get("job_id") for ev in evidence.values())
+            else PUBLIC_SCOPE_NOTICE
+        )
+        result["gaps"] = [
+            scope_notice if gap == MATERIAL_SCOPE_NOTICE else gap for gap in result["gaps"]
+        ]
     used = {key for claim in result["claims"] for key in claim["evidence_ids"]}
     public_only = bool(result["scope"].get("source_note")) and not result["scope"]["jobs"]
     if result.get("coverage_mode") == "question":
@@ -2150,7 +2163,7 @@ def finalize(result):
                 "name": "来源分开",
                 "passed": True,
                 "detail": "岗位原文、公开网页、粘贴资料与既往认识分别标明；原文来源不等于执行核实。"
-                if result["scope"].get("work_material_ids")
+                if manual_read
                 else "公开正文、搜索摘要与既往认识各自标明；研究推断不是独立来源。"
                 if public_only
                 else "招聘原文、人工资料、公开搜索摘要及既往记忆各自标明；分析不是新增来源。",

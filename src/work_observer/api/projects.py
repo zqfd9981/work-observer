@@ -158,6 +158,8 @@ def project_routes(
                 step["result"] = (
                     {**result, "audit": audit_result(result, repository())} if result else None
                 )
+                if result and (report_id := (run.get("saved") or {}).get("report_id")):
+                    step["result"]["report_id"] = report_id
                 if result and result.get("status") == "completed":
                     reviews = QualityReviewService(store(), repository()).list_run(step["run_id"])
                     latest = next((r for r in reviews if not r["stale_result"]), None)
