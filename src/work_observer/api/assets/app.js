@@ -755,19 +755,47 @@ function updateConversationAllocation(project) {
   $("#conversation-limit").textContent=allocation.issue||(offline?"本轮只整理原文，不调用模型。":`本轮最多使用 ${allocation.maxCalls} 次调用、${allocation.timeout} 秒。`)+"沿用本研究的资料范围；旧判断仍需核对，不会自动当成事实。";
 }
 
+const conversationSendKeys=new Map(),conversationSending=new Set();
+
 async function askResearchConversation(question, options={}) {
+  const id=conversation.id;
+  if(conversationSending.has(id))throw new Error("这条问题正在发送，请稍候。");
+  conversationSending.add(id);
+  try{return await sendResearchConversation(question,options);}
+  finally{conversationSending.delete(id);}
+}
+
+async function sendResearchConversation(question, options={}) {
   const project = await api("projects/"+encodeURIComponent(conversation.id));
-  if (project.worker_running) throw new Error("正在调查，请等本轮结束后继续追问。");
   const offline=options.offline ?? $("#offline").checked;
-  const allocation=conversationAllocation(project,offline,options.allowPublic??$("#allow-public").checked);
+  const allowPublic=(options.allowPublic??$("#allow-public").checked)&&!offline;
+  const receiptKey="wo-pending-question:"+project.id;
+  const pending=conversationSendKeys.get(project.id)||sessionStorage.getItem(receiptKey);
+  const saved=project.steps?.find(step=>step.key===pending);
+  if(saved){
+    if(saved.question!==question.trim()||saved.offline!==offline||Boolean(saved.allow_public)!==allowPublic)throw new Error("上一条问题已保存，请先查看或继续原调查，再发送其他问题。");
+    if(saved.scope_version!=null&&project.scope_version!=null&&saved.scope_version!==project.scope_version)throw new Error("原问题已保存，但资料范围已变化，请先在项目记录中处理原步骤。");
+    if(!project.worker_running&&["queued","interrupted"].includes(saved.state))await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
+    conversation.replyToStepId=undefined;
+    await openResearchConversation(project.id);
+    conversationSendKeys.delete(project.id);sessionStorage.removeItem(receiptKey);
+    return;
+  }
+  if(project.worker_running)throw new Error("正在调查，请等本轮结束后继续追问。");
+  const allocation=conversationAllocation(project,offline,allowPublic);
   if(allocation.issue)throw new Error(allocation.issue);
   const supportsQuestionScope=(state.serviceContract?.components?.schemas?.StepInput?.properties?.coverage_mode?.enum || []).includes("question");
   const supportsReplies=Boolean(state.serviceContract?.components?.schemas?.StepInput?.properties?.reply_to_step_id);
   const replyTo=conversation.replyToStepId===undefined ? defaultConversationReply(project) : conversation.replyToStepId;
-  await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:project.job_ids?.length===0?"question":state.researchIds?.length?"all":"question"}:{}),completion:"回答本次问题，查阅适用范围原文，说明解释、未知及后续核实方向。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key:crypto.randomUUID()})});
+  const key=pending||crypto.randomUUID();
+  conversationSendKeys.set(project.id,key);sessionStorage.setItem(receiptKey,key);
+  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:project.job_ids?.length===0?"question":state.researchIds?.length?"all":"question"}:{}),completion:"回答本次问题，查阅适用范围原文，说明解释、未知及后续核实方向。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
+  const acceptedStep=accepted.steps?.find(step=>step.key===key);
+  if(acceptedStep&&(acceptedStep.question!==question.trim()||acceptedStep.offline!==offline||Boolean(acceptedStep.allow_public)!==allocation.allowPublic))throw new Error("原问题已经保存且设置不同，请先查看原调查，未自动开始新调用。");
   await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
   conversation.replyToStepId=undefined;
   await openResearchConversation(project.id);
+  conversationSendKeys.delete(project.id);sessionStorage.removeItem(receiptKey);
 }
 
 async function openResearchConversation(id, navigate=true) {
