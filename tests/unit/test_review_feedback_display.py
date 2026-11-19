@@ -14,6 +14,7 @@ import pytest
         "project_feedback_display.cjs",
         "research_conversation.cjs",
         "research_application.cjs",
+        "action_feedback.cjs",
         "public_versions.cjs",
     ],
 )

@@ -940,6 +940,16 @@ class ProjectService:
                 read_evidence_ids=[e["id"] for e in result.get("evidence", [])],
                 coverage_mode=result.get("coverage_mode", "all"),
             )
+            if previous["id"] == reply_id and result.get("application_plan"):
+                item["application_plan"] = result["application_plan"]
+                item["application_plan_note"] = (
+                    "这是原研究的建议，不是已执行事实或能力证明；实际回报须读本轮归档原文。"
+                )
+                if len(json.dumps(context, ensure_ascii=False)) + len(
+                    json.dumps(item, ensure_ascii=False)
+                ) > 14000:
+                    item.pop("application_plan")
+                    item["application_plan_note"] = "原建议超出本轮上下文限额，未带入，不能补造。"
             dependencies = [*result.get("memory_used", []), *result.get("context_memory_used", [])]
             saved_dependencies = context["memory_dependencies"][:]
             saved_knowledge = context["knowledge_dependencies"][:]
@@ -974,6 +984,8 @@ class ProjectService:
             item["derived_claims"].sort(key=lambda claim: claim["previous_claim_index"])
             if previous["id"] == reply_id:
                 context["reply_to"]["findings_included"] = True
+                if result.get("application_plan"):
+                    context["reply_to"]["application_plan_included"] = "application_plan" in item
         return context
 
 

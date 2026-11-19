@@ -540,9 +540,9 @@ function renderWorkMap(result, evidence) {
   return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${map.work_types.map(row=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details></article>`).join("")}<h2>任务与能力关系</h2>${map.ability_relations.map(row=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details></article>`).join("")}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map(text=>`<li>${e(text)}</li>`).join("")}</ul></section>`;
 }
 
-function renderApplicationPlan(result,evidence) {
+function renderApplicationPlan(result,evidence,replyStepId=null) {
   const plan=result.application_plan;if(!plan?.actions?.length)return "";
-  return `<section class="detail-section"><h2>应用行动 · 研究建议</h2><p class="form-note">目标：${e(plan.goal)} · 采用第 ${e(plan.background_version)} 版个人背景。${e(plan.constraints?"投入与限制："+plan.constraints:"投入限制未说明。")}</p><p class="form-note">${e(plan.notice)} 行动建议仍需结合实际核对，判断审核不代表行动效果已验证。</p><ol>${plan.actions.map(action=>`<li class="detail-section"><h3>${e(action.title)}</h3><p>针对任务或能力：${e(action.task_or_ability)}</p><p><strong>交付物：</strong>${e(action.deliverable)}</p><p><strong>完成检查：</strong>${e(action.completion_check)}</p>${action.assumptions?.length?`<p class="form-note">需要确认的前提：${action.assumptions.map(e).join("；")}</p>`:""}${action.evidence_ids.map(id=>evidence.has(id)?`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`:"").join("")}</li>`).join("")}</ol>${plan.open_questions?.length?`<h3>行动前还需明确</h3><ul>${plan.open_questions.map(text=>`<li>${e(text)}</li>`).join("")}</ul>`:""}</section>`;
+  return `<section class="detail-section"><h2>应用行动 · 研究建议</h2><p class="form-note">目标：${e(plan.goal)} · 采用第 ${e(plan.background_version)} 版个人背景。${e(plan.constraints?"投入与限制："+plan.constraints:"投入限制未说明。")}</p><p class="form-note">${e(plan.notice)} 行动建议仍需结合实际核对，判断审核不代表行动效果已验证。</p><ol>${plan.actions.map((action,index)=>`<li class="detail-section"><h3>${e(action.title)}</h3><p>针对任务或能力：${e(action.task_or_ability)}</p><p><strong>交付物：</strong>${e(action.deliverable)}</p><p><strong>完成检查：</strong>${e(action.completion_check)}</p>${action.assumptions?.length?`<p class="form-note">需要确认的前提：${action.assumptions.map(e).join("；")}</p>`:""}${action.evidence_ids.map(id=>evidence.has(id)?`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`:"").join("")}${replyStepId?`<button type="button" class="secondary small" data-action-feedback-step="${e(replyStepId)}" data-action-feedback-index="${index}">回报尝试结果 ↗</button>`:""}</li>`).join("")}</ol>${plan.open_questions?.length?`<h3>行动前还需明确</h3><ul>${plan.open_questions.map(text=>`<li>${e(text)}</li>`).join("")}</ul>`:""}</section>`;
 }
 
 function renderResult(result, target, runId = null, replyStepId = null) {
@@ -560,7 +560,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
     ${renderArchiveComparisons(result)}
     ${renderWorkMap(result,evidence)}
     ${renderCognitiveRevisions(result,evidence)}
-    ${renderApplicationPlan(result,evidence)}
+    ${renderApplicationPlan(result,evidence,replyStepId)}
     ${renderSourceFindings(result,evidence)}
     ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
     ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${replyStepId ? `<button class="text-button" data-conversation-claim="${e(claim.text)}" data-reply-step="${e(replyStepId)}">针对这条判断继续核实 ↗</button>` : ""}${badge(claimBasisLabel(claim),"muted")} ${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${runIdentity && result.status === "completed" && claim.evidence_ids.every(id=>evidence.get(id)?.public_document_id || (evidence.get(id)?.document_id && evidence.get(id)?.snapshot_id)) ? `<button class="text-button" data-knowledge-run="${e(runIdentity)}" data-claim-index="${index}">留作知识候选 ＋</button>` : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}
@@ -769,6 +769,7 @@ async function openResearchConversation(id, navigate=true) {
   const draft=same ? $("#conversation-question")?.value || "" : "";
   const contextDraft=same ? $("#conversation-context-content")?.value || "" : "";
   const publicDraft=same ? $("#conversation-public-url")?.value || "" : "";
+  if(same)captureActionFeedback(id);
   const applicationDraft=same ? {
     memoryId:$("#application-memory-id")?.value || "",
     background:$("#application-background")?.value || "",
@@ -784,13 +785,13 @@ async function openResearchConversation(id, navigate=true) {
   } : {};
   const contextKind=same ? $("#conversation-context [name=kind]")?.value || "preference" : "preference";
   conversation.renderedId=id;
-  const active=same && ["conversation-question","conversation-context-content","conversation-public-url","conversation-material-title","conversation-material-source","conversation-material-text","application-background","application-goal","application-constraints"].includes(document.activeElement?.id) ? document.activeElement.id : null;
+  const active=same && ["conversation-question","conversation-context-content","conversation-public-url","conversation-material-title","conversation-material-source","conversation-material-text","application-background","application-goal","application-constraints","action-feedback-did","action-feedback-observed","action-feedback-artifact"].includes(document.activeElement?.id) ? document.activeElement.id : null;
   const selection=active ? [$("#"+active).selectionStart,$("#"+active).selectionEnd] : null;
   const offline=same ? $("#conversation-offline").checked : project.steps.at(-1)?.offline ?? $("#offline").checked;
   const allowPublic=same ? $("#conversation-allow-public").checked : project.steps.at(-1)?.allow_public ?? $("#allow-public").checked;
   const exhausted=Boolean(conversationAllocation(project,offline,allowPublic).issue);
   if(project.state==="invalidated"){root.innerHTML=empty("这项研究已忘记","可以从左侧开始新问题。");setBusy(false);return;}
-  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}</article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
+  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}${renderActionFeedback(project)}</article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
   $("#conversation-offline").addEventListener("change",()=>updateConversationAllocation(project));
   $("#conversation-allow-public").addEventListener("change",()=>updateConversationAllocation(project));
   updateConversationAllocation(project);
@@ -953,6 +954,115 @@ document.addEventListener("click",async event=>{
 });
 
 const conversationMaterialReceipts = new Map();
+const actionFeedbackSelections = new Map(),actionFeedbackDrafts = new Map(),actionFeedbackSaving = new Set();
+
+function currentActionFeedback(projectId) {
+  if(!actionFeedbackSelections.has(projectId)){
+    let saved=null;try{saved=JSON.parse(sessionStorage.getItem("wo-action-feedback:"+projectId)||"null");}catch{}
+    if(saved&&/^[a-f0-9]{32}$/.test(saved.stepId)&&/^[a-f0-9]{32}$/.test(saved.runId)&&Number.isInteger(saved.index)&&saved.index>=0&&saved.index<3&&(!saved.documentId||/^[a-f0-9]{32}$/.test(saved.documentId)))actionFeedbackSelections.set(projectId,saved);
+  }
+  const selection=actionFeedbackSelections.get(projectId);if(!selection)return null;
+  const key=projectId+":"+selection.stepId+":"+selection.index;
+  if(!actionFeedbackDrafts.has(key))actionFeedbackDrafts.set(key,{...selection,did:"",observed:"",artifact:""});
+  return actionFeedbackDrafts.get(key);
+}
+
+function rememberActionFeedback(projectId,draft) {
+  const receipt={stepId:draft.stepId,runId:draft.runId,index:draft.index,documentId:draft.documentId||null,attached:Boolean(draft.attached)};
+  actionFeedbackSelections.set(projectId,receipt);
+  sessionStorage.setItem("wo-action-feedback:"+projectId,JSON.stringify(receipt));
+}
+
+function captureActionFeedback(projectId) {
+  const draft=currentActionFeedback(projectId);
+  if(!draft||draft.documentId)return;
+  if($("#action-feedback-form")?.dataset?.actionFeedbackKey!==projectId+":"+draft.stepId+":"+draft.index)return;
+  for(const key of ["did","observed","artifact"]){const input=$("#action-feedback-"+key);if(input)draft[key]=input.value;}
+}
+
+function renderActionFeedback(project) {
+  const draft=currentActionFeedback(project.id);if(!draft)return "";
+  const step=project.steps.find(step=>step.id===draft.stepId&&step.run_id===draft.runId);
+  const action=step?.result?.application_plan?.actions?.[draft.index];
+  if(!action)return '<p class="form-note">原行动建议当前无法读取，回报草稿保留；请从可查看的原建议继续。</p>';
+  return `<details id="action-feedback-panel" class="detail-section" open><summary>回报尝试结果 · ${e(action.title)}</summary><form id="action-feedback-form" data-action-feedback-key="${e(project.id+':'+draft.stepId+':'+draft.index)}">${draft.documentId?`<p class="form-note">尝试记录已保存。${draft.attached?"已加入本研究，可继续核实。":"尚未加入本研究，可直接重试，无需再次保存。"}</p><button type="button" class="text-button" data-public-source="${e(draft.documentId)}">核对尝试记录原文 ↗</button>`:`<label>实际尝试了什么<textarea id="action-feedback-did" name="did" rows="3" maxlength="4000" required>${e(draft.did)}</textarea></label><label>观察结果或遇到的问题<textarea id="action-feedback-observed" name="observed" rows="3" maxlength="4000" required>${e(draft.observed)}</textarea></label><label>产出或核验原文（可选）<textarea id="action-feedback-artifact" name="artifact" rows="4" maxlength="50000" placeholder="粘贴实际取得的产出、测试记录或错误信息；没有就留空。">${e(draft.artifact)}</textarea></label>`}<button class="secondary" ${project.worker_running||actionFeedbackSaving.has(project.id)?"disabled":""}>${draft.documentId?"加入记录并准备追问":"保存尝试记录并准备追问"}</button><p class="form-note">记录为用户自述，未独立核实；建议不会自动标成完成或能力证明。保存不调用模型，也不自动执行外部动作。</p>${draft.documentId?`<button type="button" class="text-button" data-action-feedback-new ${actionFeedbackSaving.has(project.id)?'disabled':''}>记录另一次尝试</button>`:""}</form></details>`;
+}
+
+async function selectActionFeedback(stepId,index) {
+  const project=conversation.project,step=project?.steps.find(step=>step.id===stepId);
+  if(actionFeedbackSaving.has(project?.id))throw new Error("尝试记录正在保存，请稍候再切换。");
+  if(!step?.result?.application_plan?.actions?.[index]||!Number.isInteger(index))throw new Error("无法读取这条原建议，请先刷新研究。");
+  captureActionFeedback(project.id);
+  actionFeedbackSelections.set(project.id,{stepId,index,runId:step.run_id});
+  rememberActionFeedback(project.id,currentActionFeedback(project.id));
+  await openResearchConversation(project.id,false);
+  $("#action-feedback-panel").scrollIntoView({block:"center",behavior:"smooth"});
+}
+
+async function saveActionFeedback(did="",observed="",artifact="") {
+  const projectId=conversation.id;
+  if(actionFeedbackSaving.has(projectId))throw new Error("尝试记录正在保存，请稍候。");
+  actionFeedbackSaving.add(projectId);
+  try{return await saveSelectedActionFeedback(did,observed,artifact);}
+  finally{
+    actionFeedbackSaving.delete(projectId);
+    if(conversation.id===projectId){
+      const form=$("#action-feedback-form"),submit=form?.querySelector('button:not([type="button"])'),another=form?.querySelector("[data-action-feedback-new]");
+      if(submit)submit.disabled=Boolean(conversation.project?.worker_running);
+      if(another)another.disabled=Boolean(conversation.project?.worker_running);
+    }
+  }
+}
+
+async function saveSelectedActionFeedback(did="",observed="",artifact="") {
+  const projectId=conversation.id,draft=currentActionFeedback(projectId);
+  if(!draft)throw new Error("请先选择要回报的行动建议。");
+  if(!draft.documentId){
+    draft.did=did;draft.observed=observed;draft.artifact=artifact;
+    if(!did.trim()||!observed.trim())throw new Error("请说明实际尝试和观察结果；尚未开始也请如实说明。");
+    if(did.length>4000||observed.length>4000||artifact.length>50000)throw new Error("内容超出长度，请精简后再保存。");
+  }
+  const project=await api("projects/"+encodeURIComponent(projectId));
+  if(project.worker_running)throw new Error("请等当前调查结束后再保存回报；输入仍保留。");
+  const step=project.steps.find(step=>step.id===draft.stepId&&step.run_id===draft.runId);
+  if(!step?.result?.application_plan?.actions?.[draft.index])throw new Error("原建议已不可读取，当前回报保留，未自动另建资料。");
+  if(conversation.id!==projectId)return;
+  if(!draft.documentId){
+    const text=`用户尝试记录（用户自述，未独立核实）\n回应研究：${draft.runId}\n回应建议序号：${draft.index+1}\n记录编号只用于关联，不是执行或能力证明。\n\n实际尝试（用户自述）：\n${draft.did}\n\n观察结果（用户自述）：\n${draft.observed}\n\n产出或核验原文（用户粘贴，未独立核实）：\n${draft.artifact||"未提供"}`;
+    const result=await api("work-materials",{method:"POST",body:JSON.stringify({title:"行动尝试记录 · 建议"+(draft.index+1),text,source_name:"用户自行回报的尝试与观察，未经独立核实"})});
+    draft.documentId=result.document.id;rememberActionFeedback(projectId,draft);
+    rememberConversationMaterial(projectId,result.document);
+    if(conversation.id===projectId)await openResearchConversation(projectId,false);
+  }
+  await attachConversationArchivedMaterial(projectId,draft.documentId);
+  draft.attached=true;rememberActionFeedback(projectId,draft);
+  rememberConversationMaterial(projectId,{id:draft.documentId,title:"行动尝试记录 · 建议"+(draft.index+1),evidence_kind:"work_material"},true);
+  if(conversation.id!==projectId)return;
+  conversation.replyToStepId=draft.stepId;
+  const input=$("#conversation-question"),prompt=`请重新核实上面第 ${draft.index+1} 条行动建议，并查阅刚加入的尝试记录（归档编号 ${draft.documentId}）。旧建议只是研究推断，用户尝试记录是自述；先区分实际提供的产出或核验原文与尚未验证的说法。只在项目上下文确实带出原行动时回看它；未带出则说明缺口，不根据编号补造内容。原建议的动作、产物和完成检查哪些得到支持、遇到反例或需要调整？给出下一步最必要的验证，不把一次自述、工具使用或测试记录概括为已具备岗位能力。`;
+  if(!input.value.includes(prompt)){
+    if(input.value.length+prompt.length+2>4000)throw new Error("尝试记录已保存并加入；下方追问过长，请精简后再次准备。");
+    input.value+=(input.value.trim()?"\n\n":"")+prompt;
+  }
+  await openResearchConversation(projectId,false);
+  $("#conversation-question").focus();
+}
+
+document.addEventListener("click",async event=>{
+  const selected=event.target.closest("[data-action-feedback-step]"),another=event.target.closest("[data-action-feedback-new]");
+  try{
+    if(selected)await selectActionFeedback(selected.dataset.actionFeedbackStep,Number(selected.dataset.actionFeedbackIndex));
+    if(another){const draft=currentActionFeedback(conversation.id);if(!draft)return;draft.documentId=null;draft.attached=false;draft.did="";draft.observed="";draft.artifact="";rememberActionFeedback(conversation.id,draft);await openResearchConversation(conversation.id,false);}
+  }catch(error){notify(error.message,true);}
+});
+
+document.addEventListener("submit",async event=>{
+  if(event.target.id!=="action-feedback-form")return;
+  event.preventDefault();const form=event.target,button=event.submitter||form.querySelector('button:not([type="button"])');button.disabled=true;
+  try{await saveActionFeedback(form.elements.did?.value||"",form.elements.observed?.value||"",form.elements.artifact?.value||"");notify("尝试记录已保存，可以继续核实原建议。保存未调用模型。");}
+  catch(error){notify(error.message,true);}
+  finally{button.disabled=false;}
+});
 
 function materialReceipts(projectId) {
   if(!conversationMaterialReceipts.has(projectId)){
