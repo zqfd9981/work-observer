@@ -639,6 +639,7 @@ async function openResearchConversation(id, navigate=true) {
     conversation.notesFor=id;
   }
   const publicReadSupported=Boolean(state.serviceContract?.paths?.["/api/public-documents"]?.post);
+  const materialWriteSupported=Boolean(state.serviceContract?.paths?.["/api/work-materials"]?.post);
   const root=$("#research-output");
   const same=conversation.renderedId===id;
   conversation.project=project;
@@ -646,15 +647,21 @@ async function openResearchConversation(id, navigate=true) {
   const draft=same ? $("#conversation-question")?.value || "" : "";
   const contextDraft=same ? $("#conversation-context-content")?.value || "" : "";
   const publicDraft=same ? $("#conversation-public-url")?.value || "" : "";
+  const materialDraft=same ? {
+    title:$("#conversation-material-title")?.value || "",
+    source:$("#conversation-material-source")?.value || "",
+    text:$("#conversation-material-text")?.value || "",
+    open:$("#conversation-material-panel")?.open || false,
+  } : {};
   const contextKind=same ? $("#conversation-context [name=kind]")?.value || "preference" : "preference";
   conversation.renderedId=id;
-  const active=same && ["conversation-question","conversation-context-content","conversation-public-url"].includes(document.activeElement?.id) ? document.activeElement.id : null;
+  const active=same && ["conversation-question","conversation-context-content","conversation-public-url","conversation-material-title","conversation-material-source","conversation-material-text"].includes(document.activeElement?.id) ? document.activeElement.id : null;
   const selection=active ? [$("#"+active).selectionStart,$("#"+active).selectionEnd] : null;
   const offline=same ? $("#conversation-offline").checked : project.steps.at(-1)?.offline ?? $("#offline").checked;
   const allowPublic=same ? $("#conversation-allow-public").checked : project.steps.at(-1)?.allow_public ?? $("#allow-public").checked;
   const exhausted=Boolean(conversationAllocation(project,offline,allowPublic).issue);
   if(project.state==="invalidated"){root.innerHTML=empty("这项研究已忘记","可以从左侧开始新问题。");setBusy(false);return;}
-  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(note.content)}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details></article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
+  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(note.content)}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details></article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
   $("#conversation-offline").addEventListener("change",()=>updateConversationAllocation(project));
   $("#conversation-allow-public").addEventListener("change",()=>updateConversationAllocation(project));
   updateConversationAllocation(project);
@@ -714,19 +721,110 @@ document.addEventListener("click",async event=>{
   try{await api("projects/"+conversation.id+(pause?"/pause":"/run"),{method:"POST",body:"{}"});await openResearchConversation(conversation.id);}catch(error){notify(error.message,true);}
 });
 
+const conversationMaterialReceipts = new Map();
+
+function materialReceipts(projectId) {
+  if(!conversationMaterialReceipts.has(projectId)){
+    let saved=[];
+    try{saved=JSON.parse(sessionStorage.getItem("wo-material-receipts:"+projectId)||"[]");}catch{}
+    conversationMaterialReceipts.set(projectId,Array.isArray(saved)?saved.filter(item=>item&&/^[a-f0-9]{32}$/.test(item.id)&&typeof item.title==="string").slice(-20):[]);
+  }
+  return conversationMaterialReceipts.get(projectId);
+}
+
+function rememberConversationMaterial(projectId,document,attached=false) {
+  const rows=materialReceipts(projectId),previous=rows.find(item=>item.id===document.id);
+  if(previous)previous.attached=attached;
+  else rows.push({id:document.id,title:document.title,attached,evidence_kind:document.evidence_kind});
+  sessionStorage.setItem("wo-material-receipts:"+projectId,JSON.stringify(rows.slice(-20)));
+}
+
+function renderConversationMaterialReceipts(projectId) {
+  return materialReceipts(projectId).slice(-20).reverse().map(item=>`<div class="detail-history"><strong>${e(item.title)}</strong><p class="form-note">${item.attached?"已加入本研究，可在下一轮查阅。":"原文已保存，尚未加入本研究；可重试加入，无需再次保存。"}</p><button type="button" class="text-button" data-public-source="${e(item.id)}">核对归档原文 ↗</button>${item.attached?"":`<button type="button" class="secondary small" data-attach-conversation-document="${e(item.id)}">加入当前研究</button>`}</div>`).join("");
+}
+
+function renderConversationMaterialForm(project,draft={}) {
+  return `<details id="conversation-material-panel" class="detail-section" ${draft.open?"open":""}><summary>补充工作资料</summary><form id="conversation-work-material"><label>资料标题<input id="conversation-material-title" name="title" value="${e(draft.title||"")}" required maxlength="300" placeholder="例如：项目说明、SOP、任务复盘"></label><label>来源说明<input id="conversation-material-source" name="source_name" value="${e(draft.source||"")}" maxlength="500" placeholder="保留资料出处；未知可留空"></label><label>原文内容<textarea id="conversation-material-text" name="text" rows="5" required maxlength="100000">${e(draft.text||"")}</textarea></label><button class="secondary" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}>保存并加入本研究</button><p class="form-note">粘贴资料与岗位、网页来源分别标记，来源说明未经独立核实。保存不调用模型，旧回答保留；下一轮再核对它支持或改变了什么。</p><p id="conversation-material-status" class="form-note" role="status"></p><div id="conversation-material-receipts">${renderConversationMaterialReceipts(project.id)}</div></form></details>`;
+}
+
+async function attachConversationArchivedMaterial(projectId,documentId) {
+  const project=await api("projects/"+encodeURIComponent(projectId));
+  if(project.worker_running)throw new Error("原文已保存。请先暂停当前调查，再加入本研究。");
+  if(project.public_document_ids!=null&&!project.public_document_ids.includes(documentId)){
+    if(project.public_document_ids.length>=20)throw new Error("原文已保存；本研究已选满20份归档资料，请调整范围或另建研究。");
+    await api("projects/"+project.id,{method:"PATCH",body:JSON.stringify({revision:project.revision,goal:project.goal,job_ids:project.job_ids,public_document_ids:[...project.public_document_ids,documentId]})});
+  }
+}
+
+function prefillMaterialFollowup(title) {
+  const input=$("#conversation-question");if(!input||input.value.trim())return;
+  input.value="结合刚补充的《"+title+"》继续核对：哪些旧判断得到支持，哪些需要修订？请区分原文、推断和未知。";
+}
+
+async function saveConversationWorkMaterial(title,text,source_name="") {
+  if(!title.trim()||!text.trim())throw new Error("请填写资料标题和原文。");
+  const projectId=conversation.id;
+  const result=await api("work-materials",{method:"POST",body:JSON.stringify({title:title.trim(),text,source_name:source_name.trim()})});
+  rememberConversationMaterial(projectId,result.document);
+  if(conversation.id===projectId){
+    for(const id of ["conversation-material-title","conversation-material-source","conversation-material-text"]){const input=$("#"+id);if(input)input.value="";}
+    $("#conversation-material-receipts").innerHTML=renderConversationMaterialReceipts(projectId);
+  }
+  await retryConversationMaterial(projectId,result.document.id);
+  return result;
+}
+
+document.addEventListener("submit",async event=>{
+  if(event.target.id!=="conversation-work-material")return;
+  event.preventDefault();
+  const form=event.target,projectId=conversation.id,button=form.querySelector("button"),status=$("#conversation-material-status");
+  if(conversation.materialSaving===projectId)return;
+  conversation.materialSaving=projectId;button.disabled=true;status.textContent="正在保存并加入研究…";
+  try{
+    await saveConversationWorkMaterial(form.elements.title.value,form.elements.text.value,form.elements.source_name.value);
+    if(conversation.id===projectId){status.textContent="已加入。下方可以继续追问，保存未调用模型。";await openResearchConversation(projectId,false);}
+  }catch(error){if(conversation.id===projectId)status.textContent=error.message;}
+  finally{
+    if(conversation.materialSaving===projectId)conversation.materialSaving=null;
+    button.disabled=false;
+    const current=conversation.id===projectId?$("#conversation-work-material button"):null;
+    if(current)current.disabled=Boolean(conversation.project?.worker_running);
+  }
+});
+
+async function retryConversationMaterial(projectId,id) {
+  await attachConversationArchivedMaterial(projectId,id);
+  const item=materialReceipts(projectId).find(row=>row.id===id);
+  if(item)rememberConversationMaterial(projectId,item,true);
+  if(conversation.id===projectId){
+    $("#conversation-material-receipts").innerHTML=renderConversationMaterialReceipts(projectId);
+    prefillMaterialFollowup(item?.title||"补充资料");
+  }
+}
+
+document.addEventListener("click",async event=>{
+  const button=event.target.closest("[data-attach-conversation-document]");if(!button)return;
+  const projectId=conversation.id,id=button.dataset.attachConversationDocument;
+  button.disabled=true;
+  try{
+    await retryConversationMaterial(projectId,id);
+    if(conversation.id===projectId)await openResearchConversation(projectId,false);
+  }catch(error){if(conversation.id===projectId)notify(error.message,true);}
+  finally{button.disabled=false;}
+});
+
 async function archiveConversationDocument(url) {
   const targetProject=conversation.id;
   const result=await api("public-documents",{method:"POST",body:JSON.stringify({url})});
   const document=result.document;
   if(conversation.id!==targetProject)return result;
-  const project=await api("projects/"+encodeURIComponent(targetProject));
-  if(project.public_document_ids!=null&&!project.public_document_ids.includes(document.id)){
-    if(project.worker_running)throw new Error("网页已归档，请暂停调查后再加入当前研究。");
-    if(project.public_document_ids.length>=20)throw new Error("网页已归档；本研究已选满20份归档资料，请另建研究。");
-    await api("projects/"+project.id,{method:"PATCH",body:JSON.stringify({revision:project.revision,goal:project.goal,job_ids:project.job_ids,public_document_ids:[...project.public_document_ids,document.id]})});
-  }
+  rememberConversationMaterial(targetProject,document);
+  const receipts=$("#conversation-material-receipts");if(receipts)receipts.innerHTML=renderConversationMaterialReceipts(targetProject);
+  await attachConversationArchivedMaterial(targetProject,document.id);
+  rememberConversationMaterial(targetProject,document,true);
+  if(receipts)receipts.innerHTML=renderConversationMaterialReceipts(targetProject);
   $("#conversation-public-status").innerHTML=`<p>已归档：<strong>${e(document.title)}</strong> · ${e(document.full_text_length)}字符</p><button type="button" class="text-button" data-public-source="${e(document.id)}">核对已归档全文 ↗</button><p class="form-note">来源 ${e(document.publisher)}；发布时间未知。${result.truncated?"归档保留全文，后续检索按片段读取。":""}</p>`;
-  $("#conversation-question").value="结合刚归档的《"+document.title+"》与岗位原文，当前解释有哪些得到支持，哪些仍缺证据？请分别说明来源和推断边界。";
+  if(!$("#conversation-question").value.trim())$("#conversation-question").value="结合刚归档的《"+document.title+"》与岗位原文，当前解释有哪些得到支持，哪些仍缺证据？请分别说明来源和推断边界。";
   return result;
 }
 

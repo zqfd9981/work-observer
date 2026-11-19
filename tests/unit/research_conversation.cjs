@@ -39,7 +39,7 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  await vm.runInContext('archiveConversationDocument("https://example.com/docs")',context);
  assert.ok(node("#conversation-public-status").innerHTML.includes("&lt;script&gt;合成文档"));
  assert.ok(!node("#conversation-public-status").innerHTML.includes("<script>"));
- assert.ok(node("#conversation-question").value.includes("结合刚归档"));
+ assert.ok(node("#conversation-question").value.includes("合成明确纠正")); // Adding sources preserves an existing question.
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,2);
 
  vm.runInContext('state.serviceContract={components:{schemas:{StepInput:{properties:{reply_to_step_id:{}}}}}};conversation.replyToStepId=undefined;api=async(path,options)=>{calls.push({path,options});return options?{}:{id:"project-1",revision:5,worker_running:false,steps:[{id:"a".repeat(32),state:"waiting_review"},{id:"b".repeat(32),state:"queued",offline:true}]};}',context);
@@ -134,6 +134,34 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.equal(node("#research-source-mode").value,"jobs");
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBeforeMaterial);
 
+ const runCountBeforePaste=context.calls.filter(c=>c.path.endsWith("/run")).length;
+ node("#conversation-question").value="我正在写的追问";
+ node("#conversation-material-title").value="<script>合成SOP</script>";
+ node("#conversation-material-text").value="\n保留原文和空行。\n";
+ node("#conversation-material-source").value="合成出处";
+ vm.runInContext('conversation.id="project-1";globalThis.attachFails=true;api=async(path,options)=>{calls.push({path,options});if(path==="work-materials")return {document:{id:"f".repeat(32),title:"<script>合成SOP</script>",evidence_kind:"work_material"}};if(options?.method==="PATCH"&&attachFails)throw new Error("合成并发冲突");return {id:"project-1",revision:12,goal:"合成",job_ids:[],public_document_ids:["d".repeat(32)],worker_running:false};}',context);
+ const savesBefore=context.calls.filter(c=>c.path==="work-materials").length;
+ await assert.rejects(vm.runInContext('saveConversationWorkMaterial("<script>合成SOP</script>","\\n保留原文和空行。\\n","合成出处")',context),/并发冲突/);
+ const savedRequest=JSON.parse(context.calls.filter(c=>c.path==="work-materials").at(-1).options.body);
+ assert.equal(savedRequest.text,"\n保留原文和空行。\n");
+ assert.ok(node("#conversation-material-receipts").innerHTML.includes("尚未加入本研究"));
+ assert.ok(node("#conversation-material-receipts").innerHTML.includes("&lt;script&gt;合成SOP"));
+ assert.equal(node("#conversation-material-text").value,""); // Raw text is already safely archived.
+ assert.equal(node("#conversation-question").value,"我正在写的追问");
+ vm.runInContext('attachFails=false',context);
+ await vm.runInContext('retryConversationMaterial("project-1","f".repeat(32))',context);
+ assert.equal(context.calls.filter(c=>c.path==="work-materials").length,savesBefore+1); // Retry only attaches.
+ const attached=JSON.parse(context.calls.filter(c=>c.options?.method==="PATCH").at(-1).options.body);
+ assert.deepEqual(attached.public_document_ids,["d".repeat(32),"f".repeat(32)]);
+ assert.equal(node("#conversation-question").value,"我正在写的追问");
+ assert.ok(node("#conversation-material-receipts").innerHTML.includes("已加入本研究"));
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runCountBeforePaste);
+ assert.equal(JSON.parse(storage.get("wo-material-receipts:project-1")).at(-1).attached,true);
+ vm.runInContext('globalThis.materialHtml=renderConversationMaterialForm({id:"project-1",worker_running:false},{title:"<script>草稿</script>",text:"</textarea><script>原文</script>",open:true})',context);
+ assert.ok(context.materialHtml.includes("&lt;/textarea&gt;&lt;script&gt;原文"));
+ assert.ok(context.materialHtml.includes('class="detail-section" open'));
+ assert.ok(!context.materialHtml.includes("<script>"));
+
  vm.runInContext(fs.readFileSync(require("node:path").join(require("node:path").dirname(process.argv[2]),"quality.js"),"utf8"),context);
  context.revisionRows=[{previous_run_id:"a".repeat(32),previous_claim_index:0,decision:"revise",previous_statement:"<b>旧解释</b>",new_statements:["新的解释"],reason:"重读原文纠正",previous_review_state:"waiting_review",evidence_relation:"reread",evidence_ids:[]}];
  const correctionHtml=vm.runInContext('renderQualityMap({cognition_revisions:revisionRows})',context);
@@ -149,5 +177,19 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(node("#research-output").innerHTML.includes("只整理原文，不调用模型"));
  assert.ok(!node("#research-output").innerHTML.includes("继续未完成的调查"));
  assert.ok(node("div").innerHTML.includes("沿着这些疑问继续查"));
+ vm.runInContext('state.serviceContract={paths:{"/api/work-materials":{post:{}}}};conversationMaterialReceipts.delete("project-1")',context);
+ node("#conversation-material-title").value="正在写的SOP标题";
+ node("#conversation-material-source").value="明确出处";
+ node("#conversation-material-text").value="</textarea>还没提交的原文";
+ node("#conversation-material-panel").open=true;
+ await vm.runInContext('openResearchConversation("project-1",false)',context);
+ const refreshed=node("#research-output").innerHTML;
+ assert.ok(refreshed.includes('id="conversation-work-material"'));
+ assert.ok(refreshed.includes('value="正在写的SOP标题"'));
+ assert.ok(refreshed.includes("&lt;/textarea&gt;还没提交的原文"));
+ assert.ok(refreshed.includes("原文已保存" )===false); // Completed attachment is restored from session storage.
+ assert.ok(refreshed.includes("已加入本研究，可在下一轮查阅"));
+ assert.ok(refreshed.includes('id="conversation-material-panel" class="detail-section" open'));
+
 
 })().catch(error=>{console.error(error);process.exitCode=1;});

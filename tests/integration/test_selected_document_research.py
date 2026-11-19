@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 from test_source_first_research import source_workspace as source_workspace
@@ -248,3 +249,76 @@ def test_api_selection_validated_and_empty_is_not_all(web):
             },
         )
         assert response.status_code in {400, 404, 422}
+
+
+def test_mid_conversation_pasted_material_only_enters_following_round(web):
+    client, headers, _, _ = web
+
+    def save(title, text):
+        response = client.post(
+            "/api/work-materials",
+            headers=headers,
+            json={"title": title, "text": text, "source_name": "合成来源，非真实企业资料"},
+        )
+        assert response.status_code == 201
+        return response.json()["document"]["id"]
+
+    def run(project, question):
+        added = client.post(
+            f"/api/projects/{project['id']}/steps",
+            headers=headers,
+            json={
+                "revision": project["revision"],
+                "question": question,
+                "offline": True,
+                "coverage_mode": "question",
+            },
+        )
+        assert added.status_code == 201
+        response = client.post(f"/api/projects/{project['id']}/run", headers=headers, json={})
+        assert response.status_code == 202
+        for _ in range(100):
+            detail = client.get(f"/api/projects/{project['id']}").json()
+            if not detail["worker_running"] and detail["steps"][-1].get("run_id"):
+                return detail
+            time.sleep(0.01)
+        pytest.fail("合成离线调查未结束")
+
+    first = save("合成项目说明", "接口开发任务，责任边界未说明。")
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "title": "合成补资料追问",
+            "goal": "接口任务与权限",
+            "job_ids": [],
+            "public_document_ids": [first],
+            "max_rounds": 2,
+        },
+    ).json()
+    project = run(project, "先整理已有接口任务原文")
+    first_run = project["steps"][0]["run_id"]
+    previous = client.get("/api/research/" + first_run).json()["result"]
+    text = "\n合成SOP：接口上线需平台负责人复核。\n执行结果尚未记录。\n"
+    second = save("合成SOP补充", text)
+    assert client.get("/api/public-documents/" + second).json()["text"] == text
+    # Saving alone neither starts a model nor changes the project's fixed selection.
+    unchanged = client.get("/api/projects/" + project["id"]).json()
+    assert unchanged["public_document_ids"] == [first] and len(unchanged["steps"]) == 1
+    project = client.patch(
+        "/api/projects/" + project["id"],
+        headers=headers,
+        json={
+            "revision": project["revision"],
+            "goal": project["goal"],
+            "job_ids": [],
+            "public_document_ids": [first, second],
+        },
+    ).json()
+    project = run(project, "再整理SOP中的复核步骤与责任边界")
+    current = client.get("/api/research/" + project["steps"][1]["run_id"]).json()["result"]
+    assert current["model_calls"] == previous["model_calls"] == 0
+    assert {ev["public_document_id"] for ev in current["evidence"]} == {first, second}
+    assert all(ev["evidence_kind"] == "work_material" for ev in current["evidence"])
+    assert previous["scope"]["archived_public_ids"] == [first]
+    assert client.get("/api/research/" + first_run).json()["result"] == previous
