@@ -6,6 +6,7 @@ import ipaddress
 import re
 import socket
 import ssl
+from difflib import unified_diff
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import quote, urljoin, urlsplit
@@ -26,7 +27,7 @@ WORK_MATERIAL_PREFIX = "urn:work-observer:work-material:"
 
 def is_work_material(document):
     """Server-assigned identifiers distinguish pasted text from fetched HTTPS pages."""
-    return document.url == WORK_MATERIAL_PREFIX + document.id
+    return bool(re.fullmatch(re.escape(WORK_MATERIAL_PREFIX) + r"[a-f0-9]{32}", document.url))
 
 
 class TextExtractor(HTMLParser):
@@ -321,6 +322,9 @@ class PublicDocumentService:
         return {"documents": documents, "total": total, "limit": limit, "offset": offset}
 
     def archive_text(self, title, text, source_name=""):
+        return self._archive_text(title, text, source_name)
+
+    def _archive_text(self, title, text, source_name="", *, _previous=None):
         if (
             not isinstance(title, str)
             or not title.strip()
@@ -332,8 +336,23 @@ class PublicDocumentService:
             or len(source_name) > 500
         ):
             raise ProbeError("INVALID_WORK_MATERIAL")
+        publisher = source_name.strip() or "来源未说明（粘贴资料）"
+        if _previous and (title.strip(), text, publisher) == (
+            _previous["title"],
+            _previous["text"],
+            _previous["publisher"],
+        ):
+            return {
+                "document": {k: v for k, v in _previous.items() if k not in {"text", "evidence"}},
+                "evidence": _previous["evidence"],
+                "unchanged": True,
+            }
         raw = text.encode("utf-8")
         identity = uuid4().hex
+        url = _previous["url"] if _previous else WORK_MATERIAL_PREFIX + identity
+        timestamp = now()
+        if _previous and timestamp <= _previous["observed_at"]:
+            raise ProbeError("WORK_MATERIAL_CLOCK_CONFLICT")
         self.archive_root.mkdir(parents=True, exist_ok=True)
         path = self.archive_root / f"{identity}.txt"
         with path.open("xb") as stream:
@@ -341,16 +360,16 @@ class PublicDocumentService:
         with Session(self.repository.engine) as session, session.begin():
             document = PublicDocument(
                 id=identity,
-                url=WORK_MATERIAL_PREFIX + identity,
-                final_url=WORK_MATERIAL_PREFIX + identity,
-                publisher=source_name.strip() or "来源未说明（粘贴资料）",
+                url=url,
+                final_url=url,
+                publisher=publisher,
                 title=title.strip(),
                 content_type="text/plain",
                 path=str(path.resolve()),
                 sha256=hashlib.sha256(raw).hexdigest(),
                 text_sha256=hashlib.sha256(raw).hexdigest(),
                 text=text,
-                observed_at=now(),
+                observed_at=timestamp,
                 source_published_at=None,
                 extractor_version="pasted-text-v1",
             )
@@ -362,6 +381,104 @@ class PublicDocumentService:
                 "truncated": len(text) > 5600,
                 "gaps": ["来源说明未经独立核实，材料内容不表示已经执行。"],
             }
+
+    def revise_text(self, identity, title, text, source_name=None):
+        from work_observer.storage.locks import exclusive
+
+        # The same cross-process lock as research prevents both stale-base branches
+        # and a source edit while an Agent is reading it. Raw files are append-only.
+        with exclusive(self.repository.engine.url.database):
+            previous = self.document(identity)
+            if previous["evidence_kind"] != "work_material":
+                raise ProbeError("WORK_MATERIAL_REQUIRED")
+            if previous["latest_document_id"] != identity:
+                raise ProbeError("WORK_MATERIAL_CHANGED_REFRESH")
+            if previous["integrity"] != "verified":
+                raise ProbeError("WORK_MATERIAL_SOURCE_INTEGRITY_FAILED")
+            return self._archive_text(
+                title,
+                text,
+                previous["publisher"] if source_name is None else source_name,
+                _previous=previous,
+            )
+
+    def history(self, identity, *, limit=20, offset=0):
+        current = self.document(identity)
+        if not 1 <= limit <= 50 or offset < 0:
+            raise ProbeError("INVALID_PUBLIC_DOCUMENT_QUERY")
+        with Session(self.repository.engine) as session:
+            query = select(PublicDocument).where(PublicDocument.url == current["url"])
+            total = session.scalar(select(func.count()).select_from(query.subquery()))
+            rows = list(
+                session.scalars(
+                    query.order_by(PublicDocument.observed_at.desc(), PublicDocument.id.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+            )
+            return {
+                "documents": [self._metadata(row) for row in rows],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "selected_document_id": identity,
+            }
+
+    def compare(self, identity, previous_id):
+        earlier, later = self.document(previous_id), self.document(identity)
+        if earlier["url"] != later["url"] or (earlier["observed_at"], earlier["id"]) >= (
+            later["observed_at"],
+            later["id"],
+        ):
+            raise ProbeError("INVALID_DOCUMENT_COMPARISON")
+        if any(row["integrity"] != "verified" for row in (earlier, later)):
+            raise ProbeError("PUBLIC_DOCUMENT_INTEGRITY_FAILED")
+        text_changed = earlier["text_sha256"] != later["text_sha256"]
+        raw_changed = earlier["sha256"] != later["sha256"]
+        metadata_changes = {
+            key: {"earlier": earlier[key], "later": later[key]}
+            for key in ("title", "publisher", "extractor_version")
+            if earlier[key] != later[key]
+        }
+        if text_changed:
+            kind = (
+                "user_text_revision"
+                if later["evidence_kind"] == "work_material"
+                else ("archive_text_changed" if raw_changed else "extraction_changed")
+            )
+        else:
+            kind = (
+                "metadata_only"
+                if metadata_changes
+                else ("raw_archive_changed" if raw_changed else "observed_again")
+            )
+        # Compare bounded excerpts and disclose every truncation. Never present a
+        # partial diff as proof that all other text stayed the same.
+        texts = [row["text"][:40000].splitlines(keepends=True)[:2000] for row in (earlier, later)]
+        complete = all(
+            "".join(lines) == row["text"]
+            for lines, row in zip(texts, (earlier, later), strict=True)
+        )
+        delta = list(unified_diff(*texts, fromfile="earlier", tofile="later", n=3))
+        delta_text = "".join(line if line.endswith("\n") else line + "\n" for line in delta)
+        diff = delta_text[:40000]
+        complete &= len(delta_text) <= 40000
+        if text_changed and earlier["text"].splitlines() == later["text"].splitlines():
+            kind = "line_endings_changed"
+        return {
+            "earlier": {k: v for k, v in earlier.items() if k not in {"text", "evidence"}},
+            "later": {k: v for k, v in later.items() if k not in {"text", "evidence"}},
+            "change_kind": kind,
+            "text_changed": text_changed,
+            "raw_changed": raw_changed,
+            "metadata_changes": metadata_changes,
+            "diff": diff,
+            "complete": complete,
+            "notice": (
+                "比较的是本机归档版本；用户修订、文本提取变化或保存时间"
+                "不代表外部业务或岗位实际变化。"
+            ),
+        }
 
     async def read(self, url):
         original = checked_url(url)
@@ -438,6 +555,7 @@ class PublicDocumentService:
         return {
             "id": document.id,
             "public_document_id": document.id,
+            "material_id": document.url.removeprefix(WORK_MATERIAL_PREFIX) if manual else None,
             "url": document.url,
             "final_url": document.final_url,
             "publisher": document.publisher,
@@ -506,8 +624,25 @@ class PublicDocumentService:
             document = session.get(PublicDocument, identity)
             if document is None:
                 raise ProbeError("PUBLIC_DOCUMENT_NOT_FOUND")
+            latest = session.scalar(
+                select(PublicDocument)
+                .where(PublicDocument.url == document.url)
+                .order_by(PublicDocument.observed_at.desc(), PublicDocument.id.desc())
+                .limit(1)
+            )
+            previous = session.scalar(
+                select(PublicDocument)
+                .where(
+                    PublicDocument.url == document.url,
+                    PublicDocument.observed_at < document.observed_at,
+                )
+                .order_by(PublicDocument.observed_at.desc(), PublicDocument.id.desc())
+                .limit(1)
+            )
             return {
                 **self._metadata(document),
+                "latest_document_id": latest.id,
+                "previous_document_id": previous.id if previous else None,
                 "text": document.text,
                 "evidence": self._evidence(document),
             }

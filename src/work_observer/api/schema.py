@@ -36,6 +36,7 @@ def openapi(routes):
         RollbackInput,
         StrategyInput,
         WorkMaterialInput,
+        WorkMaterialRevisionInput,
     )
     from work_observer.api.profile_quality import SCHEMA_MODELS as PROFILE_QUALITY_MODELS
     from work_observer.api.projects import (
@@ -95,6 +96,7 @@ def openapi(routes):
         ("/api/research", "POST"): ResearchInput,
         ("/api/public-documents", "POST"): PublicDocumentInput,
         ("/api/work-materials", "POST"): WorkMaterialInput,
+        ("/api/work-materials/{id}/revisions", "POST"): WorkMaterialRevisionInput,
         ("/api/memories", "POST"): MemoryInput,
         ("/api/memories/{id}/{action}", "POST"): MemoryRevision,
         ("/api/profiles/{id}", "POST"): ProfileInput,
@@ -272,6 +274,7 @@ def openapi(routes):
                     "/api/import-assets",
                     "/api/public-documents",
                     "/api/work-materials",
+                    "/api/work-materials/{id}/revisions",
                 }
                 else "200"
             )

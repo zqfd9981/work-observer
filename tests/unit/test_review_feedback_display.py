@@ -9,7 +9,12 @@ import pytest
 
 @pytest.mark.parametrize(
     "harness",
-    ["review_feedback_display.cjs", "project_feedback_display.cjs", "research_conversation.cjs"],
+    [
+        "review_feedback_display.cjs",
+        "project_feedback_display.cjs",
+        "research_conversation.cjs",
+        "public_versions.cjs",
+    ],
 )
 def test_review_repair_submit_and_diagnostic_display(harness):
     node = shutil.which("node")

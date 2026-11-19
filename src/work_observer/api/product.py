@@ -24,6 +24,10 @@ class WorkMaterialInput(BaseModel):
     source_name: str = Field(default="", max_length=500)
 
 
+class WorkMaterialRevisionInput(WorkMaterialInput):
+    source_name: str | None = Field(default=None, max_length=500)
+
+
 class PublicDocumentQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     q: str = Field(default="", max_length=200)
@@ -122,6 +126,61 @@ def product_routes(*, repository, settings, model, response, read_json, busy, op
                     repository(), settings.raw_directory / "public"
                 ).archive_text(**data.model_dump())
         return response(result, 201)
+
+    async def revise_work_material(request):
+        from work_observer.connectors.mcp_probe import ProbeError
+        from work_observer.connectors.public_documents import PublicDocumentService
+
+        if busy():
+            return response(
+                {"error_code": "RESEARCH_BUSY", "message": "请在本轮调查结束后修订原文。"}, 409
+            )
+        data = WorkMaterialRevisionInput.model_validate(await read_json(request))
+        async with operation_lock:
+            # revise_text takes the cross-process lock itself, including the
+            # current-version check. Do not acquire the same lock twice.
+            try:
+                result = await run_in_threadpool(
+                    PublicDocumentService(
+                        repository(), settings.raw_directory / "public"
+                    ).revise_text,
+                    request.path_params["id"],
+                    **data.model_dump(),
+                )
+            except ProbeError as error:
+                if error.code == "WORK_MATERIAL_CHANGED_REFRESH":
+                    return response(
+                        {
+                            "error_code": error.code,
+                            "message": "这份资料已有新版本，请先打开新版再修订；当前输入仍保留。",
+                        },
+                        409,
+                    )
+                raise
+        return response(result, 200 if result.get("unchanged") else 201)
+
+    async def document_history(request):
+        from work_observer.connectors.public_documents import PublicDocumentService
+
+        query = PublicDocumentQuery.model_validate(dict(request.query_params))
+        return response(
+            PublicDocumentService(repository(), settings.raw_directory / "public").history(
+                request.path_params["id"],
+                limit=query.limit,
+                offset=query.offset,
+            )
+        )
+
+    async def document_comparison(request):
+        from work_observer.connectors.public_documents import PublicDocumentService
+
+        return response(
+            await run_in_threadpool(
+                PublicDocumentService(repository(), settings.raw_directory / "public").compare,
+                request.path_params["id"],
+                request.query_params.get("previous_id"),
+            )
+        )
 
     async def retrieval(request):
         from work_observer.retrieval.enhanced import RetrievalService
@@ -267,6 +326,9 @@ def product_routes(*, repository, settings, model, response, read_json, busy, op
 
     return [
         Route("/api/jobs/{id}/compare-history", compare_history),
+        Route("/api/public-documents/{id}/history", document_history),
+        Route("/api/public-documents/{id}/compare", document_comparison),
+        Route("/api/work-materials/{id}/revisions", revise_work_material, methods=["POST"]),
         Route("/api/public-documents/{id}", public_document),
         Route("/api/public-documents", public_documents),
         Route("/api/public-documents", archive_public_document, methods=["POST"]),

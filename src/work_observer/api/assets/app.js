@@ -11,6 +11,7 @@ const statusLabels = {analysis_draft:"开发分析样稿（待核对）",complet
 const originLabels = {website:"网站响应", unknown:"新鲜度未知", cache:"缓存资料", replay:"回放资料", manual:"人工资料", test:"测试资料", client_error:"获取失败"};
 const requirementLabels = {required:"必备", preferred:"加分", unspecified:"未明确性质"};
 const domainLabels = {business_application:"业务应用开发",agent_platform:"执行平台与 Harness",domain_decision:"领域决策系统",model_serving:"模型与推理部署",configuration_delivery:"平台配置与实施",other:"其他待定义领域"};
+const materialRevisionDrafts = new Map();
 const claimBasisLabels = {direct:"原文明示",synthesis:"研究归纳",inference:"研究推断"};
 const claimBasisLabel = claim => claimBasisLabels[claim?.basis] || "性质未标注";
 const categoryLabels = {business:"业务背景", deliverable:"交付物", task:"任务", responsibility:"责任", ability:"能力", tool:"工具"};
@@ -19,6 +20,12 @@ const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究�
 let toastTimer, pollTimer;
 const conversation = {id:null, timer:null, reports:new Map(), notes:[], notesFor:null, renderedId:null};
 Object.assign(reasonLabels,{
+  WORK_MATERIAL_CLOCK_CONFLICT:"本机保存时间未晚于上一版，请稍后重试并核对系统时间。",
+  WORK_MATERIAL_REQUIRED:"只能修订自己保存的粘贴工作资料；网页归档保留原样。",
+  WORK_MATERIAL_CHANGED_REFRESH:"这份资料已有新版本，请先打开新版再修订；当前输入仍保留。",
+  WORK_MATERIAL_SOURCE_INTEGRITY_FAILED:"旧版归档完整性未通过，请先核对资料。",
+  PUBLIC_DOCUMENT_INTEGRITY_FAILED:"归档完整性未通过，不能据此展示版本差异。",
+  INVALID_DOCUMENT_COMPARISON:"请选择同一份资料中较早的归档版本进行对照。",
   INVALID_RESEARCH_DOCUMENT_SCOPE:"一次最多选择20份有效的归档资料，请重新选择。",
   PUBLIC_DOCUMENT_NOT_FOUND:"所选归档资料已不可用，请在资料库中重新选择。",
   RESEARCH_FEEDBACK_UNAVAILABLE:"原研究已不可用或已清除，请重新选择研究。",
@@ -222,13 +229,98 @@ async function showSource(id) {
 }
 
 async function showPublicSource(id) {
+  const request=state.publicSourceRequest=(state.publicSourceRequest||0)+1;
   $("#source-content").innerHTML = `<div class="empty">正在核对公开资料归档…</div>`;
   openDialog("source-dialog");
   try {
     const data=await api("public-documents/"+encodeURIComponent(id));
-    $("#source-content").innerHTML=`<h2>${e(data.title)}</h2>${badge(data.integrity === "verified" ? "归档文件指纹已核对" : "归档文件缺失或已变化",data.integrity === "verified" ? "" : "amber")} ${badge(data.evidence_kind==="work_material"?"粘贴工作资料":"公开网页","muted")}<p class="form-note">${e(data.source_note || "已归档公开网页正文，不能直接证明岗位个人职责。")}</p><dl class="detail-grid">${detailData(data.evidence_kind==="work_material"?"来源说明":"出处",data.publisher)}${detailData(data.evidence_kind==="work_material"?"保存时间":"取得时间",when(data.observed_at))}${detailData("正文长度",data.full_text_length)}${detailData("来源发布时间",data.source_published_at ? when(data.source_published_at) : "未知")}</dl>${safeURL(data.final_url || data.url) ? `<a class="secondary button-link" href="${e(safeURL(data.final_url || data.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}<section class="detail-section"><h3>归档全文（纯文本）</h3><div class="body-text">${e(data.text)}</div></section>`;
-  } catch (error) {$("#source-content").innerHTML=errorBox(error);}
+    if(request!==state.publicSourceRequest)return;
+    state.currentPublicDocument=data;
+    $("#source-content").innerHTML=`<h2>${e(data.title)}</h2>${badge(data.integrity === "verified" ? "归档文件指纹已核对" : "归档文件缺失或已变化",data.integrity === "verified" ? "" : "amber")} ${badge(data.evidence_kind==="work_material"?"粘贴工作资料":"公开网页","muted")}<p class="form-note">${e(data.source_note || "已归档公开网页正文，不能直接证明岗位个人职责。")}</p><dl class="detail-grid">${detailData(data.evidence_kind==="work_material"?"来源说明":"出处",data.publisher)}${detailData(data.evidence_kind==="work_material"?"保存时间":"取得时间",when(data.observed_at))}${detailData("正文长度",data.full_text_length)}${detailData("来源发布时间",data.source_published_at ? when(data.source_published_at) : "未知")}</dl>${safeURL(data.final_url || data.url) ? `<a class="secondary button-link" href="${e(safeURL(data.final_url || data.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}${renderPublicVersionTools(data)}<section class="detail-section"><h3>归档全文（纯文本）</h3><div class="body-text">${e(data.text)}</div></section>`;
+  } catch (error) {if(request===state.publicSourceRequest)$("#source-content").innerHTML=errorBox(error);}
 }
+
+function renderPublicVersionTools(data) {
+  if(!data.latest_document_id)return "";
+  const manual=data.evidence_kind==="work_material",latest=data.latest_document_id===data.id;
+  const draft=materialRevisionDrafts.get(data.url);
+  return `<section class="detail-section"><h3>资料版本</h3><p class="form-note">当前打开的是归档快照，旧引用仍指向各自版本。${latest?"这是目前最新归档。":"已有更新归档，当前仍显示旧版。"}</p><button type="button" class="secondary small" data-public-history="${e(data.id)}">查看历史版本</button>${!latest?`<button type="button" class="text-button" data-public-source="${e(data.latest_document_id)}">打开最新归档 ↗</button>`:""}${data.previous_document_id?`<button type="button" class="text-button" data-document-compare="${e(data.id)}" data-previous-document="${e(data.previous_document_id)}">与上一版对照</button>`:""}<div id="public-history-list"></div><div id="public-version-comparison"></div>${manual&&latest&&data.integrity==="verified"?`<details><summary>修订这份工作资料</summary><form id="work-material-revision" data-base-document="${e(data.id)}"><label>标题<input name="title" value="${e(draft?.title??data.title)}" maxlength="300" required></label><label>来源说明<input name="source_name" value="${e(draft?.source_name??data.publisher)}" maxlength="500"></label><label>新版原文<textarea name="text" rows="6" maxlength="100000" required>${e(draft?.text??data.text)}</textarea></label>${draft?'<p class="form-note">已保留未保存的修订草稿；请对照当前归档原文后再保存。</p>':""}<p class="form-note">保存新版本，保留旧原文和引用。来源说明仍未经独立核实；这次改稿不等于外部工作已经变化，保存不调用模型。</p><button class="secondary">保存新版本</button></form></details>`:""}<p id="public-version-status" class="form-note" role="status"></p>${manual?`<button type="button" class="text-button" data-version-question="${e(data.id)}">用这一版开始提问</button>${state.page==="research"&&conversation.id?`<button type="button" class="text-button" data-version-attach="${e(data.id)}" data-version-project="${e(conversation.id)}">加入当前研究的后续调查</button>`:""}`:""}</section>`;
+}
+
+async function loadPublicDocumentHistory(id,offset=0) {
+  const data=await api("public-documents/"+encodeURIComponent(id)+"/history?"+new URLSearchParams({limit:10,offset}));
+  const current=state.currentPublicDocument;
+  if(current?.id!==id)return;
+  const older=row=>row.observed_at<current.observed_at||(row.observed_at===current.observed_at&&row.id<current.id);
+  $("#public-history-list").innerHTML=`<p class="form-note">共 ${e(data.total)} 个归档版本，显示 ${data.offset+1}–${data.offset+data.documents.length}。</p>${data.documents.map((row,i)=>`<div class="detail-history"><strong>第 ${e(data.total-data.offset-i)} 版 · ${e(row.title)}</strong><p class="form-note">本机保存：${e(when(row.observed_at))} · 来源发布：${row.source_published_at?e(when(row.source_published_at)):"未知"}</p><button type="button" class="text-button" data-public-source="${e(row.id)}">打开这一版 ↗</button><button type="button" class="text-button" data-history-select="${e(row.id)}" data-history-title="${e(row.title)}">加入新研究范围</button>${row.id!==id?`<button type="button" class="text-button" data-document-compare="${e(older(row)?id:row.id)}" data-previous-document="${e(older(row)?row.id:id)}">与当前打开版本对照</button>`:""}</div>`).join("")}${data.offset>0?`<button type="button" class="text-button" data-history-page="${Math.max(0,data.offset-data.limit)}" data-history-document="${e(id)}">上一页</button>`:""}${data.offset+data.documents.length<data.total?`<button type="button" class="text-button" data-history-page="${data.offset+data.limit}" data-history-document="${e(id)}">下一页</button>`:""}`;
+}
+
+function renderPublicDocumentComparison(data) {
+  const labels={user_text_revision:"用户修订了粘贴正文",archive_text_changed:"归档正文发生变化",extraction_changed:"同一原始文件的文本提取结果变化",metadata_only:"正文未变，资料说明有变化",raw_archive_changed:"原始响应变化，提取正文未变",observed_again:"再次保存，正文未变",line_endings_changed:"行内容相同，换行形式有变化"};
+  const fieldLabels={title:"标题",publisher:"来源说明",extractor_version:"文本处理版本"};
+  const diffLines=(data.diff||"").split("\n"),groups=[];
+  for(const line of (diffLines[0]?.startsWith("--- ")?diffLines.slice(2):diffLines)){
+    if(!line||line.startsWith("@@"))continue;
+    const kind=line.startsWith("+")?"added":line.startsWith("-")?"removed":"context";
+    const last=groups.at(-1),text=["+","-"," "].includes(line[0])?line.slice(1):line;
+    if(last?.kind===kind)last.lines.push(text);else groups.push({kind,lines:[text]});
+  }
+  const differences=data.change_kind==="line_endings_changed"?'<p class="form-note">行文本相同，差异来自换行形式；两版原文分别保留。</p>':groups.map(group=>`<div class="research-context"><strong>${({added:"新增内容",removed:"删除内容",context:"对照位置附近的原文"})[group.kind]}</strong><div class="body-text">${e(group.lines.join("\n"))}</div></div>`).join("");
+  return `<h4>${e(labels[data.change_kind]||"版本差异待核对")}</h4><p class="form-note">${e(data.notice)}<br>较早保存：${e(when(data.earlier.observed_at))}；较晚保存：${e(when(data.later.observed_at))}</p>${!data.complete?'<p class="error-box">对照超过展示上限，以下不是完整差异；请分别打开归档全文核对剩余部分。</p>':""}${Object.entries(data.metadata_changes).map(([key,value])=>`<p class="form-note">${e(fieldLabels[key]||key)}：${e(value.earlier)} → ${e(value.later)}</p>`).join("")}${differences||'<p class="form-note">没有可展示的行内容差异。</p>'}`;
+}
+
+async function comparePublicDocuments(id,previous) {
+  const selected=state.currentPublicDocument?.id;
+  const data=await api("public-documents/"+encodeURIComponent(id)+"/compare?"+new URLSearchParams({previous_id:previous}));
+  if(state.currentPublicDocument?.id===selected)$("#public-version-comparison").innerHTML=renderPublicDocumentComparison(data);
+}
+
+async function saveWorkMaterialRevision(id,title,text,source_name) {
+  const result=await api("work-materials/"+encodeURIComponent(id)+"/revisions",{method:"POST",body:JSON.stringify({title,text,source_name})});
+  if(state.currentPublicDocument?.id===id){
+    materialRevisionDrafts.delete(state.currentPublicDocument.url);
+    if(!result.unchanged)await showPublicSource(result.document.id);
+    if(state.currentPublicDocument?.id===result.document.id)$("#public-version-status").textContent=result.unchanged?"原文和来源说明未变，没有创建新版本。":"新版本已保存，旧引用保留。可用新版提问，或明确加入当前研究后续调查。";
+  }
+  return result;
+}
+
+document.addEventListener("submit",async event=>{
+  if(event.target.id!=="work-material-revision")return;
+  event.preventDefault();const form=event.target,button=form.querySelector("button"),base=state.currentPublicDocument;
+  const draft={title:form.elements.title.value,text:form.elements.text.value,source_name:form.elements.source_name.value};
+  materialRevisionDrafts.set(base.url,draft);
+  const fields=[...form.querySelectorAll("input,textarea,button")];fields.forEach(field=>field.disabled=true);
+  try{await saveWorkMaterialRevision(form.dataset.baseDocument,draft.title,draft.text,draft.source_name);}
+  catch(error){
+    if(state.currentPublicDocument?.id===base.id){
+      $("#public-version-status").textContent=error.message;
+      if(error.code==="WORK_MATERIAL_CHANGED_REFRESH"){
+        try{const fresh=await api("public-documents/"+base.id);$("#public-version-status").innerHTML+=` <button type="button" class="text-button" data-public-source="${e(fresh.latest_document_id)}">查看最新版（保留修订草稿）</button>`;}catch{}
+      }
+    }
+  }
+  finally{fields.forEach(field=>field.disabled=false);button.disabled=false;}
+});
+
+document.addEventListener("click",async event=>{
+  const history=event.target.closest("[data-public-history]"),page=event.target.closest("[data-history-page]"),compare=event.target.closest("[data-document-compare]"),question=event.target.closest("[data-version-question]"),attach=event.target.closest("[data-version-attach]"),select=event.target.closest("[data-history-select]");
+  try{
+    if(history)await loadPublicDocumentHistory(history.dataset.publicHistory);
+    else if(page)await loadPublicDocumentHistory(page.dataset.historyDocument,Number(page.dataset.historyPage));
+    else if(compare)await comparePublicDocuments(compare.dataset.documentCompare,compare.dataset.previousDocument);
+    else if(select){if(selectResearchDocument(select.dataset.historySelect,select.dataset.historyTitle))$("#public-version-status").textContent="这一版已选入新研究范围，可继续加入其他版本，再回研究台提问；未启动调查。";}
+    else if(question){preparePublicDocumentQuestion(state.currentPublicDocument.title,question.dataset.versionQuestion);$("#source-dialog").close();location.hash="research";}
+    else if(attach){
+      const project=attach.dataset.versionProject;
+      if(project!==conversation.id)throw new Error("请返回对应研究后，再加入这一版资料。");
+      rememberConversationMaterial(project,state.currentPublicDocument);
+      await retryConversationMaterial(project,attach.dataset.versionAttach);
+      await openResearchConversation(project,false);
+      $("#public-version-status").textContent="已加入后续调查；旧版仍保留，可以对照两版原文。";
+    }
+  }catch(error){const status=$("#public-version-status");if(status)status.textContent=error.message;else notify(error.message,true);}
+});
 
 async function loadCompanies() {
   const root = $("#companies-grid");
@@ -871,7 +963,7 @@ async function loadPublicLibrary(offset=0) {
   try{
     const data=await api("public-documents?"+new URLSearchParams({q,limit:10,offset}));
     if(request!==state.publicLibraryRequest)return;
-    root.innerHTML=data.documents.length ? `<p class="form-note">共 ${e(data.total)} 份归档资料，显示 ${data.offset+1}–${data.offset+data.documents.length}；网页显示最新归档，粘贴资料按次保留。</p>${data.documents.map(doc=>`<article class="detail-history"><h4>${e(doc.title)} ${badge(doc.evidence_kind==="work_material"?"粘贴工作资料":"公开网页","muted")}</h4><p class="form-note">${e(doc.publisher)} · ${e(doc.full_text_length)}字符<br>归档于 ${e(when(doc.observed_at))} · 发布 ${doc.source_published_at?e(when(doc.source_published_at)):"时间未知"}</p>${doc.evidence_kind==="work_material"?'<p class="form-note">来源说明由导入者填写，未经独立核实。</p>':""}${doc.integrity!=="verified"?'<p class="form-note">归档文件缺失或内容已变化，须重新核对。</p>':""}<button type="button" class="text-button" data-public-source="${e(doc.id)}">查看全文 ↗</button><button type="button" class="text-button" data-select-research-document="${e(doc.id)}" data-document-title="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>加入研究范围</button><button type="button" class="text-button" data-public-document-id="${e(doc.id)}" data-public-question="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>围绕这份资料提问</button></article>`).join("")}<div class="result-actions">${data.offset>0?`<button type="button" class="secondary small" data-public-library-page="${Math.max(0,data.offset-data.limit)}">上一页</button>`:""}${data.offset+data.documents.length<data.total?`<button type="button" class="secondary small" data-public-library-page="${data.offset+data.limit}">下一页</button>`:""}</div>` : '<p class="form-note">没有找到对应的归档。可调整关键词，或在上方补充公开网页。</p>';
+    root.innerHTML=data.documents.length ? `<p class="form-note">共 ${e(data.total)} 份归档资料，显示 ${data.offset+1}–${data.offset+data.documents.length}；同一资料显示最新归档，旧版可在全文页查看。</p>${data.documents.map(doc=>`<article class="detail-history"><h4>${e(doc.title)} ${badge(doc.evidence_kind==="work_material"?"粘贴工作资料":"公开网页","muted")}</h4><p class="form-note">${e(doc.publisher)} · ${e(doc.full_text_length)}字符<br>归档于 ${e(when(doc.observed_at))} · 发布 ${doc.source_published_at?e(when(doc.source_published_at)):"时间未知"}</p>${doc.evidence_kind==="work_material"?'<p class="form-note">来源说明由导入者填写，未经独立核实。</p>':""}${doc.integrity!=="verified"?'<p class="form-note">归档文件缺失或内容已变化，须重新核对。</p>':""}<button type="button" class="text-button" data-public-source="${e(doc.id)}">查看全文 ↗</button><button type="button" class="text-button" data-select-research-document="${e(doc.id)}" data-document-title="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>加入研究范围</button><button type="button" class="text-button" data-public-document-id="${e(doc.id)}" data-public-question="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>围绕这份资料提问</button></article>`).join("")}<div class="result-actions">${data.offset>0?`<button type="button" class="secondary small" data-public-library-page="${Math.max(0,data.offset-data.limit)}">上一页</button>`:""}${data.offset+data.documents.length<data.total?`<button type="button" class="secondary small" data-public-library-page="${data.offset+data.limit}">下一页</button>`:""}</div>` : '<p class="form-note">没有找到对应的归档。可调整关键词，或在上方补充公开网页。</p>';
   }catch(error){if(request===state.publicLibraryRequest)root.innerHTML=errorBox(error);}
 }
 
