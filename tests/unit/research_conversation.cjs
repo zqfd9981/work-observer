@@ -182,6 +182,10 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  node("#conversation-material-source").value="明确出处";
  node("#conversation-material-text").value="</textarea>还没提交的原文";
  node("#conversation-material-panel").open=true;
+ node("#application-background").value="</textarea>真实输入的合成经历";
+ node("#application-goal").value="合成目标草稿";
+ node("#application-constraints").value="合成投入限制";
+ node("#conversation-application-panel").open=true;
  await vm.runInContext('openResearchConversation("project-1",false)',context);
  const refreshed=node("#research-output").innerHTML;
  assert.ok(refreshed.includes('id="conversation-work-material"'));
@@ -190,6 +194,9 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(refreshed.includes("原文已保存" )===false); // Completed attachment is restored from session storage.
  assert.ok(refreshed.includes("已加入本研究，可在下一轮查阅"));
  assert.ok(refreshed.includes('id="conversation-material-panel" class="detail-section" open'));
+ assert.ok(refreshed.includes("&lt;/textarea&gt;真实输入的合成经历"));
+ assert.ok(refreshed.includes("合成目标草稿"));assert.ok(refreshed.includes("合成投入限制"));
+ assert.ok(refreshed.includes('id="conversation-application-panel" class="detail-section" open'));
 
  const projectsBeforePastedOnly=context.calls.filter(c=>c.path==="projects").length;
  node("#research-source-mode").value="jobs";

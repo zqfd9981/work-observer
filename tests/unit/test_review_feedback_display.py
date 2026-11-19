@@ -13,6 +13,7 @@ import pytest
         "review_feedback_display.cjs",
         "project_feedback_display.cjs",
         "research_conversation.cjs",
+        "research_application.cjs",
         "public_versions.cjs",
     ],
 )

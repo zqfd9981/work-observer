@@ -1,0 +1,40 @@
+// Replay the application entry point with isolated personal data and API doubles.
+const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
+const nodes=new Map(),storage=new Map();
+const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{checked:false,value:"",disabled:false,innerHTML:"",children:[],focus(){},scrollIntoView(){},append(child){this.children.push(child);},insertAdjacentHTML(position,html){this.innerHTML+=html;},querySelector:node,querySelectorAll:()=>[],addEventListener(){}});return nodes.get(selector);};
+const context={document:{createElement:tag=>node("created-"+tag),querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:""},sessionStorage:{setItem:(k,v)=>storage.set(k,v),getItem:k=>storage.get(k)||null,removeItem:k=>storage.delete(k)},crypto:{randomUUID:()=>"synthetic-request"},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
+vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),context);
+context.calls=[];context.notes=[];context.failSave=false;
+context.project={id:"a".repeat(32),worker_running:false,steps:[],budget:{max_calls:24,max_seconds:720,max_rounds:6,max_public:0},usage:{calls:0,reserved_calls:0,reserved_seconds:0,public:0}};
+vm.runInContext('conversation.id=project.id;api=async(path,options)=>{calls.push({path,options});if(path.startsWith("projects/"))return project;if(!options)return notes;if(failSave)throw new Error("合成保存失败");const note={...JSON.parse(options.body),status:"active"};notes.push(note);return note;};openResearchConversation=async()=>{}',context);
+(async()=>{
+ const html=vm.runInContext('renderConversationApplication(project,{background:"</textarea><script>合成</script>",goal:"合成目标",open:true})',context);
+ assert.ok(html.includes("&lt;/textarea&gt;&lt;script&gt;合成"));assert.ok(!html.includes("<script>"));
+ node("#conversation-question").value="保留原来的追问";
+ await assert.rejects(vm.runInContext('prepareResearchApplication("", "合成目标")',context),/请填写/);
+ assert.equal(context.calls.length,0);
+ await vm.runInContext('prepareResearchApplication("合成后端经历", "合成验证项目", "合成每周两小时")',context);
+ const saved=context.notes[0];
+ assert.equal(saved.project_id,context.project.id);assert.equal(saved.scope,"project");assert.equal(saved.origin,"user");assert.equal(saved.kind,"preference");
+ assert.ok(saved.content.includes("合成每周两小时"));assert.equal("evidence" in saved,false);
+ const draft=node("#conversation-question").value;
+ assert.ok(draft.startsWith("保留原来的追问\n\n"));assert.ok(draft.includes("原文引用"));assert.ok(draft.includes("怎样检查完成"));assert.ok(draft.includes("不替我选择或补造经历"));
+ assert.equal(context.calls.filter(c=>c.options?.method==="POST").length,1); // Only a scoped note, never a model run or new step.
+ await vm.runInContext('prepareResearchApplication("合成后端经历", "合成验证项目", "合成每周两小时")',context);
+ assert.equal(context.notes.length,1);assert.equal(node("#conversation-question").value,draft);
+ node("#application-background").value="合成待保存经历";node("#application-goal").value="合成待保存目标";
+ context.failSave=true;
+ await assert.rejects(vm.runInContext('prepareResearchApplication("合成待保存经历", "合成待保存目标")',context),/保存失败/);
+ assert.equal(node("#application-background").value,"合成待保存经历");assert.equal(node("#conversation-question").value,draft);
+ context.failSave=false;context.project.worker_running=true;
+ const writes=context.notes.length;
+ await assert.rejects(vm.runInContext('prepareResearchApplication("合成经历", "合成目标")',context),/调查结束/);
+ context.project.worker_running=false;
+ node("#conversation-question").value="长".repeat(3900);
+ await assert.rejects(vm.runInContext('prepareResearchApplication("合成经历", "合成目标")',context),/过长/);
+ assert.equal(context.notes.length,writes);
+ node("#conversation-question").value="";
+ await vm.runInContext('prepareResearchApplication("无相关经历（合成）", "合成入门目标")',context);
+ assert.ok(context.notes.at(-1).content.includes("未说明，不作假设"));
+ console.log("Application entry: scoped saving, evidence question, drafts, retries and budget checks passed.");
+})().catch(error=>{console.error(error);process.exitCode=1;});
