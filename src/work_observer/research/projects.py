@@ -1254,6 +1254,9 @@ async def _execute_project_locked(
                         kind=proposal["kind"],
                         max_calls=calls,
                         timeout=seconds,
+                        approach=step.get("approach", "standard"),
+                        coverage_mode=step.get("coverage_mode", "all"),
+                        reply_to_step_id=step["id"],
                         completion=(
                             proposal["completion"] + "；所需证据：" + proposal["evidence_needed"]
                         )[:1000],
