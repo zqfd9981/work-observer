@@ -1,4 +1,4 @@
-"""固定公网IP连接的有界HTTPS正文归档；不继承代理或访问任意本地地址。"""
+"""有界HTTPS网页与本机粘贴原文归档；明确区分取得方式，不继承代理。"""
 
 import asyncio
 import hashlib
@@ -21,6 +21,12 @@ from work_observer.connectors.public_search import public_url
 
 MAX_BYTES = 1_000_000
 EXTRACTOR_VERSION = "public-html-v3"
+WORK_MATERIAL_PREFIX = "urn:work-observer:work-material:"
+
+
+def is_work_material(document):
+    """Server-assigned identifiers distinguish pasted text from fetched HTTPS pages."""
+    return document.url == WORK_MATERIAL_PREFIX + document.id
 
 
 class TextExtractor(HTMLParser):
@@ -314,6 +320,49 @@ class PublicDocumentService:
             ]
         return {"documents": documents, "total": total, "limit": limit, "offset": offset}
 
+    def archive_text(self, title, text, source_name=""):
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or len(title) > 300
+            or not isinstance(text, str)
+            or not text.strip()
+            or len(text) > 100_000
+            or not isinstance(source_name, str)
+            or len(source_name) > 500
+        ):
+            raise ProbeError("INVALID_WORK_MATERIAL")
+        raw = text.encode("utf-8")
+        identity = uuid4().hex
+        self.archive_root.mkdir(parents=True, exist_ok=True)
+        path = self.archive_root / f"{identity}.txt"
+        with path.open("xb") as stream:
+            stream.write(raw)
+        with Session(self.repository.engine) as session, session.begin():
+            document = PublicDocument(
+                id=identity,
+                url=WORK_MATERIAL_PREFIX + identity,
+                final_url=WORK_MATERIAL_PREFIX + identity,
+                publisher=source_name.strip() or "来源未说明（粘贴资料）",
+                title=title.strip(),
+                content_type="text/plain",
+                path=str(path.resolve()),
+                sha256=hashlib.sha256(raw).hexdigest(),
+                text_sha256=hashlib.sha256(raw).hexdigest(),
+                text=text,
+                observed_at=now(),
+                source_published_at=None,
+                extractor_version="pasted-text-v1",
+            )
+            session.add(document)
+            session.flush()
+            return {
+                "document": self._metadata(document),
+                "evidence": self._evidence(document),
+                "truncated": len(text) > 5600,
+                "gaps": ["来源说明未经独立核实，材料内容不表示已经执行。"],
+            }
+
     async def read(self, url):
         original = checked_url(url)
         final = original
@@ -378,6 +427,7 @@ class PublicDocumentService:
 
     @staticmethod
     def _metadata(document):
+        manual = is_work_material(document)
         path = Path(document.path)
         intact = (
             path.is_file()
@@ -400,14 +450,21 @@ class PublicDocumentService:
             "source_published_at": document.source_published_at,
             "extractor_version": document.extractor_version,
             "integrity": "verified" if intact else "missing_or_changed",
-            "evidence_kind": "public_document",
-            "source": "public_web",
-            "content_state": "redirect_only" if redirect_stub(document.text) else "body_text",
+            "evidence_kind": "work_material" if manual else "public_document",
+            "source": "manual_material" if manual else "public_web",
+            "response_origin": "manual" if manual else "website",
+            "source_note": "通过粘贴保存的工作资料；来源说明未经独立核实，内容不表示已经执行。"
+            if manual
+            else "已取得并归档公开网页正文；发布时间未知。",
+            "content_state": "redirect_only"
+            if not manual and redirect_stub(document.text)
+            else "body_text",
         }
 
     @staticmethod
     def _evidence(document):
         text = document.text
+        manual = is_work_material(document)
         return [
             {
                 "id": f"publicdoc:{document.id}:{start}:{min(start + 700, len(text))}",
@@ -416,25 +473,27 @@ class PublicDocumentService:
                 "snapshot_id": None,
                 "document_id": None,
                 "title": document.title,
-                "company": "公开资料",
+                "company": "粘贴工作资料" if manual else "公开资料",
                 "publisher": document.publisher,
                 "url": document.final_url,
-                "source": "public_web",
-                "evidence_kind": "public_document",
+                "source": "manual_material" if manual else "public_web",
+                "evidence_kind": "work_material" if manual else "public_document",
                 "provider_synthesized": False,
-                "source_note": "已取得并归档公开网页正文；HTML转换为纯文本，发布时间未知。",
+                "source_note": "通过粘贴保存的工作资料；来源说明未经独立核实，内容不表示已经执行。"
+                if manual
+                else "已取得并归档公开网页正文；HTML转换为纯文本，发布时间未知。",
                 "quote": text[start : start + 700],
                 "start": start,
                 "end": min(start + 700, len(text)),
                 "full_text_length": len(text),
                 "content_sha256": document.text_sha256,
                 "document_sha256": document.sha256,
-                "response_origin": "website",
-                "transport": "public_https",
-                "mode": "live",
+                "response_origin": "manual" if manual else "website",
+                "transport": "local_text" if manual else "public_https",
+                "mode": "manual" if manual else "live",
                 "observed_at": document.observed_at,
                 "processed_at": document.observed_at,
-                "source_fetched_at": document.observed_at,
+                "source_fetched_at": None if manual else document.observed_at,
                 "source_published_at": None,
             }
             for start in range(0, min(len(text), 5600), 700)

@@ -653,12 +653,15 @@ def research_question(
         ResearchCoverage, typer.Option(help="all要求逐岗覆盖；question按问题选择必要资料")
     ] = ResearchCoverage.all,
     public_only: bool = typer.Option(
-        False, help="只研究本机已归档公开资料，不使用岗位；按问题选证据"
+        False,
+        "--materials-only",
+        "--public-only",
+        help="只研究本机归档资料（网页与粘贴原文），不使用岗位；按问题选证据",
     ),
 ):
     """一个有数量与时间预算的研究 Agent；不会访问招聘网站或改写岗位。"""
     if public_only and job_id:
-        raise typer.BadParameter("只研究公开资料时不能同时指定岗位。")
+        raise typer.BadParameter("只研究归档资料时不能同时指定岗位。")
     execute_research(
         question,
         [] if public_only else job_id,

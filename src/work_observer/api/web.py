@@ -60,7 +60,10 @@ class ResearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     question: str = Field(min_length=1, max_length=4000)
     job_ids: list[str] | None = Field(
-        default=None, min_length=0, max_length=20, description="空列表仅使用已归档公开资料"
+        default=None,
+        min_length=0,
+        max_length=20,
+        description="空列表仅使用已归档资料（网页与粘贴原文）",
     )
     filters: Filters = Field(default_factory=Filters)
     offline: bool = False

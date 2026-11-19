@@ -1,4 +1,4 @@
-"""公开网页权威归档索引，与招聘来源及研究派生结果分开。"""
+"""原文归档索引：HTTPS网页与本机粘贴资料分开标记，与研究派生结果分开。"""
 
 from sqlalchemy import Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column

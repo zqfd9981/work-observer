@@ -111,7 +111,9 @@ class UnifiedRetrieval:
                         {
                             **item,
                             "derived": False,
-                            "scope_note": "公开材料描述发布者业务，不能据此认定某岗位具体职责。",
+                            "scope_note": item["source_note"]
+                            if item["evidence_kind"] == "work_material"
+                            else "公开材料描述发布者业务，不能据此认定某岗位具体职责。",
                             "retrieval": {"score": score},
                         }
                     )

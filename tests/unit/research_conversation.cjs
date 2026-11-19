@@ -109,6 +109,20 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  const libraryQuery=new URLSearchParams(context.calls.at(-1).path.split("?")[1]);
  assert.equal(libraryQuery.get("q"),"Graph & API");assert.equal(libraryQuery.get("offset"),"0");
 
+ node("#work-material-title").value="<script>合成SOP</script>";
+ node("#work-material-text").value="\n保留的原文与空行。\n";
+ node("#work-material-source").value="合成来源说明";
+ node("#research-source-mode").value="jobs";
+ const runsBeforeMaterial=context.calls.filter(c=>c.path.endsWith("/run")).length;
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});const document={id:"e".repeat(32),title:"<script>合成SOP</script>",full_text_length:12,integrity:"verified",evidence_kind:"work_material",publisher:"合成来源说明"};return path.startsWith("public-documents?")?{documents:[document],total:1,limit:10,offset:0}:{document};}',context);
+ await vm.runInContext('saveWorkMaterial()',context);
+ const pasted=JSON.parse(context.calls.find(c=>c.path==="work-materials").options.body);
+ assert.equal(pasted.text,"\n保留的原文与空行。\n");assert.equal(pasted.source_name,"合成来源说明");
+ assert.ok(node("#work-material-status").innerHTML.includes("&lt;script&gt;合成SOP"));
+ assert.ok(node("#public-library-list").innerHTML.includes("粘贴工作资料"));
+ assert.equal(node("#research-source-mode").value,"jobs");
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBeforeMaterial);
+
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
  vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs";conversation.id="project-1"',context);
  await vm.runInContext('openResearchConversation("project-1",false)',context);

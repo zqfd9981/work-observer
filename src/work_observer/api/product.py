@@ -17,6 +17,13 @@ class PublicDocumentInput(BaseModel):
     url: str = Field(min_length=1, max_length=3000)
 
 
+class WorkMaterialInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=300)
+    text: str = Field(min_length=1, max_length=100_000)
+    source_name: str = Field(default="", max_length=500)
+
+
 class PublicDocumentQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     q: str = Field(default="", max_length=200)
@@ -98,6 +105,22 @@ def product_routes(*, repository, settings, model, response, read_json, busy, op
                 result = await PublicDocumentService(
                     repository(), settings.raw_directory / "public"
                 ).read(data.url)
+        return response(result, 201)
+
+    async def archive_work_material(request):
+        from work_observer.connectors.public_documents import PublicDocumentService
+        from work_observer.storage.locks import exclusive
+
+        if busy():
+            return response(
+                {"error_code": "RESEARCH_BUSY", "message": "请在本轮调查结束后补充资料。"}, 409
+            )
+        data = WorkMaterialInput.model_validate(await read_json(request))
+        async with operation_lock:
+            with exclusive(settings.database_path):
+                result = PublicDocumentService(
+                    repository(), settings.raw_directory / "public"
+                ).archive_text(**data.model_dump())
         return response(result, 201)
 
     async def retrieval(request):
@@ -247,6 +270,7 @@ def product_routes(*, repository, settings, model, response, read_json, busy, op
         Route("/api/public-documents/{id}", public_document),
         Route("/api/public-documents", public_documents),
         Route("/api/public-documents", archive_public_document, methods=["POST"]),
+        Route("/api/work-materials", archive_work_material, methods=["POST"]),
         Route("/api/retrieval", retrieval, methods=["POST"]),
         Route("/api/strategies", strategies),
         Route("/api/strategies", create_strategy, methods=["POST"]),

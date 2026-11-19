@@ -266,7 +266,8 @@ def render(result):
         lines.extend(
             [
                 result["scope"]["source_note"],
-                f"公开资料范围：{result['scope'].get('archived_public_total', 0)}份归档正文。",
+                ("归档资料范围：" if result["scope"].get("work_material_ids") else "公开资料范围：")
+                + f"{result['scope'].get('archived_public_total', 0)}份归档正文。",
                 "",
             ]
         )
@@ -382,6 +383,19 @@ def render(result):
             ]
         )
     for key, item in evidence.items():
+        if item.get("evidence_kind") == "work_material":
+            lines.extend(
+                [
+                    f'<a id="{labels[key].lower()}"></a>',
+                    f"### {labels[key]} · 粘贴工作资料 · {item['title']}",
+                    f"来源说明：{item['publisher']}；保存于：{item['observed_at']}；来源发布时间未知。",
+                    "通过粘贴取得原文，来源说明未经独立核实，内容不表示已执行。",
+                    "",
+                    *["> " + line for line in item["quote"].splitlines()],
+                    "",
+                ]
+            )
+            continue
         if item.get("source") == "public_web":
             archived = item.get("evidence_kind") == "public_document"
             source_label = "归档公开正文" if archived else "公开搜索材料"

@@ -147,7 +147,7 @@ class MemoryService:
                     {
                         "id": item["id"],
                         "public_document_id": document.id,
-                        "evidence_kind": "public_document",
+                        "evidence_kind": metadata["evidence_kind"],
                         "job_id": None,
                         "snapshot_id": None,
                         "document_id": None,
@@ -160,8 +160,8 @@ class MemoryService:
                         "title": document.title,
                         "publisher": document.publisher,
                         "url": document.final_url,
-                        "source": "public_web",
-                        "response_origin": "website",
+                        "source": metadata["source"],
+                        "response_origin": metadata["response_origin"],
                         "observed_at": document.observed_at,
                         "source_published_at": document.source_published_at,
                     }

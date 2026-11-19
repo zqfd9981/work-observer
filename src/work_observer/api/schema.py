@@ -35,6 +35,7 @@ def openapi(routes):
         RetrievalInput,
         RollbackInput,
         StrategyInput,
+        WorkMaterialInput,
     )
     from work_observer.api.profile_quality import SCHEMA_MODELS as PROFILE_QUALITY_MODELS
     from work_observer.api.projects import (
@@ -93,6 +94,7 @@ def openapi(routes):
         ("/api/import", "POST"): ManualJD,
         ("/api/research", "POST"): ResearchInput,
         ("/api/public-documents", "POST"): PublicDocumentInput,
+        ("/api/work-materials", "POST"): WorkMaterialInput,
         ("/api/memories", "POST"): MemoryInput,
         ("/api/memories/{id}/{action}", "POST"): MemoryRevision,
         ("/api/profiles/{id}", "POST"): ProfileInput,
@@ -169,6 +171,7 @@ def openapi(routes):
         "tasks": "有限采集任务与执行状态",
         "inbox": "本地后续问题、已读及处理状态",
         "public-documents": "已归档公开网页与完整性",
+        "work-materials": "粘贴工作资料原文与来源说明；与公开网页获取分开标记",
         "imports": "CSV草稿预览与逐行明确导入",
         "import-assets": "截图归档、明确同意后的单次视觉草稿及原图核对",
     }
@@ -268,6 +271,7 @@ def openapi(routes):
                     "/api/profiles/{id}/correction",
                     "/api/import-assets",
                     "/api/public-documents",
+                    "/api/work-materials",
                 }
                 else "200"
             )
