@@ -298,6 +298,7 @@ class ProjectService:
         key=None,
         approach="standard",
         coverage_mode="all",
+        reply_to_step_id=None,
     ):
         if (
             not question.strip()
@@ -320,6 +321,12 @@ class ProjectService:
                     return record
             if len(record["steps"]) >= record["budget"]["max_rounds"]:
                 raise ProbeError("PROJECT_ROUND_LIMIT")
+            if reply_to_step_id is not None:
+                reply = next((s for s in record["steps"] if s["id"] == reply_to_step_id), None)
+                if reply is None:
+                    raise ProbeError("INVALID_STEP_REPLY")
+                if reply["state"] in {"queued", "running", "interrupted"}:
+                    raise ProbeError("STEP_REPLY_NOT_READY")
             parents = list(dict.fromkeys(depends_on or []))
             if any(parent not in {s["id"] for s in record["steps"]} for parent in parents):
                 raise ProbeError("INVALID_STEP_DEPENDENCY")
@@ -346,6 +353,7 @@ class ProjectService:
                     timeout=timeout,
                     approach=approach,
                     coverage_mode=coverage_mode,
+                    reply_to_step_id=reply_to_step_id,
                     run_id=None,
                     created_at=now(),
                     stop_reason=None,
@@ -756,6 +764,7 @@ class ProjectService:
         self._editable(record)
         allowed = set(step["job_ids"])
         dependencies = dependency_steps(record, step["depends_on"])
+        reply_id = step.get("reply_to_step_id")
         rejected = self.rejected_steps(record)
         excluded = {s["run_id"] for s in record["steps"] if s["id"] in rejected}
         if step.get("review_run_id"):
@@ -768,7 +777,8 @@ class ProjectService:
                 "waiting_review",
             }:
                 continue
-            if previous["scope_version"] != step["scope_version"]:
+            is_reply = previous["id"] == reply_id
+            if previous["scope_version"] != step["scope_version"] and not is_reply:
                 continue
             run = self.store.get(previous["run_id"])
             result = run.get("result") or {}
@@ -786,9 +796,11 @@ class ProjectService:
             if not {j["id"] for j in result.get("scope", {}).get("jobs", [])} <= allowed:
                 continue
             score = len(_tokens(step["question"]) & _tokens(previous["question"]))
-            if previous["id"] not in dependencies and not score:
+            if not is_reply and previous["id"] not in dependencies and not score:
                 continue
-            candidates.append((previous["id"] in dependencies, score, previous, result))
+            candidates.append(
+                (2 if is_reply else int(previous["id"] in dependencies), score, previous, result)
+            )
         candidates.sort(key=lambda value: value[:2], reverse=True)
         context = dict(
             project_id=identity,
@@ -811,6 +823,21 @@ class ProjectService:
                 "未展示不能当作不存在。"
             ),
         )
+        if reply_id:
+            reply = next(s for s in record["steps"] if s["id"] == reply_id)
+            context["reply_to"] = {
+                "step_id": reply_id,
+                "run_id": reply.get("run_id"),
+                "question": reply["question"][:1000],
+                "review_state": reply["state"],
+                "source_scope_version": reply["scope_version"],
+                "findings_included": False,
+            }
+            context["context_version"] = "project-context-v3-replies"
+            context["selection_note"] += (
+                "reply_to明确本次追问对象，不表示认可旧回答；findings_included=false时，"
+                "旧结论因未完成、被拒绝、来源/范围变化或上下文限制未复用，须从现有原文重新调查。"
+            )
         for _, _, previous, result in candidates[:3]:
             query_tokens = _tokens(step["question"])
             ranked = sorted(
@@ -865,6 +892,8 @@ class ProjectService:
                     continue
                 item["omitted_claims"] -= 1
             item["derived_claims"].sort(key=lambda claim: claim["previous_claim_index"])
+            if previous["id"] == reply_id:
+                context["reply_to"]["findings_included"] = True
         return context
 
 

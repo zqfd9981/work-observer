@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
@@ -176,11 +177,101 @@ def test_changed_preference_drops_prior_findings_and_scoped_memory(setup):
     p = service.add(p["id"], "Python职责", revision=p["revision"])
     p = asyncio.run(execute_project(service, p["id"], repo, Settings(), model=EvidenceModel()))
     memory.revise(preference["id"], "Java")
-    p = service.add(p["id"], "Python还有哪些要求", revision=p["revision"])
+    p = service.add(
+        p["id"],
+        "Python还有哪些要求",
+        revision=p["revision"],
+        reply_to_step_id=p["steps"][0]["id"],
+    )
     model = EvidenceModel()
     asyncio.run(execute_project(service, p["id"], repo, Settings(), model=model))
     assert model.contexts[-1]["project_context"]["previous_findings"] == []
+    assert model.contexts[-1]["project_context"]["reply_to"]["findings_included"] is False
     assert [m["content"] for m in model.contexts[-1]["memory_context"]] == ["Java"]
+
+
+def test_explicit_short_followup_keeps_unreviewed_context_without_accepting_it(setup):
+    repo, store, job_id = setup
+    service = ProjectService(store)
+    project = service.create("持续提问", "Python工作", [job_id], max_calls=12)
+    project = service.add(
+        project["id"], "Python接口职责", revision=project["revision"], max_calls=4
+    )
+    project = asyncio.run(
+        execute_project(service, project["id"], repo, Settings(), model=EvidenceModel())
+    )
+    first = project["steps"][0]
+    project = service.add(
+        project["id"],
+        "为什么？",
+        revision=project["revision"],
+        max_calls=4,
+        reply_to_step_id=first["id"],
+    )
+    # Reconstruct the service from persisted state, without a review action.
+    service = ProjectService(store)
+    model = EvidenceModel()
+    project = asyncio.run(execute_project(service, project["id"], repo, Settings(), model=model))
+    context = model.contexts[0]["project_context"]
+    assert context["reply_to"]["step_id"] == first["id"]
+    assert context["reply_to"]["findings_included"] is True
+    assert context["previous_findings"][0]["run_id"] == first["run_id"]
+    assert context["previous_findings"][0]["review_state"] == "waiting_review"
+    assert all(s["state"] == "waiting_review" and not s["depends_on"] for s in project["steps"])
+    assert service.usage(project)["calls"] == 6
+
+
+@pytest.mark.parametrize("keep_original", [True, False])
+def test_explicit_followup_respects_original_scope_after_material_changes(setup, keep_original):
+    repo, store, job_id = setup
+    service = ProjectService(store)
+    project = service.create("补充后追问", "Python工作", [job_id])
+    project = service.add(project["id"], "Python接口职责", revision=project["revision"])
+    project = asyncio.run(
+        execute_project(service, project["id"], repo, Settings(), model=EvidenceModel())
+    )
+    first = project["steps"][0]
+    other = import_jd(
+        repo,
+        RawArchive(Path(repo.engine.url.database).parent / "extra-raw"),
+        ManualJD(
+            title="合成补充材料", company="合成", description="Java开发", data_kind="synthetic"
+        ),
+    )["job_id"]
+    project = service.revise(
+        project["id"],
+        revision=project["revision"],
+        goal=project["goal"],
+        job_ids=[job_id, other] if keep_original else [other],
+    )
+    project = service.add(
+        project["id"],
+        "还有呢？",
+        revision=project["revision"],
+        reply_to_step_id=first["id"],
+    )
+    context = service.context(project["id"], project["steps"][-1], repo)
+    assert context["scope_version"] == 2
+    assert context["reply_to"]["source_scope_version"] == 1
+    assert context["reply_to"]["findings_included"] is keep_original
+    assert bool(context["previous_findings"]) is keep_original
+    assert service.get(project["id"])["steps"][0]["job_ids"] == [job_id]
+
+
+def test_reply_cannot_reference_other_project_or_unfinished_step(setup):
+    _, store, job_id = setup
+    service = ProjectService(store)
+    project = service.create("回复校验", "Python", [job_id])
+    project = service.add(project["id"], "待调查", revision=project["revision"])
+    for identity, error in (
+        ("f" * 32, "INVALID_STEP_REPLY"),
+        (project["steps"][0]["id"], "STEP_REPLY_NOT_READY"),
+    ):
+        with pytest.raises(ProbeError, match=error):
+            service.add(
+                project["id"], "为什么？", revision=project["revision"], reply_to_step_id=identity
+            )
+    assert len(service.get(project["id"])["steps"]) == 1
 
 
 def test_restart_recovery_does_not_consume_and_http_followup(tmp_path):
@@ -224,8 +315,22 @@ def test_restart_recovery_does_not_consume_and_http_followup(tmp_path):
         assert "work_map" not in detail["steps"][0]["result"]
         assert detail["usage"]["calls"] == 0
     with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+        token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
+        headers = {"X-WO-Token": token}
         detail = client.get(f"/api/projects/{p['id']}").json()
         assert detail["steps"][0]["result"]["status"] == "evidence_only"
         assert not detail["worker_running"]
         schema = client.get("/api/openapi.json").json()
         assert "/api/projects/{id}/steps/{step_id}/review" in schema["paths"]
+        followup = client.post(
+            f"/api/projects/{p['id']}/steps",
+            headers=headers,
+            json=dict(
+                revision=detail["revision"],
+                question="为什么？",
+                offline=True,
+                reply_to_step_id=detail["steps"][0]["id"],
+            ),
+        )
+        assert followup.status_code == 201
+        assert followup.json()["steps"][-1]["reply_to_step_id"] == detail["steps"][0]["id"]

@@ -42,6 +42,7 @@ class StepInput(BaseModel):
     )
     kind: str = Field(default="investigate", pattern="^(investigate|counterexample|synthesis)$")
     depends_on: list[str] = Field(default_factory=list, max_length=6)
+    reply_to_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     offline: bool = False
     allow_public: bool = False
     max_calls: int = Field(default=10, ge=1, le=12)

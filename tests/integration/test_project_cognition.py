@@ -174,11 +174,13 @@ def test_reopened_project_retains_provisional_judgement_and_rejection_invalidate
             project["id"],
             "继续检查合成接口任务",
             revision=project["revision"],
+            reply_to_step_id=project["steps"][0]["id"],
             approach="work_map",
             offline=True,
         )
         context = service.context(project["id"], project["steps"][-1], repo)
         assert context["previous_findings"] == []
+        assert context["reply_to"]["findings_included"] is False
         assert context["excluded_prior_findings"] == [
             {"run_id": first["run_id"], "reason": "quality_rejected"}
         ]

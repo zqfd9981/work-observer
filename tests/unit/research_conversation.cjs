@@ -1,7 +1,7 @@
 // Verify the production start/follow-up sequence with isolated API and DOM doubles.
 const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
 const nodes=new Map(),storage=new Map();
-const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{checked:false,value:"",disabled:false,children:[],append(child){this.children.push(child);},insertAdjacentHTML(position,html){this.innerHTML=(this.innerHTML||"")+html;},querySelector:node,querySelectorAll:()=>[],addEventListener(){}});return nodes.get(selector);};
+const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{checked:false,value:"",disabled:false,children:[],focus(){},scrollIntoView(){},append(child){this.children.push(child);},insertAdjacentHTML(position,html){this.innerHTML=(this.innerHTML||"")+html;},querySelector:node,querySelectorAll:()=>[],addEventListener(){}});return nodes.get(selector);};
 const context={document:{createElement:tag=>node("created-"+tag),querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:""},sessionStorage:{setItem:(k,v)=>storage.set(k,v),getItem:k=>storage.get(k)||null,removeItem:k=>storage.delete(k)},crypto:{randomUUID:()=>"synthetic-request"},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),context);
@@ -42,6 +42,18 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(node("#conversation-question").value.includes("结合刚归档"));
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,2);
 
+ vm.runInContext('state.serviceContract={components:{schemas:{StepInput:{properties:{reply_to_step_id:{}}}}}};conversation.replyToStepId=undefined;api=async(path,options)=>{calls.push({path,options});return options?{}:{id:"project-1",revision:5,worker_running:false,steps:[{id:"a".repeat(32),state:"waiting_review"},{id:"b".repeat(32),state:"queued"}]};}',context);
+ await vm.runInContext('askResearchConversation("为什么？")',context);
+ let reply=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
+ assert.equal(reply.reply_to_step_id,"a".repeat(32)); // Pending planned work is not the reply target.
+ const runsBefore=context.calls.filter(c=>c.path.endsWith("/run")).length;
+ vm.runInContext('prefillConversationFollowup({dataset:{replyStep:"c".repeat(32),conversationClaim:"合成待核实判断"}})',context);
+ assert.ok(node("#conversation-question").value.includes("合成待核实判断"));
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBefore); // Selection only drafts a question.
+ await vm.runInContext('askResearchConversation("针对更早的判断核实")',context);
+ reply=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
+ assert.equal(reply.reply_to_step_id,"c".repeat(32));
+ assert.equal(context.calls.filter(c=>c.path.includes("/review")).length,0);
 
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
  vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs"',context);
