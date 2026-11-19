@@ -637,17 +637,19 @@ async def _persisted_research(repository, question, settings, **options):
             if key in options and options[key] != original_input.get(key):
                 raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
             options.setdefault(key, original_input.get(key))
-        if original_input.get("review_run_id"):
-            for key in (
-                "job_ids",
-                "filters",
-                "project_id",
-                "offline",
-                "max_calls",
-                "timeout",
-                "allow_public",
-            ):
-                options.setdefault(key, original_input.get(key))
+        for key in (
+            "job_ids",
+            "filters",
+            "project_id",
+            "offline",
+            "max_calls",
+            "timeout",
+            "allow_public",
+            "allow_proposals",
+        ):
+            if key in original_input:
+                options.setdefault(key, original_input[key])
+        if "filters" in options:
             options["filters"] = Filters.model_validate(options.get("filters") or {})
     approach = options.get("approach", "standard")
     if options.get("review_id") and not options.get("review_run_id"):
