@@ -31,17 +31,25 @@ _HEADING = re.compile(
     r"^(?:#{1,6}\s+|(?:方向|岗位方向|研究方向)[一二三四五六七八九十\d：:、\s]"
     r"|[一二三四五六七八九十]+[、.．].{0,50}(?:方向|职责|要求|背景)$)"
 )
+_SECTION_HEADINGS = {"岗位职责", "岗位要求", "任职要求", "工作内容", "业务背景"}
+_PRIORITY_HEADINGS = {"优先加分项", "优先条件", "优先项", "加分项"}
+
+
+def _literal_section(text):
+    return text.strip().rstrip("：:") in _SECTION_HEADINGS | _PRIORITY_HEADINGS
 
 
 def _heading(text):
     stripped = text.strip()
     if not stripped or len(stripped) > 100:
         return None
+    if stripped.rstrip("：:") in _PRIORITY_HEADINGS:
+        return 3
+    if stripped.rstrip("：:") in _SECTION_HEADINGS:
+        return 2
     if stripped.endswith(("：", ":")) or _HEADING.search(stripped):
         prefix = re.match(r"^(#{1,6})\s", stripped)
         return len(prefix[1]) if prefix else 2
-    if stripped in {"岗位职责", "岗位要求", "任职要求", "工作内容", "业务背景"}:
-        return 1
     return None
 
 
@@ -232,7 +240,12 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
                 line_start = start == 0 or (
                     start > block["start"] and block["text"][start - block["start"] - 1] in "\r\n"
                 )
-                level = _heading(text) if line_start else None
+                inline_section = (
+                    start > block["start"]
+                    and block["text"][start - block["start"] - 1] in "。；！？;!?"
+                    and _literal_section(text)
+                )
+                level = _heading(text) if line_start or inline_section else None
                 if level is not None:
                     headings = [heading for heading in headings if heading["level"] < level]
                 if displayed >= max_sentences:

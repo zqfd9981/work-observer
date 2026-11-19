@@ -13,6 +13,7 @@ from work_observer.research.source_first import (
     resolve_answer,
     review_finding_history,
     review_findings,
+    source_quote_check,
     tools,
     unit_repair_options,
 )
@@ -269,6 +270,32 @@ def test_unit_feedback_never_suggests_pieces_from_a_changed_source_identity():
     assert choice["available_unit_sentence_ids"] == []
     assert choice["action"] == "verify_source_and_read_coverage"
     assert choice["current_unit_fully_read_and_shown"] is False
+
+
+def test_registered_partial_quote_is_retained_but_flagged_without_qualifier_completion():
+    evidence, views = sources("熟悉" + "平台工程" * 180 + "者优先。", cuts=[700])
+    refs = [row["sentence_id"] for row in sentences(views)]
+    rows = register({"findings": [item(refs=refs[:1], facet="qualification")]}, views, [], {"j1"})
+    assert rows[0]["state"] == "stated"
+    assert rows[0]["sentence_ids"] == refs[:1]
+    assert "者优先" not in rows[0]["citations"][0]["text"]
+    assert rows[0]["source_quote_check"]["status"] == "incomplete"
+    assert rows[0]["source_quote_check"]["semantic_approval"] is False
+    assert review_findings(rows)[0]["source_quote_check"] == rows[0]["source_quote_check"]
+    corrected = register(
+        {"findings": [item("F2", refs=refs, facet="qualification", supersedes=["F1"])]},
+        views,
+        rows,
+        {"j1"},
+    )
+    assert corrected[-1]["source_quote_check"]["status"] == "covered"
+    assert (
+        not corrected[0]["active"] and corrected[0]["source_quote_check"]["status"] == "incomplete"
+    )
+    legacy = deepcopy(rows)
+    legacy[0].pop("source_quote_check")
+    assert "source_quote_check" not in review_findings(legacy)[0]
+    assert source_quote_check([{"text": "legacy"}])["status"] == "unverified"
 
 
 def test_declared_sentence_subset_avoids_unrelated_qualification_without_mutating_text():

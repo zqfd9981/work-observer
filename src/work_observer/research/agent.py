@@ -1118,6 +1118,19 @@ async def _research(
                             for row in findings
                             if row["active"] and row["state"] in {"not_disclosed", "unresolved"}
                         ]
+                        warnings = [
+                            {"finding_id": row["id"], **row["source_quote_check"]}
+                            for row in findings
+                            if row["id"] in entry["finding_ids"]
+                            and row.get("source_quote_check", {}).get("status")
+                            in {"incomplete", "unverified"}
+                        ]
+                        if warnings:
+                            data["source_quote_warnings"] = warnings
+                            data["source_quote_notice"] = (
+                                "这些分项引用的单元未覆盖完整或信息不足；后文可能有优先、否定或范围限定。"
+                                "请核对完整原文并显式修订，不能仅凭片段判定资格。批次已保存为草稿，仍非语义通过。"
+                            )
                 elif name == "plan_research" and set(arguments) == {"objective", "steps"}:
                     if (
                         not queried

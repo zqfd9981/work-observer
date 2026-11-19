@@ -7,7 +7,7 @@ const e = escapeHTML;
 const token = $('meta[name="wo-token"]').content;
 const state = {importAsset:null,csvRows:[],operations:null, filters:{}, offset:0, limit:20, jobs:new Map(), selected:new Map(), researchIds:null,
   activeRun:null, lastRun:null, lastResult:null, memories:new Map(), overview:null, page:"jobs", querySerial:0};
-const statusLabels = {completed:"研究完成", partial:"已保留部分结果", evidence_only:"原文证据包", failed:"研究未完成", incomplete:"达到研究上限", insufficient_evidence:"正文不足"};
+const statusLabels = {completed:"回答已生成", partial:"已保留部分结果", evidence_only:"原文证据包", failed:"研究未完成", incomplete:"达到研究上限", insufficient_evidence:"正文不足"};
 const originLabels = {website:"网站响应", unknown:"新鲜度未知", cache:"缓存资料", replay:"回放资料", manual:"人工资料", test:"测试资料", client_error:"获取失败"};
 const requirementLabels = {required:"必备", preferred:"加分", unspecified:"未明确性质"};
 const domainLabels = {business_application:"业务应用开发",agent_platform:"执行平台与 Harness",domain_decision:"领域决策系统",model_serving:"模型与推理部署",configuration_delivery:"平台配置与实施",other:"其他待定义领域"};
@@ -248,12 +248,38 @@ function renderFindingActor(row) {
   return Object.prototype.hasOwnProperty.call(row,"actor") ? `<small> · 主体：${e(findingActors[row.actor] || row.actor || "主体未明确")}</small>` : "";
 }
 
+function findingQuoteStatus(row) {
+  const cites=row.citations || [];
+  if (!cites.length) return null;
+  if (!cites.every(cite=>cite.unit_id)) {
+    return ["covered","incomplete","unverified"].includes(row.source_quote_check?.status) ? row.source_quote_check.status : "unverified";
+  }
+  for (const cite of cites) {
+    if (cite.unit_complete_read !== true || cite.unit_all_parts_shown !== true || !Number.isInteger(cite.unit_start) || !Number.isInteger(cite.unit_end) || cite.unit_start < 0 || cite.unit_end <= cite.unit_start) return "incomplete";
+    const parts=cites.filter(part=>part.unit_id === cite.unit_id).sort((a,b)=>a.start-b.start || a.end-b.end);
+    let cursor=cite.unit_start;
+    for (const part of parts) {
+      if (part.unit_start !== cite.unit_start || part.unit_end !== cite.unit_end || !Number.isInteger(part.start) || !Number.isInteger(part.end) || part.start < 0 || part.end <= part.start || part.start > cursor) return "incomplete";
+      cursor=Math.max(cursor,part.end);
+    }
+    if (cursor !== cite.unit_end) return "incomplete";
+  }
+  return "covered";
+}
+
+function renderFindingQuoteWarning(row) {
+  const status=findingQuoteStatus(row);
+  if (!status || status === "covered") return "";
+  const note=status === "incomplete" ? "部分原文单元未完整引用；后文可能含优先、否定或范围限定。请核对完整原文，不凭片段判定资格。" : "完整原文单元的定位信息不足，请核对全文中的条件与限定。";
+  return `<p class="form-note" role="note"><strong>引用完整性待核：</strong>${note} 这不改变原登记或判断，也不表示语义通过。</p>`;
+}
+
 function renderFindingHistory(revisions, findings) {
   if (!revisions.length) return "";
   return `<details><summary>分项修订记录 · ${revisions.length} 条历史</summary><p class="form-note">历史保留，不作为活动结论。</p>${revisions.map(row=>{
     const replacement=findings.find(item=>item.id === row.superseded_by);
     const v2=Object.prototype.hasOwnProperty.call(row,"actor");
-    return `<section class="detail-section"><p>${e(row.id)} → ${e(row.superseded_by || "后续记录")} · ${e(findingFacets[row.facet] || row.facet)}${renderFindingActor(row)} · 原状态：${e(findingStates[row.state] || "待核")}<br>修订说明（研究登记，待核）：${e(replacement?.reason || "请核对原始记录")}</p>${v2 ? `<p class="form-note">原登记理由（待核）：${e(row.reason || "未记录")}${replacement ? `<br>更正后维度：${e(findingFacets[replacement.facet] || replacement.facet)}${renderFindingActor(replacement)}` : ""}</p>${(row.citations || []).map(cite=>`${(cite.context || []).length ? `<p class="form-note">原文上下文（定位信息，仍需核对）：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>` : ""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")} · 版本 ${e(cite.snapshot_id || "待核")}</p>`).join("")}` : ""}</section>`;
+    return `<section class="detail-section"><p>${e(row.id)} → ${e(row.superseded_by || "后续记录")} · ${e(findingFacets[row.facet] || row.facet)}${renderFindingActor(row)} · 原状态：${e(findingStates[row.state] || "待核")}<br>修订说明（研究登记，待核）：${e(replacement?.reason || "请核对原始记录")}</p>${v2 ? `<p class="form-note">原登记理由（待核）：${e(row.reason || "未记录")}${replacement ? `<br>更正后维度：${e(findingFacets[replacement.facet] || replacement.facet)}${renderFindingActor(replacement)}` : ""}</p>${renderFindingQuoteWarning(row)}${(row.citations || []).map(cite=>`${(cite.context || []).length ? `<p class="form-note">原文上下文（定位信息，仍需核对）：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>` : ""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")} · 版本 ${e(cite.snapshot_id || "待核")}</p>`).join("")}` : ""}</section>`;
   }).join("")}</details>`;
 }
 
@@ -294,7 +320,7 @@ function renderReviewFindings(packet) {
   (packet.scope?.jobs || []).forEach(addTitle);
   (packet.frozen_sources || []).forEach(addTitle);
   (packet.claims || []).forEach(claim=>(claim.citations || []).forEach(addTitle));
-  return scopeContext+`<section class="research-context"><h3>原文分项记录 · 一并核对</h3><p class="form-note">以下是研究登记，明示与否定的解释仍需语义审核，不表示已经核对通过。岗位建设任务、个人分工、独立程度、上线责任与平台运行角色分别核对；流程中的人或Agent不自动等于应聘者。未知不能抹去已披露的原文动作。</p>${[...new Set(findings.map(row=>row.job_id))].map(id=>`<section class="detail-section"><h4>${e(titles.get(id) || "指定岗位 · "+id)}</h4>${[false,true].map(unknown=>{const selected=findings.filter(row=>row.job_id===id && ["not_disclosed","unresolved"].includes(row.state)===unknown);return selected.length?`<h5>${unknown?"待核实的维度（不等于没有该职责）":"有原文分句的登记"}</h5>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet_label || row.facet)}</strong>${renderFindingActor(row)} ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`${cite.context?.length?`<p class="form-note">原文上下文：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>`:""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")}</p>`).join("")}</section>`).join("")}`:"";}).join("")}</section>`).join("")}${renderFindingHistory(history,[...findings,...history])}${supportedClaims}</section>`;
+  return scopeContext+`<section class="research-context"><h3>原文分项记录 · 一并核对</h3><p class="form-note">以下是研究登记，明示与否定的解释仍需语义审核，不表示已经核对通过。岗位建设任务、个人分工、独立程度、上线责任与平台运行角色分别核对；流程中的人或Agent不自动等于应聘者。未知不能抹去已披露的原文动作。</p>${[...new Set(findings.map(row=>row.job_id))].map(id=>`<section class="detail-section"><h4>${e(titles.get(id) || "指定岗位 · "+id)}</h4>${[false,true].map(unknown=>{const selected=findings.filter(row=>row.job_id===id && ["not_disclosed","unresolved"].includes(row.state)===unknown);return selected.length?`<h5>${unknown?"待核实的维度（不等于没有该职责）":"有原文分句的登记"}</h5>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet_label || row.facet)}</strong>${renderFindingActor(row)} ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${renderFindingQuoteWarning(row)}${(row.citations || []).map(cite=>`${cite.context?.length?`<p class="form-note">原文上下文：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>`:""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")}</p>`).join("")}</section>`).join("")}`:"";}).join("")}</section>`).join("")}${renderFindingHistory(history,[...findings,...history])}${supportedClaims}</section>`;
 }
 
 function renderSourceFindings(result, evidence) {
@@ -307,7 +333,7 @@ function renderSourceFindings(result, evidence) {
     const groups = [false,true].map(unknown=>{
       const selected = active.filter(row=>["not_disclosed","unresolved"].includes(row.state) === unknown);
       if (!selected.length) return "";
-      return `<h4>${unknown ? "待核实的维度" : "有原文分句的登记"}</h4>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet)}</strong>${renderFindingActor(row)} ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`<blockquote>${e(cite.text)}</blockquote><p class="form-note">原文字符 ${e(cite.start)}–${e(cite.end)} ${evidence.has(cite.evidence_id) ? `<button class="cite" data-cite="${e(cite.evidence_id)}" data-cite-start="${e(cite.start)}" data-cite-end="${e(cite.end)}">${e(evidence.get(cite.evidence_id).label)} · 定位原文 ↗</button>` : "来源待定位"}</p>`).join("")}</section>`).join("")}`;
+      return `<h4>${unknown ? "待核实的维度" : "有原文分句的登记"}</h4>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet)}</strong>${renderFindingActor(row)} ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${renderFindingQuoteWarning(row)}${(row.citations || []).map(cite=>`<blockquote>${e(cite.text)}</blockquote><p class="form-note">原文字符 ${e(cite.start)}–${e(cite.end)} ${evidence.has(cite.evidence_id) ? `<button class="cite" data-cite="${e(cite.evidence_id)}" data-cite-start="${e(cite.start)}" data-cite-end="${e(cite.end)}">${e(evidence.get(cite.evidence_id).label)} · 定位原文 ↗</button>` : "来源待定位"}</p>`).join("")}</section>`).join("")}`;
     }).join("");
     return `<section class="detail-section"><h3>${e(job?.title || id)} · ${e(job?.company || "公司待核")}</h3>${groups}</section>`;
   }).join("");
@@ -366,7 +392,7 @@ function safeURL(value) {
 function renderResearchContext(result) {
   const plan = result.plan;
   const business=result.business_review || {status:"pending"};
-  const qualityNote=result.status === "completed" ? `<div class="research-context">${badge(business.status === "approved" && business.reviewer_kind === "human" ? "已人工核对业务质量" : business.status === "rejected" ? "业务质量核对未通过" : "业务质量待核对",business.status === "approved" && business.reviewer_kind === "human" ? "muted" : "amber")}<p>研究完成表示执行已结束；引用存在与格式检查不能证明结论受原文支持。</p><a class="secondary small" href="#quality">逐条核对判断与原文 ↗</a>${result.requirement_policy ? `<details><summary>本次要求性质口径</summary><p>${e(result.requirement_policy)}</p></details>` : ""}</div>` : "";
+  const qualityNote=result.status === "completed" ? `<div class="research-context">${badge(business.status === "approved" && business.reviewer_kind === "human" ? "已人工核对业务质量" : business.status === "rejected" ? "业务质量核对未通过" : "业务质量待核对",business.status === "approved" && business.reviewer_kind === "human" ? "muted" : "amber")}<p>回答已生成表示执行结束；问题交付完整性和语义支持仍须逐项核对。</p><a class="secondary small" href="#quality">逐条核对判断与原文 ↗</a>${result.requirement_policy ? `<details><summary>本次要求性质口径</summary><p>${e(result.requirement_policy)}</p></details>` : ""}</div>` : "";
   const review = result.review;
   const memories = result.memories || result.memory_used || [];
   const audit=result.audit || {};

@@ -9,6 +9,13 @@ const context = {document:{querySelector:node,querySelectorAll:()=>[],addEventLi
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),context);
 context.fixture = JSON.parse(fs.readFileSync(process.argv[3],"utf8"));
+context.partialUnit={citations:[{unit_id:"synthetic-unit",unit_start:0,unit_end:12,start:0,end:7,unit_complete_read:true,unit_all_parts_shown:true,text:"合成前半"}]};
+vm.runInContext("globalThis.partialStatus=findingQuoteStatus(partialUnit);globalThis.partialWarning=renderFindingQuoteWarning(partialUnit);globalThis.fullStatus=findingQuoteStatus({citations:[...partialUnit.citations,{...partialUnit.citations[0],start:7,end:12,text:'者优先'}]});globalThis.packetWarning=renderFindingQuoteWarning({citations:[{text:'prefix'}],source_quote_check:{status:'incomplete'}});globalThis.legacyWarning=renderFindingQuoteWarning({citations:[{text:'legacy'}]})",context);
+assert.equal(context.partialStatus,"incomplete");
+assert.equal(context.fullStatus,"covered");
+assert.ok(context.partialWarning.includes("后文可能含优先"));
+assert.ok(context.packetWarning.includes("部分原文单元未完整引用"));
+assert.ok(context.legacyWarning.includes("定位信息不足"));
 vm.runInContext("globalThis.orphanNotes=renderClaimAnalysisNotes({claims:[],source_binding_check:{analysis_notes:[{index:0,notice:'draft'}]}},0);globalThis.invalidNotes=renderClaimAnalysisNotes({claims:[{}],analysis_notes:[true,false,'0',null,-1,1,0.5].map(index=>({index,notice:'invalid'}))},0)",context);
 assert.equal(context.orphanNotes,"");
 assert.equal(context.invalidNotes,"");

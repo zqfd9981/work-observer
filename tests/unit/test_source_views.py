@@ -26,6 +26,39 @@ def source(view, job_index=0, source_index=0):
     return view["jobs"][job_index]["sources"][source_index]
 
 
+@pytest.mark.parametrize("colon", ["", "："])
+def test_literal_inline_qualification_and_priority_headers_keep_read_context(colon):
+    text = (
+        f"岗位职责\n负责接口开发。\t 任职要求{colon}\n熟练Python。\n"
+        f"优先加分项{colon}\n具有评测经验。"
+    )
+    item = source(build_source_views([evidence(text)]))
+    requirement = next(row for row in item["sentences"] if "熟练Python" in row["text"])
+    preferred = next(row for row in item["sentences"] if "具有评测" in row["text"])
+    assert [row["text"].strip() for row in requirement["context"]] == [f"任职要求{colon}"]
+    assert [row["text"].strip() for row in preferred["context"]] == [
+        f"任职要求{colon}",
+        f"优先加分项{colon}",
+    ]
+    for row in [requirement, preferred]:
+        assert not {"category", "requirement", "qualification"}.intersection(row)
+        for heading in row["context"]:
+            assert text[heading["start"] : heading["end"]] == heading["text"]
+            assert heading["heuristic"] is True
+    assert "".join(row["text"] for row in item["sentences"]) == text
+
+
+def test_inline_section_recognition_does_not_infer_unread_prefix_or_body_mentions():
+    text = "岗位职责\n负责解释任职要求并开发接口。\t 任职要求\n熟练Python。"
+    full = source(build_source_views([evidence(text)]))
+    mention = next(row for row in full["sentences"] if "负责解释" in row["text"])
+    assert not mention["heading_heuristic"]
+    start = text.index("\t 任职要求")
+    partial = source(build_source_views([evidence(text, start=start)]))
+    assert not partial["coverage"]["fully_read"]
+    assert all(not row["context"] for row in partial["sentences"])
+
+
 def test_model_projection_deduplicates_only_provenance_and_does_not_mutate_canonical_view():
     text = "岗位职责：\n负责Python接口开发；任职要求：\n具备调试经验者优先。"
     rows = [

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from work_observer.connectors.mcp_probe import ProbeError
 
-VERSION = "source-first-v7"
+VERSION = "source-first-v8"
 FACETS = {
     "work_task": "岗位建设与工作任务",
     "deliverable": "工作产出",
@@ -169,7 +169,8 @@ def tools(base, *, scope_jobs=None, views=None, findings=None):
     schema = _strict_schema(schema)
     selected[-1]["parameters"] = {"type": "object", **schema}
     selected[-1]["description"] = (
-        "完成来源分项研究。每条模型分析用bindings明确选择活动已知finding的完整已读分句；"
+        "提交原问题要求的完整回答，不能用来源分项旁列代替资格分级、案例建议或招聘方核实问题等明确交付。"
+        "未能完成的交付须在gaps具体说明。每条模型分析用bindings明确选择活动已知finding的完整已读分句；"
         "未知ID单列unknown_finding_ids。跨岗用synthesis或inference，多维关系仍需语义核对。"
         "程序派生引用，不能自动证明语义正确，也不会改写判断文字。"
     )
@@ -346,6 +347,8 @@ def register(arguments, views, previous, scope_jobs):
             citations=[deepcopy(sentences[key]) for key in refs],
             evidence_ids=list(dict.fromkeys(sentences[key]["evidence_id"] for key in refs)),
         )
+        if refs:
+            row["source_quote_check"] = source_quote_check(row["citations"])
         known[row["id"]] = row
     active = [row for row in known.values() if row["active"]]
     for row in active:
@@ -454,6 +457,53 @@ def _unit_issues(selected, all_citations, *, legacy=False):
         if cursor != end:
             issues.append("sentence_unit_requires_all_parts")
     return list(dict.fromkeys(issues))
+
+
+def source_quote_check(citations):
+    """Check only the positions of cited units, not truth, support or qualification strength."""
+    if not citations or any(not row.get("unit_id") for row in citations):
+        return {
+            "status": "unverified",
+            "issues": ["unit_metadata_missing"],
+            "semantic_approval": False,
+        }
+    issues = []
+    for row in citations:
+        if row.get("unit_complete_read") is not True or row.get("unit_all_parts_shown") is not True:
+            issues.append("sentence_unit_not_completely_read_or_shown")
+            continue
+        start, end = row.get("unit_start"), row.get("unit_end")
+        if not (type(start) is int and type(end) is int and 0 <= start < end):
+            issues.append("sentence_unit_invalid_range")
+            continue
+        parts = [part for part in citations if part["unit_id"] == row["unit_id"]]
+        if any(
+            not (
+                type(part.get("start")) is int
+                and type(part.get("end")) is int
+                and 0 <= part["start"] < part["end"]
+            )
+            for part in parts
+        ):
+            issues.append("sentence_unit_invalid_range")
+            continue
+        cursor = start
+        for part in sorted(parts, key=lambda part: (part["start"], part["end"])):
+            if (
+                part.get("unit_start") != start
+                or part.get("unit_end") != end
+                or part["start"] > cursor
+            ):
+                cursor = -1
+                break
+            cursor = max(cursor, part["end"])
+        if cursor != end:
+            issues.append("sentence_unit_requires_all_parts")
+    return {
+        "status": "incomplete" if issues else "covered",
+        "issues": list(dict.fromkeys(issues)),
+        "semantic_approval": False,
+    }
 
 
 def unit_repair_options(answer, findings, evidence, issues):
@@ -780,11 +830,13 @@ def _review_finding(row):
     }
     if "actor" in row:
         result.update(actor=row["actor"], actor_label=ACTORS[row["actor"]])
+    if "source_quote_check" in row:
+        result["source_quote_check"] = deepcopy(row["source_quote_check"])
     return result
 
 
 def review_findings(findings):
-    """Old v1 packet fields remain identical; only explicit v2 rows expose actor metadata."""
+    """Keep legacy packet fields; include quote checks only when explicitly recorded."""
     return [_review_finding(row) for row in findings if row["active"]]
 
 

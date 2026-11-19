@@ -115,6 +115,27 @@ def test_saved_report_preserves_active_unknown_and_revision_summary(synthetic_re
     assert "不是人工审核通过" in text and "不能覆盖上述原文动作" in text
 
 
+def test_partial_unit_warning_does_not_rewrite_a_legacy_report_source(synthetic_result):
+    row = next(
+        row for row in synthetic_result["source_findings"] if row["active"] and row.get("citations")
+    )
+    cite = row["citations"][0]
+    cite.update(
+        unit_id="synthetic-partial",
+        unit_start=cite["start"],
+        unit_end=cite["end"] + 4,
+        unit_complete_read=True,
+        unit_all_parts_shown=True,
+    )
+    before = deepcopy(synthetic_result)
+    text = render(synthetic_result)
+    assert "部分原文单元未完整引用" in text
+    assert "后文可能含优先、否定或范围限定" in text
+    assert cite["text"] in text
+    assert synthetic_result == before
+    assert "source_quote_check" not in row
+
+
 def test_old_report_does_not_acquire_trial_sections(synthetic_result):
     legacy = deepcopy(synthetic_result)
     del legacy["source_findings"]

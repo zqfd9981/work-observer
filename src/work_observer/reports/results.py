@@ -122,6 +122,22 @@ def _render_claim_sentences(claim):
     return lines
 
 
+def _finding_quote_warning(row):
+    from work_observer.research.source_first import source_quote_check
+
+    if not row.get("citations"):
+        return ""
+    check = source_quote_check(row["citations"])
+    if check["status"] == "covered":
+        return ""
+    if check["status"] == "incomplete":
+        return (
+            "部分原文单元未完整引用；后文可能含优先、否定或范围限定。"
+            "请核对完整原文，不凭片段判定资格。"
+        )
+    return "完整原文单元的定位信息不足，请核对全文中的条件与限定。"
+
+
 def _render_source_findings(result, labels):
     findings = result.get("source_findings", [])
     if not findings:
@@ -152,6 +168,9 @@ def _render_source_findings(result, labels):
                     f"{FINDING_STATES.get(row['state'], '状态待核')}（{row['id']}）"
                     f"{_finding_actor(row)}"
                 )
+                warning = _finding_quote_warning(row)
+                if warning:
+                    lines.append("  - 引用完整性待核：" + warning)
                 for cite in row.get("citations", []):
                     label = labels.get(cite.get("evidence_id"))
                     reference = f"[{label}](#{label.lower()})" if label else "来源待定位"
@@ -177,6 +196,9 @@ def _render_source_findings(result, labels):
                 f"{FINDING_STATES.get(row['state'], '待核')}；"
                 f"修订说明（研究登记，待核）：{replacement.get('reason', '请核对原始记录')}"
             )
+            warning = _finding_quote_warning(row)
+            if warning:
+                lines.append("  - 引用完整性待核：" + warning)
             if "actor" in row:
                 lines.append(f"  - 原登记理由（待核）：{escape(row.get('reason', '未记录'))}")
                 if replacement:
