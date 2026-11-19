@@ -43,3 +43,8 @@ const revision=vm.runInContext("renderCognitiveRevisions(revised,evidence)",cont
 assert.ok(revision.includes("重读原材料")&&revision.includes("不等于外部工作需求变化"));
 assert.ok(revision.includes("&lt;script&gt;旧判断")&&revision.includes("&lt;img&gt;本轮判断")&&!revision.includes("<script>"));
 assert.ok(revision.includes('data-open-run="'+"a".repeat(32)+'"')&&revision.includes('data-cite="one"'));
+context.notices=[{run_id:"later",previous_claim_index:2,previous_statement:"<script>原任务</script>",decision:"revise",reason:"<img>须核实分工",new_statements:["新的限定"]}];
+const notice=vm.runInContext("renderMemoryRevisionNotices(notices)",context);
+assert.ok(notice.includes("涉及原判断 3")&&notice.includes("&lt;script&gt;原任务"));
+assert.ok(notice.includes('data-open-run="later"')&&notice.includes("已保存内容保留"));
+assert.ok(!notice.includes("<script>")&&!notice.includes("<img>"));

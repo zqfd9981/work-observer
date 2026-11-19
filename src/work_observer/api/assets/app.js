@@ -1806,7 +1806,7 @@ const memoryValidityLabels = {outside_effective_time:"尚未生效或已过有�
 
 function renderMemoryRevisionNotices(notices) {
   const labels = {revise:"提出修订",withdraw:"建议撤回",unresolved:"尚未解决"};
-  return (notices || []).map(item=>`<div class="research-context">${badge("后续研究 · " + (labels[item.decision] || "待核对"),"amber")}<p>${e(item.reason)}</p>${(item.new_statements || []).map(text=>`<p>${e(text)}</p>`).join("")}<p class="form-note">后续判断待核对，已保存内容保留。请核对后使用“修订”或“撤回”。</p><button class="text-button" data-open-run="${e(item.run_id)}">核对后续研究及原文 ↗</button></div>`).join("");
+  return (notices || []).map(item=>`<div class="research-context">${badge("后续研究 · " + (labels[item.decision] || "待核对"),"amber")}${item.previous_statement?`<p><strong>涉及原判断 ${e(item.previous_claim_index+1)}：</strong>${e(item.previous_statement)}</p>`:""}<p>${e(item.reason)}</p>${(item.new_statements || []).map(text=>`<p>${e(text)}</p>`).join("")}<p class="form-note">后续判断待核对，已保存内容保留。请结合原文决定是否修订或撤回。</p><button class="text-button" data-open-run="${e(item.run_id)}">核对后续研究及原文 ↗</button></div>`).join("");
 }
 
 function renderMemory(item) {

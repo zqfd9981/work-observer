@@ -164,8 +164,39 @@ class DomainKnowledgeService:
                 statement.order_by(DomainDefinition.domain_key, DomainDefinition.version.desc())
             ):
                 reasons = self.definition_validity(row)
-                output.append({**_record(row), "stale": bool(reasons), "stale_reasons": reasons})
+                output.append(
+                    {
+                        **_record(row),
+                        "stale": bool(reasons),
+                        "stale_reasons": reasons,
+                        "revision_notices": self.revision_notices(row),
+                    }
+                )
             return output
+
+    def revision_notices(
+        self, row, *, at=None, project_id=None, scoped=False, job_ids=None, public_document_ids=None
+    ):
+        from work_observer.memory.revisions import claim_revision_notices
+
+        if isinstance(row, DomainDefinition):
+            context = row.source_context or {}
+            source_run_id = context.get("run_id")
+        else:
+            context = row.scope.get("research_map", {})
+            source_run_id = row.source_run_id
+        if not source_run_id or row.status == "invalidated":
+            return []
+        return claim_revision_notices(
+            self.repository,
+            source_run_id,
+            context.get("claim_indices", []),
+            at=at,
+            project_id=project_id,
+            scoped=scoped,
+            job_ids=job_ids,
+            public_document_ids=public_document_ids,
+        )
 
     def definition_validity(
         self, row, *, job_ids=None, public_document_ids=None, project_id=None, scoped=False, at=None
@@ -442,7 +473,14 @@ class DomainKnowledgeService:
                     if row.status != "invalidated"
                     else ["上游研究已失效"]
                 )
-                output.append({**_record(row), "stale": bool(reasons), "stale_reasons": reasons})
+                output.append(
+                    {
+                        **_record(row),
+                        "stale": bool(reasons),
+                        "stale_reasons": reasons,
+                        "revision_notices": self.revision_notices(row),
+                    }
+                )
             return output
 
     def invalidate_research(self, run_ids):
@@ -640,6 +678,15 @@ class DomainKnowledgeService:
             domain_output, relation_output = [], []
             for identity in domain_ids:
                 row = definitions[identity]
+                notices = self.revision_notices(
+                    row,
+                    at=cutoff,
+                    project_id=project_id,
+                    scoped=True,
+                    job_ids=jobs,
+                    public_document_ids=public_ids,
+                )
+                source_runs.update(notice["run_id"] for notice in notices)
                 dependencies.append(
                     {
                         "kind": "domain_definition",
@@ -660,9 +707,19 @@ class DomainKnowledgeService:
                         "derived": True,
                         "source_context": row.source_context or {},
                         "independent_source": False,
+                        **({"revision_notices": notices} if notices else {}),
                     }
                 )
             for row in relations:
+                notices = self.revision_notices(
+                    row,
+                    at=cutoff,
+                    project_id=project_id,
+                    scoped=True,
+                    job_ids=jobs,
+                    public_document_ids=public_ids,
+                )
+                source_runs.update(notice["run_id"] for notice in notices)
                 dependencies.append(
                     {
                         "kind": "work_relation",
@@ -704,6 +761,7 @@ class DomainKnowledgeService:
                         "counter_references": references(row.counterevidence),
                         "derived": True,
                         "independent_source": False,
+                        **({"revision_notices": notices} if notices else {}),
                     }
                 )
             return {
@@ -717,6 +775,7 @@ class DomainKnowledgeService:
                 "rules": (
                     "领域与关系是人审派生线索，不是独立来源；原文引用尚未读取，"
                     "必须用read_job或search_archived_sources重新取得当前研究的证据后才能提交判断。"
+                    "revision_notices是后续研究提出的不同判断，使用前核对原文；未自动修改采纳状态。"
                 ),
             }
 

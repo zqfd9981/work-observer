@@ -17,6 +17,34 @@ def revision_notices(
     original = auditor._read("research_checkpoints", memory["source_run_id"])
     claims = ((original or {}).get("result") or {}).get("claims", [])
     indices = {i for i, claim in enumerate(claims) if claim.get("text") == memory["content"]}
+    return claim_revision_notices(
+        repository,
+        memory["source_run_id"],
+        indices,
+        at=at,
+        project_id=project_id,
+        scoped=scoped,
+        excluded_runs=excluded_runs,
+    )
+
+
+def claim_revision_notices(
+    repository,
+    source_run_id,
+    claim_indices,
+    *,
+    at=None,
+    project_id=None,
+    scoped=False,
+    excluded_runs=(),
+    job_ids=None,
+    public_document_ids=None,
+):
+    """Map items share the same claim-bound, provisional notices as saved statements."""
+    auditor = DependencyAudit(repository, at=at, excluded_runs=excluded_runs)
+    original = auditor._read("research_checkpoints", source_run_id)
+    claims = ((original or {}).get("result") or {}).get("claims", [])
+    indices = {i for i in claim_indices if type(i) is int and 0 <= i < len(claims)}
     if not indices or not auditor.path.is_file():
         return []
     notices = []
@@ -30,10 +58,21 @@ def revision_notices(
                 "SELECT c.id,c.record,r.value FROM research_checkpoints c, "
                 "json_each(c.record,'$.result.cognition_revisions') r "
                 "WHERE c.namespace=? AND json_extract(r.value,'$.previous_run_id')=? "
-                "AND json_extract(r.value,'$.previous_statement')=? "
+                "AND ("
+                + " OR ".join(
+                    "(json_extract(r.value,'$.previous_claim_index')=? "
+                    "AND json_extract(r.value,'$.previous_statement')=?)"
+                    for _ in indices
+                )
+                + ") "
                 "AND json_extract(c.record,'$.updated_at')<=? "
                 "ORDER BY json_extract(c.record,'$.updated_at') DESC,c.id DESC LIMIT 96",
-                (auditor.namespace, memory["source_run_id"], memory["content"], auditor.at),
+                (
+                    auditor.namespace,
+                    source_run_id,
+                    *(value for i in sorted(indices) for value in (i, claims[i]["text"])),
+                    auditor.at,
+                ),
             )
             for identity, encoded, revision_json in candidates:
                 record, revision = json.loads(encoded), json.loads(revision_json)
@@ -44,10 +83,24 @@ def revision_notices(
                 if (
                     revision.get("decision") not in {"revise", "withdraw", "unresolved"}
                     or revision.get("previous_claim_index") not in indices
+                    or revision.get("previous_statement")
+                    != claims[revision["previous_claim_index"]]["text"]
                     or scoped
                     and revision_project
                     and revision_project != project_id
                     or not auditor.run(identity)["eligible"]
+                ):
+                    continue
+                sources = result.get("evidence", [])
+                if (
+                    job_ids is not None
+                    and any(ev.get("job_id") and ev["job_id"] not in job_ids for ev in sources)
+                    or public_document_ids is not None
+                    and any(
+                        ev.get("public_document_id")
+                        and ev["public_document_id"] not in public_document_ids
+                        for ev in sources
+                    )
                 ):
                     continue
                 notices.append(
@@ -55,6 +108,8 @@ def revision_notices(
                         "run_id": identity,
                         "project_id": revision_project,
                         "decision": revision["decision"],
+                        "previous_claim_index": revision["previous_claim_index"],
+                        "previous_statement": claims[revision["previous_claim_index"]]["text"],
                         "reason": revision["reason"],
                         "new_statements": revision.get("new_statements", []),
                         "evidence_ids": revision.get("evidence_ids", []),

@@ -235,6 +235,18 @@ class ResearchStore:
                 saved = json.loads(checkpoint) if checkpoint else {}
                 dependencies = set((record.get("result") or {}).get("continued_from", []))
                 dependencies.update((saved.get("result") or {}).get("continued_from", []))
+                # A later research notice can contain private context even though it
+                # does not change adoption or become factual ancestry of the memory.
+                for result in (record.get("result") or {}, saved.get("result") or {}):
+                    for memory in [
+                        *result.get("memory_used", []),
+                        *result.get("context_memory_used", []),
+                    ]:
+                        dependencies.update(
+                            notice["run_id"]
+                            for notice in memory.get("revision_notices", [])
+                            if notice.get("run_id")
+                        )
                 # Feedback is a privacy lineage, not factual ancestry. Even an
                 # unexecuted queued repair can already hold this source link.
                 dependencies.update((record.get("result") or {}).get("feedback_from", []))

@@ -31,6 +31,8 @@
 - 保存关系时，关联比较及双方证据一同保留在既有`scope.research_map`和证据集合内；预览返回每条关系关联的`comparisons`。两端文本上限与判断一致为1200字，避免保存时截断限定。报告、研究页、知识卡显示比较条件与未知项；比较可准备原项目的反例查证，准备不写步骤或调用模型。
 - 项目续问的既有`previous_findings`会在总计14000字上下文内携带原地图的分组、关系、比较和未知项。各项`previous_index`、`claim_indices`、`relation_indices`使用原报告下标；只带入其所需原判断及关系已选入的结构，未带入数量通过`omitted`返回，整图未带入时用`work_map_omitted`计数。原生关系节点直接复用已选原判断，避免重复长文本；结构是旧分析，不能当作独立证据或已采纳知识。已有检查点继续使用其冻结上下文。
 - 研究页当前认识按原研究逐轮展示地图；后续仍有效的`cognition_revisions`按原运行与判断下标关联到分组、关系及比较，标出受修正影响或尚有疑问，提供原文、原图和查证入口。已拒绝/失效/旧范围轮不参与当前整理，不写回旧报告或自动合并为新结论。
+- 领域定义/关系列表及`browse_domain_knowledge`复用既有后续修正提示，按地图保存的来源运行、原判断下标和原文表述精确匹配，返回最近最多3条`revision_notices`；包含`previous_claim_index/previous_statement`、新表述、理由及后续运行回链。提示不修改采纳状态或独立判定真假。研究召回按当前项目、所选岗位/归档资料及历史截止过滤；提示的来源运行进入既有`source_run_ids`依赖。知识页提供相同回查提示。
+- 依赖遗忘沿原有闭包识别研究中已保存的记忆`revision_notices`来源（含检查点），清理因私有来源产生的提示副本；提示本身不改变原知识的事实资格或形成反向依赖。正式原文不改。
 - 岗位画像补充分类改用已保存、已采纳且在当前资料范围内有效的工作类型定义，不再自动提供旧五类。`classification_definitions`保留本次使用的定义及边界，候选附`definition_id`/`definition_version`；没有有效定义时保持未分类，核实问题仍可生成。定义/范围变化会使旧缓存过时，旧画像内容不改写。
 - `GET /api/profiles/{id}`的`classification_options`供画像页使用同一组当前有效定义；人工归类复用`POST /api/knowledge/jobs/{id}/domains`。命令`product profiles correct`可用`{domain_ids,reason}`走同一服务；旧`domains`参数仅保留既有纠正兼容。分类采用的定义进入原研究依赖，遗忘其来源时连同派生画像及复制了定义名称的纠正清理，原始JD保持。
 - 研究页地图中的工作类型边界、工作关系、旧能力关系和未知项可以准备原项目的追问。准备时重读权威运行记录并定位原步骤，只填可编辑问题，不创建步骤、不启动模型；边界/关系默认`kind=counterexample`，未知项默认`investigate`。用户继续后才走既有`POST /api/projects/{id}/steps`和`/run`，精确绑定`reply_to_step_id`，保留原范围、方法和累计额度。
