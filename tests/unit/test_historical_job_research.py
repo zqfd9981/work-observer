@@ -170,6 +170,13 @@ def test_agent_resume_keeps_sources_evidence_links_and_spent_budget(updates, cha
         row.get("local_only") for row in result["trace"] if row["tool"] == "read_historical_job"
     )
     assert result["public_reads"] == result["public_searches"] == 0
+    from work_observer.memory.dependencies import DependencyAudit
+    from work_observer.reports.results import audit_result
+
+    audit = audit_result(result, repo)
+    assert audit["changed_sources"] == []
+    assert not audit["stale_dependencies"], audit
+    assert DependencyAudit(repo).run(result["run_id"])["eligible"]
 
 
 def test_optional_contract_preserves_legacy_method_and_global_proposals():

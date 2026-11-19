@@ -620,6 +620,7 @@ def test_legacy_checkpoint_keeps_its_original_finish_contract(source_workspace):
         )
     frozen = store.load_checkpoint(run["id"])
     frozen["result"].pop("dialogue_revisions_version")
+    frozen["result"].pop("historical_sources_version")
     delivery_policy = frozen["result"].pop("answer_delivery_policy", "")
     budget_policy = frozen["result"].pop("tool_budget_policy", "")
     frozen["result"]["research_method_sha256"] = method_fingerprint(coverage_mode="question")

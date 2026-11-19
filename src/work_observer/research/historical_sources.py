@@ -105,3 +105,81 @@ def read(repository, job_id, as_of, start, allowed, frozen_at):
         "full_text_length": len(text),
         "evidence": evidence,
     }
+
+
+def historical_evidence_ids(repository, result):
+    """Recognize a historical read only when its scope, trace and past projection agree.
+
+    This is for reuse of the dated research, not for treating old text as current
+    knowledge. Ordinary memory and relation source-current checks remain intact.
+    """
+    if result.get("historical_sources_version") != VERSION:
+        return set()
+    try:
+        frozen = normalized_time(result.get("created_at"))
+    except ProbeError:
+        return set()
+    if frozen is None:
+        return set()
+    allowed = {row.get("id") for row in (result.get("scope") or {}).get("jobs", [])}
+    reads = [
+        row
+        for row in result.get("trace", [])
+        if row.get("tool") == TOOL["name"]
+        and row.get("source_status") == "read"
+        and row.get("local_only") is True
+    ]
+    projections, valid = {}, set()
+    for evidence in result.get("evidence", []):
+        job, cutoffs = evidence.get("job_id"), evidence.get("historical_cutoffs")
+        start, end = evidence.get("start"), evidence.get("end")
+        if (
+            job not in allowed
+            or not isinstance(cutoffs, list)
+            or not cutoffs
+            or len(cutoffs) > len(reads)
+            or any(not isinstance(c, str) for c in cutoffs)
+            or type(start) is not int
+            or type(end) is not int
+            or not 0 <= start < end
+        ):
+            continue
+        accepted = True
+        for value in cutoffs:
+            try:
+                cutoff = normalized_time(value)
+            except ProbeError:
+                accepted = False
+                break
+            matching = [
+                row
+                for row in reads
+                if row.get("job_id") == job
+                and row.get("as_of") == cutoff
+                and type(row.get("start")) is int
+                and type(row.get("end")) is int
+                and 0 <= row["start"] <= start < end <= row["end"]
+                and row["end"] - row["start"] <= 5600
+            ]
+            if not cutoff or cutoff > frozen or not matching:
+                accepted = False
+                break
+            key = (job, cutoff)
+            if key not in projections:
+                records, _, _ = RetrievalService(repository)._records(None, [job], cutoff)
+                projections[key] = records[0] if records else None
+            item = projections[key]
+            row = item["row"] if item else None
+            if (
+                not row
+                or row[1].id != evidence.get("snapshot_id")
+                or row[2].id != evidence.get("document_id")
+                or item["record"].get("description_text", "")[start:end] != evidence.get("quote")
+                or end > len(item["record"].get("description_text") or "")
+                or evidence.get("id") != f"{row[1].id}:{start}:{end}"
+            ):
+                accepted = False
+                break
+        if accepted:
+            valid.add(evidence["id"])
+    return valid

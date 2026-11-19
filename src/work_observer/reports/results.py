@@ -260,16 +260,19 @@ def render(result):
     if result["status"] == "completed":
         review = result.get("business_review") or {}
         labels = {"approved": "通过", "rejected": "未通过", "pending": "待继续核对"}
-        source = {
-            "human": "人工核对", "agent_assisted": "Agent辅助核对，非独立人审"
-        }.get(review.get("reviewer_kind"))
+        source = {"human": "人工核对", "agent_assisted": "Agent辅助核对，非独立人审"}.get(
+            review.get("reviewer_kind")
+        )
         label = labels.get(review.get("status"), "未附核对记录") if source else "未附核对记录"
         lines.extend([f"核对状态：{label}" + (f"（{source}）" if source else "") + "。", ""])
         if review.get("note"):
-            lines.extend([
-                "核对说明（不是新的来源证据）：",
-                *["> " + escape(line) for line in review["note"].splitlines()], "",
-            ])
+            lines.extend(
+                [
+                    "核对说明（不是新的来源证据）：",
+                    *["> " + escape(line) for line in review["note"].splitlines()],
+                    "",
+                ]
+            )
         if label != "通过":
             lines.extend(["回答生成不表示质量核对通过；下文保留原回答及其引用。", ""])
     lines.extend(["## 本次候选", ""])
@@ -522,6 +525,15 @@ def render(result):
                 f"来源 {item['source']}/{item['response_origin']}；模式 {item['mode']}；"
                 f"取得 {item['observed_at']}；本地处理 {item['processed_at']}；"
                 f"来源发布 {item['source_published_at'] or '未知'}。",
+                *(
+                    [
+                        "历史原文读取截止："
+                        + "；".join(escape(str(value)) for value in item["historical_cutoffs"])
+                        + "。仅表示当时已入库资料，不是当前岗位事实或网站发布时间。"
+                    ]
+                    if item.get("historical_cutoffs")
+                    else []
+                ),
                 "",
                 *["> " + line for line in item["quote"].splitlines()],
                 "",
@@ -610,6 +622,7 @@ def audit_result(result, repository):
 
     from work_observer.connectors.public_models import PublicDocument
     from work_observer.memory.service import MemoryService
+    from work_observer.research.historical_sources import historical_evidence_ids
     from work_observer.storage.models import (
         Job,
         JobObservation,
@@ -619,7 +632,8 @@ def audit_result(result, repository):
     )
     from work_observer.tracking.models import RetrievalStrategy
 
-    memory_issues, changed_sources, affected_strategy = [], [], []
+    historical = historical_evidence_ids(repository, result)
+    memory_issues, changed_sources, affected_strategy, historical_sources = [], [], [], []
     memory = MemoryService(repository)
     with Session(repository.engine) as session:
         for item in [*result.get("memory_used", []), *result.get("context_memory_used", [])]:
@@ -696,6 +710,14 @@ def audit_result(result, repository):
                 )
                 if not valid:
                     reason = "source_integrity_or_reference_changed"
+                elif item.get("id") in historical:
+                    historical_sources.append(
+                        {
+                            "evidence_id": item["id"],
+                            "cutoffs": item["historical_cutoffs"],
+                            "current_version_differs": job.description_text != text,
+                        }
+                    )
                 elif job.description_text != text:
                     reason = "job_current_version_changed"
             if reason:
@@ -740,6 +762,7 @@ def audit_result(result, repository):
         "stale_knowledge": bool(knowledge_issues) or bool(result.get("stale_knowledge")),
         "knowledge_issues": knowledge_issues,
         "changed_sources": changed_sources,
+        "historical_sources": historical_sources,
         "affected_strategy": affected_strategy,
         "stale_dependencies": not dependency_audit["eligible"],
         "dependency_issues": dependency_audit["issues"],

@@ -447,8 +447,11 @@ class DependencyAudit:
 
     def _result(self, result, *, evidence_ids=None):
         from work_observer.research.archive_versions import historical_evidence_ids
+        from work_observer.research.historical_sources import historical_evidence_ids as job_history
 
-        historical = historical_evidence_ids(self.repository, result)
+        historical = historical_evidence_ids(self.repository, result) | job_history(
+            self.repository, result
+        )
         issues, scope = [], self._scope(result)
         refs = [
             *result.get("memory_used", result.get("memories", [])),

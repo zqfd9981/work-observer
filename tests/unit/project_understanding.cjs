@@ -50,3 +50,11 @@ assert.ok(historyNote.includes("2026")&&historyNote.includes("；"));
 assert.equal(vm.runInContext("historicalEvidenceNote({})",context),"");
 context.timeEvidence.historical_cutoffs=["<script>unsafe</script>"];
 assert.ok(!vm.runInContext("historicalEvidenceNote(timeEvidence)",context).includes("<script>"));
+
+context.project.scope_version=1;
+evidence.historical_cutoffs=["2026-11-17T23:59:59+00:00"];
+const datedUnderstanding=vm.runInContext("renderProjectUnderstanding(project)",context);
+assert.ok(datedUnderstanding.includes("含历史时点依据"));
+assert.ok(datedUnderstanding.includes("历史原文读取截止"));
+assert.ok(datedUnderstanding.includes('data-reply-step="second"'));
+assert.ok(!datedUnderstanding.includes("人工核对通过"));

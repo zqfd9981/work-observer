@@ -885,7 +885,7 @@ class ProjectService:
         if step.get("review_run_id"):
             excluded.add(step["review_run_id"])
         auditor = DependencyAudit(repository, excluded_runs=excluded)
-        candidates, eligible = [], []
+        candidates, eligible, audits = [], [], {}
         historical_reply = None
         for previous in record["steps"]:
             if (
@@ -918,6 +918,7 @@ class ProjectService:
             ):
                 continue
             audit = audit_result(result, repository)
+            audits[previous["run_id"]] = audit
             evidence_ids = {ev["id"] for ev in result.get("evidence", [])}
             if (
                 is_reply
@@ -1147,6 +1148,18 @@ class ProjectService:
                 read_evidence_ids=[e["id"] for e in result.get("evidence", [])],
                 coverage_mode=result.get("coverage_mode", "all"),
             )
+            if historical_sources := audits[previous["run_id"]].get("historical_sources"):
+                item["historical_source_note"] = (
+                    "这轮判断采用明确截止时已入库的历史正文，可用于时点对照；"
+                    "不是当前岗位事实，不能因仍可回查就当成最新要求。"
+                )
+                item["historical_source_cutoffs"] = sorted(
+                    {
+                        cutoff
+                        for evidence in historical_sources
+                        for cutoff in evidence["cutoffs"]
+                    }
+                )
             if result.get("work_map"):
                 item["work_map_omitted"] = {
                     key: len(result["work_map"].get(key, []))
