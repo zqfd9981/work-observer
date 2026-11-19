@@ -61,6 +61,56 @@ def test_memory_http_project_fields_conflict_review_and_schema(memory_web):
     assert "hypothesis" in fields["kind"]["pattern"]
 
 
+def test_application_background_revision_survives_reopen_without_old_recall(memory_web):
+    from work_observer.memory.service import MemoryService
+
+    client, auth, settings = memory_web
+    project_id = "a" * 32
+    old_text = (
+        "个人应用背景（用户自述）：\n已有经历或能力：合成后端经历\n"
+        "本次目标：合成项目\n投入与限制：合成每周两小时"
+    )
+    original = client.post(
+        "/api/memories",
+        json={
+            "kind": "preference",
+            "content": old_text,
+            "scope": "project",
+            "project_id": project_id,
+            "origin": "user",
+        },
+        headers=auth,
+    ).json()
+    new_text = "个人应用背景（用户自述，结构化）：\n" + json.dumps(
+        {"background": "合成后端经历", "goal": "合成新目标", "constraints": "每周四小时（合成）"},
+        ensure_ascii=False,
+    )
+    changed = client.post(
+        f"/api/memories/{original['id']}/revise", json={"content": new_text}, headers=auth
+    ).json()
+    assert changed["version"] == 2 and changed["previous_id"] == original["id"]
+    assert changed["root_id"] == original["root_id"]
+    assert changed["scope"] == "project" and changed["project_id"] == project_id
+    assert [row["id"] for row in client.get("/api/memories?project_id=" + project_id).json()] == [
+        changed["id"]
+    ]
+    history = client.get("/api/memories?history=1&project_id=" + project_id).json()
+    assert {row["status"] for row in history} == {"active", "superseded"}
+    assert next(row for row in history if row["id"] == original["id"])["content"] == old_text
+    repo = Repository(settings.database_path)
+    try:
+        memory = MemoryService(repo)
+        assert [row["id"] for row in memory.recall("个人应用", [], project_id)] == [changed["id"]]
+        assert memory.recall("个人应用", [], "b" * 32) == []
+    finally:
+        repo.close()
+    stale = client.post(
+        f"/api/memories/{original['id']}/revise", json={"content": "合成过期编辑"}, headers=auth
+    )
+    assert stale.status_code == 400 and stale.json()["error_code"] == "MEMORY_VERSION_NOT_CURRENT"
+    assert client.get("/api/memories?project_id=" + project_id).json()[0]["content"] == new_text
+
+
 def test_http_model_proposals_cannot_enable_themselves_and_methods_are_not_facts(memory_web):
     client, auth, _ = memory_web
     for kind in ("preference", "correction", "hypothesis", "method"):

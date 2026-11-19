@@ -11,6 +11,24 @@ from work_observer.connectors.mcp_probe import ProbeError
 
 CLAIM_BASIS_LABELS = {"direct": "原文明示", "synthesis": "研究归纳", "inference": "研究推断"}
 
+
+def _memory_text(content):
+    prefix = "个人应用背景（用户自述，结构化）：\n"
+    if content.startswith(prefix):
+        try:
+            data = json.loads(content[len(prefix) :])
+            if isinstance(data, dict) and all(
+                isinstance(data.get(key), str) for key in ("background", "goal", "constraints")
+            ):
+                return (
+                    f"个人应用背景（用户自述）：\n已有经历或能力：{data['background']}\n"
+                    f"本次目标：{data['goal']}\n投入与限制："
+                    + (data["constraints"] or "未说明，不作假设")
+                )
+        except (ValueError, TypeError):
+            pass
+    return content
+
 FINDING_FACETS = {
     "work_task": "岗位建设与工作任务",
     "deliverable": "工作产出",
@@ -315,7 +333,7 @@ def render(result):
     if result.get("memory_used"):
         lines.extend(["", "## 本次使用的业务记忆（不是独立来源）", ""])
         lines.extend(
-            f"- {item['kind']} / 版本 {item['version']}：{item['content']}"
+            f"- {item['kind']} / 版本 {item['version']}：{_memory_text(item['content'])}"
             for item in result["memory_used"]
         )
     evidence = {item["id"]: item for item in result["evidence"]}

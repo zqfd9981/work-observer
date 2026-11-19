@@ -1,5 +1,6 @@
 """Report-local references must remain usable and keep analysis provenance explicit."""
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -77,6 +78,25 @@ def test_roundtrip_keeps_origin_evidence_and_map_in_export(tmp_path):
     assert "边界与反例：不代表纯配置" in markdown
     assert "迁移边界：要求性质未知" in markdown
     assert "[E1](#e1)" in markdown
+
+
+def test_application_background_is_readable_without_changing_saved_result():
+    result = sample()
+    result["memory_used"] = [
+        {
+            "kind": "preference",
+            "version": 2,
+            "content": "个人应用背景（用户自述，结构化）：\n"
+            + json.dumps({"background": "合成经历", "goal": "合成新目标", "constraints": ""}),
+        }
+    ]
+    before = deepcopy(result)
+    markdown = render(result)
+    assert "已有经历或能力：合成经历" in markdown
+    assert "本次目标：合成新目标" in markdown
+    assert "投入与限制：未说明，不作假设" in markdown
+    assert '"background"' not in markdown
+    assert result == before
 
 
 @pytest.mark.parametrize("index", [-1, 1, 999])
