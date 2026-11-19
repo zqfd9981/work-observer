@@ -1312,9 +1312,19 @@ async def _research(
             archived_sources=archived_read_enabled,
             historical_sources=historical_read_enabled,
         )
-    result["continued_from"] = [
-        item["run_id"] for item in (conversation_context or {}).get("previous_findings", [])
-    ]
+    result["continued_from"] = list(
+        dict.fromkeys(
+            identity
+            for item in (conversation_context or {}).get("previous_findings", [])
+            for identity in [
+                item["run_id"],
+                *[
+                    notice["run_id"]
+                    for notice in item.get("upstream_revision_notices", {}).get("items", [])
+                ],
+            ]
+        )
+    )
     if review_feedback:
         result["review_feedback"] = review_feedback
         result["feedback_from"] = [review_feedback["run_id"]]

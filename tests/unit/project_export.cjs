@@ -14,6 +14,11 @@ const second={id:"second",run_id:"run-two",scope_version:1,state:"waiting_review
 const rejected={id:"bad",run_id:"bad-run",scope_version:1,state:"waiting_review",question:"被拒绝的旧调查",result:{status:"completed",audit:{},business_review:{status:"rejected"},claims:[claim("不能当作当前认识的失败结论",["bad"])],evidence:[{...a,id:"bad",quote:"不应混入当前依据的文字"}],gaps:[]}};
 ctx.project={id:"project",state:"active",title:"<script>[title](https://evil.test)</script>",goal:"合成目标\n保留适用边界",scope_version:1,job_ids:["job-a","job-b"],public_document_ids:[],usage:{calls:4},steps:[first,second,rejected,{id:"pending",question:"未执行的补查",state:"queued"}]};
 const original=JSON.stringify(ctx.project);
+second.result.upstream_revision_notices={items:[{previous_run_id:"ancestor",run_id:"correction",decision:"revise",reason:"先核对责任边界"}],omitted:1,notice:"仅表示下游研究可能受影响，原回答保持。"};
+const affected=vm.runInContext('projectDossierMarkdown(project)',ctx);
+assert.ok(affected.includes("## 沿用旧认识的下游研究")&&affected.includes("先核对责任边界"));
+assert.ok(affected.includes("原研究：ancestor")&&affected.includes("修正研究：correction")&&affected.includes("另有 1 条相关意见"));
+delete second.result.upstream_revision_notices;
 const markdown=vm.runInContext('projectDossierMarkdown(project,"2026-11-20T00:00:00+00:00")',ctx);
 const current=markdown.split("## 当前认识")[1].split("## 工作地图")[0];
 assert.ok(current.includes(revision.new_statements[0]));assert.ok(!current.includes(first.result.claims[1].text));

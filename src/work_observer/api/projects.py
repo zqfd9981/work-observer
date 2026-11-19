@@ -179,6 +179,34 @@ def project_routes(
                         else {"status": "pending"}
                     )
                 step["run_state"] = run["state"]
+        from work_observer.research.projects import upstream_revision_notices
+
+        findings = []
+        for step in project["steps"]:
+            result = step.get("result") or {}
+            audit = result.get("audit") or {}
+            if (
+                result.get("status") == "completed"
+                and step.get("run_state") != "invalidated"
+                and step["scope_version"] == project["scope_version"]
+                and result.get("business_review", {}).get("status") != "rejected"
+                and result.get("audit") is not None
+                and not any(
+                    audit.get(key)
+                    for key in (
+                        "stale_memory",
+                        "stale_knowledge",
+                        "stale_dependencies",
+                        "changed_sources",
+                        "affected_strategy",
+                    )
+                )
+            ):
+                findings.append((step, result))
+        upstream_notices = upstream_revision_notices(findings)
+        for step in project["steps"]:
+            if notice := upstream_notices.get(step.get("run_id")):
+                step["result"]["upstream_revision_notices"] = notice
         completed = completed_steps(project, svc.rejected_steps(project))
         project["ready_step_ids"] = [
             step["id"]

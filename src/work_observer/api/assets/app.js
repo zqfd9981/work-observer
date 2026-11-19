@@ -733,6 +733,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
     ${renderArchiveComparisons(result)}
     ${renderWorkMap(result,evidence)}
     ${renderCognitiveRevisions(result,evidence)}
+    ${renderUpstreamRevisionNotices(result)}
     ${renderApplicationPlan(result,evidence,replyStepId)}
     ${renderSourceFindings(result,evidence)}
     ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
@@ -1033,6 +1034,13 @@ async function sendResearchConversation(question, options={}) {
   clearConversationReceipt(project.id);
 }
 
+function renderUpstreamRevisionNotices(result) {
+  const notices=result.upstream_revision_notices;
+  if(!notices?.items?.length)return "";
+  const decisions={revise:"修订",withdraw:"撤回",unresolved:"仍有疑问"};
+  return `<section class="research-context"><h3>沿用的旧研究后来出现不同判断</h3><p>${e(notices.notice)}</p>${notices.items.map(row=>`<p>${e(decisions[row.decision]||"后续意见")}：${e(row.reason)} <button class="text-button" data-open-run="${e(row.previous_run_id)}">查看原判断所在研究 ↗</button> <button class="text-button" data-open-run="${e(row.run_id)}">查看后续修正及原文 ↗</button></p>`).join("")}${notices.omitted?`<p class="form-note">另有 ${e(notices.omitted)} 条相关意见，请在逐轮记录中核对。</p>`:""}</section>`;
+}
+
 function projectUnderstanding(project) {
   const included=[],excluded=[];
   for(const [position,step] of (project.steps||[]).entries()) {
@@ -1159,6 +1167,14 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
       ...(renderRevisionScope(revision)?["研究范围或目标已经调整；本次是新范围下的重新核对，不表示外部工作变化。"]:[]),
       "原研究定位："+text(revision.previous_run_id),"本轮依据："+refs(row,revision.evidence_ids),"");
   }
+  const affectedRounds=view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length);
+  if(affectedRounds.length)lines.push("## 沿用旧认识的下游研究", "");
+  for(const row of affectedRounds){const notices=row.result.upstream_revision_notices;
+    lines.push("### 第 "+row.round+" 轮 · "+line(row.step.question),"",line(notices.notice));
+    for(const notice of notices.items)lines.push("- 后续"+labels[notice.decision]+"："+line(notice.reason)+"；原研究："+text(notice.previous_run_id)+"；修正研究："+text(notice.run_id));
+    if(notices.omitted)lines.push("另有 "+notices.omitted+" 条相关意见，须在原工作台逐轮核对。");
+    lines.push("");
+  }
   lines.push("## 下一步需要核实","");
   if(!view.questions.length)lines.push("最近有效回答未提供可直接带入的核实问题；不表示所有问题已经解决。","");
   for(const row of view.questions)lines.push("- "+line(row.text)+"（来自第 "+row.round+" 轮）");
@@ -1251,7 +1267,7 @@ function renderProjectUnderstanding(project,knowledge=[]) {
   const view=projectUnderstanding(project);
   const claimCard=row=>`<section class="claim">${badge(row.unresolved?"后续仍有疑问":row.result.business_review?.status==="approved"&&row.result.business_review?.reviewer_kind==="human"?"人工核对通过":"待核对",row.unresolved?"amber":"muted")} ${badge(claimBasisLabel(row.claim),"muted")} ${badge(requirementLabels[row.claim.requirement]||"性质待核","muted")} ${row.evidence.some(ev=>ev.historical_cutoffs?.length)?badge("含历史时点依据","muted"):""}<p>${e(row.claim.text)}</p><p class="form-note">第 ${row.round} 轮 · ${e(row.step.question)}</p><details class="research-context"><summary>核对这一判断的原文依据 · ${row.evidence.length} 个片段</summary>${row.evidence.map(ev=>`<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p>${historicalEvidenceNote(ev)}<blockquote>${e(ev.quote||"")}</blockquote><p class="form-note">取得 ${e(when(ev.observed_at))} · 字符 ${e(ev.start)}–${e(ev.end)}</p>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`).join("")}</details><button class="text-button" data-conversation-claim="${e(row.claim.text)}" data-reply-step="${e(row.step.id)}">针对这条认识继续核实 ↗</button><button class="text-button" data-open-run="${e(row.step.run_id)}">查看本轮完整回答 ↗</button>${claimCorrectionButton(row.step.id,row.index)}${renderClaimKnowledge(row.step.run_id,row.claim,row.index,new Map(row.evidence.map(ev=>[ev.id,ev])),knowledge)}</section>`;
   const changeCard=({revision,step,round})=>`<section class="detail-section"><strong>第 ${round} 轮 · ${e(({retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"})[revision.decision]||"后续判断")}</strong><p><strong>旧判断：</strong>${e(revision.previous_statement)}</p>${(revision.new_statements||[]).map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(revision.reason)}</p>${renderRevisionScope(revision)}<p class="form-note">${revision.evidence_relation==="reread"?"重读原材料":"含旧轮未读的引用；不表示新发布资料"}</p><button class="text-button" data-open-run="${e(revision.previous_run_id)}">查看旧研究 ↗</button><button class="text-button" data-open-run="${e(step.run_id)}">查看这次修正及依据 ↗</button></section>`;
-  return `<article class="panel result-card"><h2>本研究当前认识</h2><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>导出整项研究成果 ↧</button><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${renderProjectMaps(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>最近有效回答留下的问题</h3>${view.questions.slice(0,5).map(row=>`<p><button class="text-button" data-conversation-followup="${e(row.text)}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`).join("")}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
+  return `<article class="panel result-card"><h2>本研究当前认识</h2><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>导出整项研究成果 ↧</button><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length).map(row=>`<details class="detail-section" open><summary>第 ${row.round} 轮研究需要回看其沿用依据</summary>${renderUpstreamRevisionNotices(row.result)}</details>`).join("")}${renderProjectMaps(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>最近有效回答留下的问题</h3>${view.questions.slice(0,5).map(row=>`<p><button class="text-button" data-conversation-followup="${e(row.text)}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`).join("")}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
 }
 
 async function openResearchConversation(id, navigate=true) {

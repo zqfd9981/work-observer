@@ -63,3 +63,10 @@ second.result.cognition_revisions[0].previous_scope_version=1;
 second.result.cognition_revisions[0].current_scope_version=2;
 assert.ok(vm.runInContext("renderProjectUnderstanding(project)",context).includes("研究范围或目标已经调整"));
 assert.equal(vm.runInContext("renderRevisionScope({})",context),"");
+
+second.result.upstream_revision_notices={items:[{previous_run_id:"ancestor",run_id:"correction",decision:"withdraw",reason:"<script>边界已改变</script>"}],omitted:1,notice:"依赖只记录到研究轮次，不能断定每条判断错误。"};
+const affectedHtml=vm.runInContext("renderProjectUnderstanding(project)",context);
+assert.ok(affectedHtml.includes("第 2 轮研究需要回看其沿用依据"));
+assert.ok(affectedHtml.includes('data-open-run="ancestor"')&&affectedHtml.includes('data-open-run="correction"'));
+assert.ok(affectedHtml.includes("&lt;script&gt;边界已改变&lt;/script&gt;")&&!affectedHtml.includes("<script>"));
+assert.ok(affectedHtml.includes("不能断定每条判断错误")&&affectedHtml.includes("另有 1 条相关意见"));

@@ -50,6 +50,55 @@ def dependency_steps(record, identities):
     return result
 
 
+def upstream_revision_notices(findings):
+    """Flag older descendants of a changed claim without declaring them false."""
+    by_run = {step["run_id"]: (index, result) for index, (step, result) in enumerate(findings)}
+    corrections = []
+    for index, (step, result) in enumerate(findings):
+        for revision in result.get("cognition_revisions", []):
+            original = by_run.get(revision["previous_run_id"])
+            claim_index = revision["previous_claim_index"]
+            if (
+                revision["decision"] not in {"revise", "withdraw", "unresolved"}
+                or not original
+                or original[0] >= index
+                or type(claim_index) is not int
+                or not 0 <= claim_index < len(original[1].get("claims", []))
+                or revision["previous_statement"] != original[1]["claims"][claim_index]["text"]
+            ):
+                continue
+            corrections.append((index, step["run_id"], revision))
+    notices = {}
+    for index, (step, result) in enumerate(findings):
+        ancestors, pending = set(), list(result.get("continued_from", []))
+        while pending:
+            parent = pending.pop()
+            if parent in ancestors or parent not in by_run or by_run[parent][0] >= index:
+                continue
+            ancestors.add(parent)
+            pending.extend(by_run[parent][1].get("continued_from", []))
+        affected = [
+            {
+                "run_id": run_id,
+                "previous_run_id": revision["previous_run_id"],
+                "previous_claim_index": revision["previous_claim_index"],
+                "decision": revision["decision"],
+                "reason": revision["reason"][:400],
+            }
+            for correction_index, run_id, revision in corrections
+            if correction_index > index and revision["previous_run_id"] in ancestors
+        ]
+        if affected:
+            notices[step["run_id"]] = {
+                "items": affected[-3:],
+                "omitted": max(0, len(affected) - 3),
+                "notice": "本轮曾沿用的旧研究后来有修订、撤回或疑问。依赖只记录到研究轮次，"
+                "不能据此断定本轮每条判断错误；继续使用前须核对修正及本轮原文。"
+                "后续意见未自动改写本轮回答或已采纳知识。",
+            }
+    return notices
+
+
 def _map_context(context, item, result):
     """Carry prior reasoning with its original indices within the existing context limit."""
     from work_observer.reports.cognition import checked_map
@@ -1147,6 +1196,7 @@ class ProjectService:
                     context["knowledge_dependencies"] = []
             else:
                 context.pop("historical_reply")
+        upstream_notices = upstream_revision_notices(eligible)
         for _, _, previous, result in candidates[:3]:
             query_tokens = _tokens(step["question"])
             ranked = sorted(
@@ -1172,6 +1222,8 @@ class ProjectService:
                 read_evidence_ids=[e["id"] for e in result.get("evidence", [])],
                 coverage_mode=result.get("coverage_mode", "all"),
             )
+            if notice := upstream_notices.get(previous["run_id"]):
+                item["upstream_revision_notices"] = notice
             if historical_sources := audits[previous["run_id"]].get("historical_sources"):
                 item["historical_source_note"] = (
                     "这轮判断采用明确截止时已入库的历史正文，可用于时点对照；"
