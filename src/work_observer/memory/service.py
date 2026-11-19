@@ -593,7 +593,15 @@ class MemoryService:
             "dependency_issues": audited["issues"],
             "checked_at": audited["checked_at"],
             "is_source_evidence": False,
+            "revision_notices": self.revision_notices(identity, at=at),
         }
+
+    def revision_notices(self, identity, *, at=None):
+        from work_observer.memory.revisions import revision_notices
+
+        with Session(self.repository.engine) as session:
+            item = _record(self._get(session, identity))
+        return revision_notices(self.repository, item, at=at)
 
     def audit(self, identity, *, version=None, job_ids=None, project_id=None, at=None):
         from work_observer.memory.dependencies import DependencyAudit
@@ -657,7 +665,17 @@ class MemoryService:
                 }[row.kind]
                 selected.append((priority, overlap, row.created_at, _record(row)))
         selected.sort(key=lambda item: item[:3], reverse=True)
-        return [item[3] for item in selected[:8]]
+        from work_observer.memory.revisions import revision_notices
+
+        recalled = [item[3] for item in selected[:8]]
+        for item in recalled:
+            notices = revision_notices(
+                self.repository, item, at=stamp, project_id=project_id, scoped=True,
+                excluded_runs=excluded_runs,
+            )
+            if notices:
+                item["revision_notices"] = notices
+        return recalled
 
     @staticmethod
     def _sources_current(session, evidence):
