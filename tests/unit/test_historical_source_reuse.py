@@ -53,6 +53,16 @@ def test_only_original_scope_trace_and_cutoff_version_qualify_as_history(updates
     old = original["evidence"][0]["id"]
     serialized = json.dumps(original, sort_keys=True)
     assert old in historical_sources.historical_evidence_ids(repo, original)
+    from work_observer.quality.source_context import source_context
+
+    context = source_context(original, repo)
+    sources = {row["snapshot_id"]: row for row in context["sources"]}
+    assert len(sources) == 2
+    for evidence in original["evidence"]:
+        source = sources[evidence["snapshot_id"]]
+        assert source["historical_cutoffs"] == evidence["historical_cutoffs"]
+        assert any(evidence["quote"] in unit["text"] for unit in source["units"])
+        assert any(0 in unit["claim_indices"] for unit in source["units"])
     cases = []
     missing_contract = deepcopy(original)
     missing_contract.pop("historical_sources_version")
@@ -102,6 +112,14 @@ def test_damaged_archives_block_history_and_old_evidence_cannot_be_current_knowl
     assert any(not row["retained_evidence_valid"] for row in audit["changed_sources"])
     assert audit["stale_dependencies"]
     assert not DependencyAudit(repo).run(result["run_id"])["eligible"]
+    from work_observer.quality.source_context import source_context
+
+    broken = next(
+        row
+        for row in source_context(result, repo)["sources"]
+        if row.get("historical_cutoffs") == old["historical_cutoffs"]
+    )
+    assert broken["state"] == "integrity_failed" and not broken["units"]
 
 
 def test_reopened_project_carries_dated_understanding_and_cutoffs_into_next_question(updates):

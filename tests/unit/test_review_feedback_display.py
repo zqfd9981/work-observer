@@ -11,6 +11,7 @@ import pytest
     "harness",
     [
         "review_feedback_display.cjs",
+        "result_source_context.cjs",
         "project_feedback_display.cjs",
         "research_conversation.cjs",
         "conversation_retry.cjs",

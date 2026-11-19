@@ -11,13 +11,38 @@ from work_observer.collection.contracts import digest
 from work_observer.storage.models import JobObservation, JobSnapshot, SourceDocument
 
 
+def _job_versions(result, repository, evidence):
+    from work_observer.research.historical_sources import historical_evidence_ids
+
+    historical = historical_evidence_ids(repository, result) if repository is not None else set()
+    versions = []
+    for job in result.get("scope", {}).get("jobs", [])[:20]:
+        documents = {}
+        for item in evidence.values():
+            if item.get("job_id") == job["id"] and item.get("id") in historical:
+                documents.setdefault(item["document_id"], set()).update(item["historical_cutoffs"])
+        frozen = (job.get("detail_source") or {}).get("document_id")
+        versions.append({**job, "historical_cutoffs": sorted(documents.pop(frozen, set()))})
+        versions.extend(
+            {
+                **job,
+                "detail_source": {"document_id": identity},
+                "historical_cutoffs": sorted(cutoffs),
+            }
+            for identity, cutoffs in documents.items()
+        )
+    return versions
+
+
 def source_context(result, repository):
-    """Only use the frozen scope document, or a unique historical evidence identity."""
+    """Use frozen documents and verified dated reads; never fill from the current job."""
     sources, characters, paragraphs = [], 0, 0
     evidence = {item["id"]: item for item in result.get("evidence", [])}
     jobs = result.get("scope", {}).get("jobs", [])
-    for job in jobs[:20]:
+    for job in _job_versions(result, repository, evidence):
         source = {"job_id": job["id"], "title": job.get("title"), "units": []}
+        if job.get("historical_cutoffs"):
+            source["historical_cutoffs"] = job["historical_cutoffs"]
         sources.append(source)
         document_id = (job.get("detail_source") or {}).get("document_id")
         identities = {
@@ -73,6 +98,7 @@ def source_context(result, repository):
                 source["state"] = "unavailable"
                 continue
             source.update(
+                title=snapshot.payload.get("title") or job.get("title"),
                 snapshot_id=snapshot.id,
                 document_id=document.id,
                 document_sha256=document.sha256,
@@ -124,6 +150,7 @@ def source_context(result, repository):
         "sources": sources,
         "scope_truncated": len(jobs) > 20 or archive_truncated,
         "notice": "按研究当时的原文版本核对任务、交付物、责任、条件限定及其他遗漏。"
+        "明确读取的历史版本另列截止，不能用研究启动时的正文代替历史时点。"
         "判断编号仅表示其引用片段与该段相交，不表示回答已覆盖该段，也不表示语义支持。"
         + (
             "归档资料按本轮已读版本对照，超长正文只显示引用附近上下文并注明范围；"

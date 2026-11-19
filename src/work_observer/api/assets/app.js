@@ -662,6 +662,27 @@ function renderApplicationPlan(result,evidence,replyStepId=null) {
   return `<section class="detail-section"><h2>应用行动 · 研究建议</h2><p class="form-note">目标：${e(plan.goal)} · 采用第 ${e(plan.background_version)} 版个人背景。${e(plan.constraints?"投入与限制："+plan.constraints:"投入限制未说明。")}</p><p class="form-note">${e(plan.notice)} 行动建议仍需结合实际核对，判断审核不代表行动效果已验证。</p><ol>${plan.actions.map((action,index)=>`<li class="detail-section"><h3>${e(action.title)}</h3><p>针对任务或能力：${e(action.task_or_ability)}</p><p><strong>交付物：</strong>${e(action.deliverable)}</p><p><strong>完成检查：</strong>${e(action.completion_check)}</p>${action.assumptions?.length?`<p class="form-note">需要确认的前提：${action.assumptions.map(e).join("；")}</p>`:""}${action.evidence_ids.map(id=>evidence.has(id)?`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`:"").join("")}${replyStepId?`<button type="button" class="secondary small" data-action-feedback-step="${e(replyStepId)}" data-action-feedback-index="${index}">回报尝试结果 ↗</button>`:""}</li>`).join("")}</ol>${plan.open_questions?.length?`<h3>行动前还需明确</h3><ul>${plan.open_questions.map(text=>`<li>${e(text)}</li>`).join("")}</ul>`:""}</section>`;
 }
 
+function resultSourceComparison(result,runId,replyStepId) {
+  if(result.status!=="completed"||!runId||!state.serviceContract?.paths?.["/api/quality/runs/{id}"]?.get)return "";
+  return `<section class="detail-section" data-result-sources="${e(runId)}" data-source-reply-step="${e(replyStepId||"")}"><button class="secondary" type="button" data-open-result-sources>展开原文逐段对照</button><p class="form-note">查看本轮原文与引用位置，检查重要条件是否遗漏。只读取归档，不提交审核或启动调查。</p><div data-result-sources-body hidden></div></section>`;
+}
+async function loadResultSources(button) {
+  const panel=button.closest("[data-result-sources]"),body=panel?.querySelector("[data-result-sources-body]");
+  if(!panel||!body)return;
+  if(!body.hidden){body.replaceChildren();body.hidden=true;button.textContent="展开原文逐段对照";return;}
+  body.hidden=false;body.innerHTML='<p class="form-note">正在读取本轮的原文版本…</p>';button.disabled=true;
+  try {
+    const packet=await api("quality/runs/"+encodeURIComponent(panel.dataset.resultSources));
+    if(!panel.isConnected)return;
+    body.innerHTML=renderQualitySources(packet,{replyStepId:panel.dataset.sourceReplyStep||null});
+    button.textContent="收起原文逐段对照";
+  } catch(error) {if(panel.isConnected){body.innerHTML=errorBox(error);button.textContent="收起原文逐段对照";}}
+  finally{button.disabled=false;}
+}
+document.addEventListener("click",event=>{
+  const button=event.target.closest("[data-open-result-sources]");if(button)loadResultSources(button);
+});
+
 function renderResult(result, target, runId = null, replyStepId = null) {
   const evidence = new Map(result.evidence.map((ev,index)=>[ev.id,{...ev,label:`E${index+1}`}])) ;
   const counts = result.scope.counts;
@@ -682,6 +703,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
     ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
     ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${replyStepId ? `<button class="text-button" data-conversation-claim="${e(claim.text)}" data-reply-step="${e(replyStepId)}">针对这条判断继续核实 ↗</button>` : ""}${badge(claimBasisLabel(claim),"muted")} ${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${result.status === "completed" ? renderClaimKnowledge(runIdentity,claim,index,evidence) : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}
     <div class="gaps"><strong>资料缺口与研究范围</strong><ul>${result.gaps.map(gap=>`<li>${e(gap)}</li>`).join("")}</ul>${!completed ? `<p>结束原因：${e(reasonLabels[result.stop_reason] || "本次未能完成研究，可核对范围后重试；已有资料仍可查看。")}</p>` : ""}</div>
+    ${resultSourceComparison(result,runIdentity,replyStepId)}
     <details class="detail-section"><summary>本次候选与统计口径</summary><p class="form-note">统计在分页前计算。本次实际研究 ${result.scope.jobs.length} 个候选${result.scope.truncated ? "，候选较多，已截取前 20 个，请收窄范围" : ""}；未知条件不等于符合。</p>${result.scope.jobs.map(job=>`<div class="detail-history"><button class="job-link" data-job="${e(job.id)}">${e(job.title)} · ${e(job.company)}</button>${badge(job.has_detail ? "有正文" : "仅摘要","muted")} ${job.match_status === "unknown" ? badge("条件未知","amber") : ""}</div>`).join("")}</details>
     <div class="result-actions">${result.project_id?`<a class="secondary" href="#research/${e(result.project_id)}">返回这项持续研究 ↗</a>`:""}${reportId ? `${badge("已保存")}<a class="secondary" href="/api/reports/${e(reportId)}/download/md" download>下载 Markdown</a><a class="secondary" href="/api/reports/${e(reportId)}/download/json" download>下载 JSON</a>` : runId ? `<button class="primary" data-save-research="${e(runId)}">保存这次研究</button><small class="form-note">保存问题、范围、结果与原文依据。</small>` : ""}</div>
     <section class="detail-section"><h3>原文依据 · ${evidence.size} 个片段</h3><p class="form-note">点击结论后的引用可定位片段；也可核对对应原始文档。引用有效不代表模型解释必然正确。</p>${[...evidence.values()].map(ev=>`<details class="evidence-item" data-evidence="${e(ev.id)}" data-evidence-start="${e(ev.start)}"><summary>${e(ev.label)} · ${e(ev.title)} · ${e(ev.company || (ev.source === "public_web" ? "公开资料" : ""))}</summary>${historicalEvidenceNote(ev)}${ev.source_note ? `<p class="form-note evidence-source-note">${e(ev.source_note)}</p>` : ""}<blockquote>${e(ev.quote)}</blockquote><div class="evidence-meta">${e(sourceLabel(ev))} · 取得 ${e(when(ev.observed_at))}<br>字符 ${ev.start}–${ev.end}${ev.full_text_length ? ` / 原文 ${ev.full_text_length} 字符` : ""} · 发布时间 ${e(ev.source_published_at ? when(ev.source_published_at) : "未知")}<br>${ev.document_id ? `<button data-source="${e(ev.document_id)}">核对来源文档与内容版本 ↗</button>` : ""}${ev.public_document_id ? `<button data-public-source="${e(ev.public_document_id)}">核对归档全文 ↗</button><br>` : ""}${safeURL(ev.url) ? `<a href="${e(safeURL(ev.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}</div></details>`).join("")}</section></article>`;

@@ -19,7 +19,7 @@ vm.runInContext('api=async(route,options)=>{calls.push({route,options});return o
   const html=node("#quality-detail").innerHTML;
   assert.ok(html.includes("预算另计")&&html.includes("前次已调用 6 次"));
   assert.ok(html.includes("&lt;script&gt;合成提示&lt;/script&gt;")&&!html.includes("<script>合成提示</script>"));
-  const button={disabled:false},event={target:{id:"quality-repair",closest:()=>null,elements:{max_calls:{value:"5"},timeout:{value:"120"},offline:{checked:true}},querySelector:()=>button},preventDefault(){}};
+  const button={disabled:false},event={target:{id:"quality-repair",matches:()=>false,closest:()=>null,elements:{max_calls:{value:"5"},timeout:{value:"120"},offline:{checked:true}},querySelector:()=>button},preventDefault(){}};
   for(const handler of handlers.submit) await handler(event);
   const sent=context.calls.find(row=>row.route==="research");
   const payload=JSON.parse(sent.options.body);
@@ -40,7 +40,7 @@ vm.runInContext('api=async(route,options)=>{calls.push({route,options});return o
   context.sourcePacket={source_context:{notice:"引用不表示覆盖",sources:[{title:"<script>合成岗位</script>",state:"available",snapshot_id:"old-version",units:[{start:701,end:719,text:"本科，3年以上经验。<img src=x>",claim_indices:[]},{start:720,end:740,text:"Docker优先",claim_indices:[0]}]}]}};
   const sources=vm.runInContext("renderQualitySources(sourcePacket)",context);
   assert.ok(sources.includes("本科，3年以上经验")&&sources.includes("没有判断引用该段"));
-  assert.ok(sources.includes("研究当时的完整正文")&&sources.includes("仍需核对回答是否覆盖"));
+  assert.ok(sources.includes("研究启动时冻结的完整正文")&&sources.includes("仍需核对回答是否覆盖"));
   assert.ok(sources.includes("&lt;img")&&sources.includes("&lt;script&gt;合成岗位"));
   assert.ok(!sources.includes("<img")&&!sources.includes("<script>"));
   assert.equal(vm.runInContext("renderQualitySources({})",context),"");
