@@ -306,7 +306,7 @@ def method_fingerprint(approach="standard", *, review_feedback=False):
         from work_observer.memory import dependencies
         from work_observer.memory import service as memory_service
         from work_observer.quality import feedback
-        from work_observer.research import project_feedback, projects
+        from work_observer.research import project_feedback, projects, requirements
 
         return hashlib.sha256(
             json.dumps(
@@ -320,6 +320,7 @@ def method_fingerprint(approach="standard", *, review_feedback=False):
                     "projects": "\n".join(inspect.getsource(projects).splitlines()),
                     "dependencies": "\n".join(inspect.getsource(dependencies).splitlines()),
                     "memory": "\n".join(inspect.getsource(memory_service).splitlines()),
+                    "requirement_guard": "\n".join(inspect.getsource(requirements).splitlines()),
                     "engine": "\n".join(inspect.getsource(sys.modules[__name__]).splitlines()),
                 },
                 ensure_ascii=False,
@@ -1572,7 +1573,12 @@ async def _research(
                         index
                         for index, claim in enumerate(answer.claims)
                         if (claim.requirement == "required" and preferred_markers(claim.text))
-                        or (claim.requirement == "preferred" and required_markers(claim.text))
+                        or (
+                            claim.requirement == "preferred"
+                            and required_markers(
+                                claim.text, contextual_negation=bool(review_feedback)
+                            )
+                        )
                     ]
                     finding_check = None
                     if approach == "source_first":
@@ -1658,7 +1664,10 @@ async def _research(
                                     "markers": (
                                         preferred_markers(answer.claims[index].text)
                                         if answer.claims[index].requirement == "required"
-                                        else required_markers(answer.claims[index].text)
+                                        else required_markers(
+                                            answer.claims[index].text,
+                                            contextual_negation=bool(review_feedback),
+                                        )
                                     ),
                                 }
                                 for index in mixed_requirements

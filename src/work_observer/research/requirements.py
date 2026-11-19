@@ -15,14 +15,23 @@ NEGATED_SUFFIX = re.compile(
     r"^[\s”\"」』]*(?:字样|措辞|标注|条件)?(?:均|都)?"
     r"(?:未出现|未使用|未见|不存在|没有出现|并不存在|不在该条|不在此项)"
 )
+FEEDBACK_NEGATED_REQUIRED_PREFIX = re.compile(
+    r"(?:不(?:应|该|能)?|不可|不得)"
+    r"(?:(?:将|把)[^，,。；;：:\n!?？！只仅]{1,16})?"
+    r"(?:归为|归类为|提升为|升级为|拆出)[\s“\"「『]*$"
+)
 
 
-def _markers(text, pattern):
+def _markers(text, pattern, *, negative_prefix=None):
     return [
         match.group()
         for match in pattern.finditer(text)
         if not NEGATED_PREFIX.search(text[max(0, match.start() - 32) : match.start()])
         and not NEGATED_SUFFIX.search(text[match.end() : match.end() + 24])
+        and not (
+            negative_prefix
+            and negative_prefix.search(text[max(0, match.start() - 32) : match.start()])
+        )
     ]
 
 
@@ -31,6 +40,10 @@ def preferred_markers(text):
     return _markers(text, PREFERRED_CUE)
 
 
-def required_markers(text):
+def required_markers(text, *, contextual_negation=False):
     """只检查明确性质标记，不将一般的熟悉/使用措辞一律当作必备。"""
-    return _markers(text, REQUIRED_CUE)
+    return _markers(
+        text,
+        REQUIRED_CUE,
+        negative_prefix=FEEDBACK_NEGATED_REQUIRED_PREFIX if contextual_negation else None,
+    )
