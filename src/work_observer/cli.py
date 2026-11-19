@@ -652,11 +652,16 @@ def research_question(
     coverage_mode: Annotated[
         ResearchCoverage, typer.Option(help="all要求逐岗覆盖；question按问题选择必要资料")
     ] = ResearchCoverage.all,
+    public_only: bool = typer.Option(
+        False, help="只研究本机已归档公开资料，不使用岗位；按问题选证据"
+    ),
 ):
     """一个有数量与时间预算的研究 Agent；不会访问招聘网站或改写岗位。"""
+    if public_only and job_id:
+        raise typer.BadParameter("只研究公开资料时不能同时指定岗位。")
     execute_research(
         question,
-        job_id,
+        [] if public_only else job_id,
         city,
         company,
         keyword,
@@ -671,7 +676,7 @@ def research_question(
         allow_public,
         approach.value,
         review_run_id,
-        coverage_mode.value,
+        "question" if public_only else coverage_mode.value,
     )
 
 

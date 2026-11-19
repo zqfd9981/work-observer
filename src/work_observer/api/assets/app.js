@@ -237,6 +237,10 @@ async function loadCompanies() {
 
 function updateResearchScope() {
   const root = $("#research-scope");
+  if ($("#research-source-mode")?.value === "public") {
+    root.innerHTML="<strong>本机已归档公开资料</strong><br>不读取岗位。每轮冻结已归档资料的当前版本，再按问题查阅；没有正文时会提示补充。";
+    return;
+  }
   if (state.researchIds?.length) {
     root.innerHTML = `<strong>所选 ${state.researchIds.length} 个岗位</strong><br>` + state.researchIds.map(id=>badge(state.selected.get(id)?.title || state.jobs.get(id)?.title || "指定岗位","muted")).join(" ");
   } else {
@@ -250,6 +254,7 @@ async function loadResearchFormats() {
   try {
     const contract = await api("openapi.json");
     state.serviceContract=contract;
+    $('#research-source-mode [value="public"]').disabled=contract.components?.schemas?.ProjectInput?.properties?.job_ids?.minItems!==0;
     const allowed = contract.components?.schemas?.ResearchInput?.properties?.approach?.enum || [];
     const select = $("#research-approach");
     if (allowed.includes("work_map") && !select.querySelector('[value="work_map"]')) {
@@ -261,6 +266,9 @@ async function loadResearchFormats() {
 }
 
 function updateResearchApproach() {
+  const publicOnly=$("#research-source-mode")?.value === "public";
+  if(publicOnly)$("#research-approach").value="standard";
+  $("#research-approach").disabled=publicOnly;
   const trial = $("#research-approach").value === "source_first";
   const publicSearch = $("#allow-public");
   if (trial) publicSearch.checked = false;
@@ -404,8 +412,9 @@ function renderResult(result, target, runId = null, replyStepId = null) {
   const completed = ["completed","evidence_only","analysis_draft"].includes(result.status);
   const reportId = result.report_id;
   const runIdentity = runId || result.run_id;
-  target.innerHTML = `<article class="panel result-card"><div class="result-top"><h2>${e(result.mode === "offline" ? "原文证据" : "研究结果")}</h2>${badge(statusLabels[result.status] || result.status,completed ? "" : "amber")}</div><p class="result-question">${e(result.question)}</p><div class="scope-summary"><span>${counts.matched} 个匹配</span>·<span>${counts.unknown} 个条件未知</span>·<span>${counts.candidate_details} 份候选正文</span>·<span>${e(when(result.created_at))}</span></div>
-    ${result.question_scope ? `<p class="form-note">本轮查阅了 ${e(result.question_scope.read_job_fragments)} 份岗位材料的片段，范围内有 ${e(result.question_scope.available_details)} 份可用正文。${e(result.question_scope.notice)}</p>` : ""}
+  target.innerHTML = `<article class="panel result-card"><div class="result-top"><h2>${e(result.mode === "offline" ? "原文证据" : "研究结果")}</h2>${badge(statusLabels[result.status] || result.status,completed ? "" : "amber")}</div><p class="result-question">${e(result.question)}</p><div class="scope-summary"><span>${counts.matched} 个匹配</span>·<span>${counts.unknown} 个条件未知</span>·<span>${counts.candidate_details} 份候选岗位正文</span>·<span>${e(result.scope.archived_public_total || 0)} 份公开资料</span>·<span>${e(when(result.created_at))}</span></div>
+    ${result.scope.source_note ? `<p class="form-note">${e(result.scope.source_note)}</p>` : ""}
+    ${result.question_scope && result.scope.jobs.length ? `<p class="form-note">本轮查阅了 ${e(result.question_scope.read_job_fragments)} 份岗位材料的片段，范围内有 ${e(result.question_scope.available_details)} 份可用正文。${e(result.question_scope.notice)}</p>` : ""}
     ${renderResearchContext({...result,run_id:runIdentity})}
     ${renderResearchCandidates(result)}
     ${result.analysis_origin === "developer_sample" ? `<div class="inline-note"><strong>开发分析样稿 · 非产品Agent输出</strong><p>用于核对方法和成果形式，未获独立人审；不计入Agent完成率或方法收益。</p></div>` : ""}
@@ -546,8 +555,9 @@ async function startResearchConversation(question) {
   clearTimeout(conversation.timer);
   setBusy(true);
   try {
-    const scope = state.researchIds?.length ? state.researchIds : (await api("jobs?"+new URLSearchParams({...state.filters,limit:20}))).jobs.map(job=>job.id);
-    if (!scope.length) throw new Error("当前范围没有资料，请先选择或补充岗位资料。");
+    const publicOnly=$("#research-source-mode")?.value === "public";
+    const scope = publicOnly ? [] : state.researchIds?.length ? state.researchIds : (await api("jobs?"+new URLSearchParams({...state.filters,limit:20}))).jobs.map(job=>job.id);
+    if (!scope.length && !publicOnly) throw new Error("当前范围没有资料，请先选择或补充岗位资料。");
     const project = await api("projects",{method:"POST",body:JSON.stringify({title:question.slice(0,100),goal:question,job_ids:scope,max_calls:24,max_seconds:720,max_rounds:6,max_public:$("#allow-public").checked?4:0})});
     conversation.id=project.id;sessionStorage.setItem("wo-conversation",project.id);
     conversation.replyToStepId=null;
@@ -565,7 +575,7 @@ async function askResearchConversation(question, options={}) {
   const supportsQuestionScope=(state.serviceContract?.components?.schemas?.StepInput?.properties?.coverage_mode?.enum || []).includes("question");
   const supportsReplies=Boolean(state.serviceContract?.components?.schemas?.StepInput?.properties?.reply_to_step_id);
   const replyTo=conversation.replyToStepId===undefined ? defaultConversationReply(project) : conversation.replyToStepId;
-  await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:state.researchIds?.length?"all":"question"}:{}),completion:"回答本次问题，查阅适用范围原文，说明解释、未知及后续核实方向。",offline,allow_public:$("#allow-public").checked,max_calls:calls,timeout:180,key:crypto.randomUUID()})});
+  await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:project.job_ids?.length===0?"question":state.researchIds?.length?"all":"question"}:{}),completion:"回答本次问题，查阅适用范围原文，说明解释、未知及后续核实方向。",offline,allow_public:$("#allow-public").checked,max_calls:calls,timeout:180,key:crypto.randomUUID()})});
   await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
   conversation.replyToStepId=undefined;
   await openResearchConversation(project.id);
@@ -666,6 +676,21 @@ async function archiveConversationDocument(url) {
   $("#conversation-question").value="结合刚归档的《"+document.title+"》与岗位原文，当前解释有哪些得到支持，哪些仍缺证据？请分别说明来源和推断边界。";
   return result;
 }
+
+async function archiveResearchDocument() {
+  const input=$("#research-document-url"),url=input.value.trim();
+  if(!url){notify("请先填写公开网页网址。",true);return;}
+  const button=$("#archive-research-document"),status=$("#research-document-status");
+  button.disabled=true;status.textContent="正在读取并归档正文，最多等待40秒…";
+  try{
+    const result=await api("public-documents",{method:"POST",body:JSON.stringify({url})});
+    status.innerHTML=`已归档《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看全文 ↗</button> 保存未调用模型，可以继续提问。`;
+  }catch(error){status.textContent=error.message;}
+  finally{button.disabled=false;}
+}
+
+$("#archive-research-document").addEventListener("click",archiveResearchDocument);
+$("#research-source-mode").addEventListener("change",()=>{updateResearchScope();updateResearchApproach();});
 
 document.addEventListener("submit",async event=>{
   if(event.target.id!=="conversation-public-document")return;
@@ -1170,10 +1195,11 @@ $("#clear-selection").addEventListener("click",()=>{state.selected.clear();updat
 $("#compare-selected").addEventListener("click",()=>{
   if (state.selected.size < 2 || state.selected.size > 5) return;
   state.researchIds=[...state.selected.keys()];
+  $("#research-source-mode").value="jobs";updateResearchApproach();
   $("#question").value="比较这些岗位的任务、责任、能力和工具，区分必备、加分和资料缺失。";
   location.hash="research";updateResearchScope();
 });
-$("#research-filtered").addEventListener("click",()=>{state.researchIds=null;location.hash="research";updateResearchScope();});
+$("#research-filtered").addEventListener("click",()=>{state.researchIds=null;$("#research-source-mode").value="jobs";updateResearchApproach();location.hash="research";updateResearchScope();});
 $("#company-form").addEventListener("submit",event=>{event.preventDefault();loadCompanies();});
 $("#research-form").addEventListener("submit",startResearch);
 $("#research-approach").addEventListener("change",updateResearchApproach);

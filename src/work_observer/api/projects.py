@@ -16,7 +16,9 @@ class ProjectInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=150)
     goal: str = Field(min_length=1, max_length=4000)
-    job_ids: list[str] = Field(min_length=1, max_length=20)
+    job_ids: list[str] = Field(
+        min_length=0, max_length=20, description="空列表仅使用已归档公开资料"
+    )
     max_calls: int = Field(default=36, ge=1, le=72)
     max_seconds: int = Field(default=900, ge=1, le=1800)
     max_rounds: int = Field(default=6, ge=1, le=12)
@@ -30,7 +32,9 @@ class ProjectRevision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
     goal: str = Field(min_length=1, max_length=4000)
-    job_ids: list[str] = Field(min_length=1, max_length=20)
+    job_ids: list[str] = Field(
+        min_length=0, max_length=20, description="空列表仅使用已归档公开资料"
+    )
 
 
 class StepInput(BaseModel):

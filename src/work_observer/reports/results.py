@@ -262,7 +262,15 @@ def render(result):
             f"- {job['title']} · {job['company']} · `{job['id']}` · "
             f"{'有正文' if job['has_detail'] else '仅摘要'} · {job['match_status']}"
         )
-    if result.get("question_scope"):
+    if result["scope"].get("source_note"):
+        lines.extend(
+            [
+                result["scope"]["source_note"],
+                f"公开资料范围：{result['scope'].get('archived_public_total', 0)}份归档正文。",
+                "",
+            ]
+        )
+    if result.get("question_scope") and result["scope"]["jobs"]:
         coverage = result["question_scope"]
         lines.extend(
             [

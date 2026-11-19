@@ -130,8 +130,9 @@ def test_cli_question_scope_is_explicit_and_persisted(source_workspace, monkeypa
 
 
 class PublicToolModel:
-    def __init__(self, category):
+    def __init__(self, category, skip_query=False):
         self.category = category
+        self.skip_query = skip_query
 
     async def turn(self, history):
         outputs = [
@@ -140,7 +141,7 @@ class PublicToolModel:
             if row.get("type") == "function_call_output"
         ]
         sources = next((row["evidence"] for row in outputs if row.get("evidence")), None)
-        if not outputs:
+        if not outputs and not self.skip_query:
             name, arguments = "query_jobs", {}
         elif sources is None:
             name, arguments = "search_archived_sources", {"terms": ["checkpoint"]}
@@ -173,8 +174,11 @@ class PublicToolModel:
 @pytest.mark.parametrize(
     "category,expected", [("tool", "completed"), ("responsibility", "incomplete")]
 )
+@pytest.mark.parametrize(
+    "public_only,coverage", [(False, "question"), (True, "question"), (True, "all")]
+)
 def test_public_document_can_explain_tool_but_cannot_prove_job_responsibility(
-    source_workspace, monkeypatch, tmp_path, category, expected
+    source_workspace, monkeypatch, tmp_path, category, expected, public_only, coverage
 ):
     repo, _, jobs = source_workspace
 
@@ -188,11 +192,70 @@ def test_public_document_can_explain_tool_but_cannot_prove_job_responsibility(
             repo,
             "合成工具说明",
             Settings(),
-            job_ids=jobs,
-            coverage_mode="question",
+            job_ids=[] if public_only else jobs,
+            coverage_mode=coverage,
             max_calls=3,
-            model=PublicToolModel(category),
+            model=PublicToolModel(category, skip_query=public_only),
         )
     )
     assert result["status"] == expected
-    assert result["model_calls"] == 3
+    assert result["model_calls"] == (2 if public_only and category == "tool" else 3)
+    if public_only:
+        assert result["scope"]["jobs"] == []
+        assert result["scope"]["counts"]["candidate_details"] == 0
+        assert result["scope"]["public_document_titles"][0]["id"]
+        assert all(ev.get("public_document_id") for ev in result["evidence"])
+        assert result["trace"][0]["tool"] == "search_archived_sources"
+        assert result["research_method_sha256"] == method_fingerprint(
+            coverage_mode=coverage,
+            public_only=True,
+        )
+
+
+def test_empty_public_library_never_falls_back_to_jobs_or_calls_model(source_workspace):
+    repo, _, _ = source_workspace
+    result = asyncio.run(
+        research(
+            repo,
+            "没有公开正文的合成问题",
+            Settings(),
+            job_ids=[],
+            coverage_mode="question",
+            model=PublicToolModel("tool"),
+        )
+    )
+    assert result["status"] == "insufficient_evidence"
+    assert result["model_calls"] == 0
+    assert not result["scope"]["jobs"] and not result["evidence"]
+
+
+def test_cli_public_only_excludes_existing_jobs(source_workspace, monkeypatch, tmp_path):
+    repo, store, _ = source_workspace
+
+    async def fetch(url):
+        return 200, {"content-type": "text/plain"}, b"checkpoint preserves execution state."
+
+    monkeypatch.setattr(public_documents, "pinned_request", fetch)
+    asyncio.run(PublicDocumentService(repo, tmp_path / "public").read("https://example.com/docs"))
+    monkeypatch.setattr(
+        Settings,
+        "load",
+        classmethod(lambda cls, *a, **kw: Settings(database_path=Path(repo.engine.url.database))),
+    )
+    response = CliRunner().invoke(
+        app,
+        [
+            "research",
+            "--question",
+            "checkpoint",
+            "--db",
+            str(repo.engine.url.database),
+            "--public-only",
+            "--offline",
+        ],
+    )
+    assert response.exit_code == 0, response.output
+    run = store.list()[0]
+    assert run["input"]["job_ids"] == [] and run["input"]["coverage_mode"] == "question"
+    assert run["result"]["scope"]["jobs"] == []
+    assert "公开资料范围：1份归档正文" in response.output

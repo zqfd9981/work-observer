@@ -168,7 +168,7 @@ class ProjectService:
             or not goal.strip()
             or len(goal) > 4000
             or not isinstance(job_ids, list)
-            or not 1 <= len(set(job_ids)) <= 20
+            or len(set(job_ids)) > 20
             or any(not isinstance(key, str) for key in job_ids)
         ):
             raise ProbeError("INVALID_PROJECT")
@@ -254,7 +254,7 @@ class ProjectService:
         with self.store.lock, self.store.db:
             record = self.get(identity)
             self._editable(record, revision)
-            if not goal.strip() or len(goal) > 4000 or not 1 <= len(set(job_ids)) <= 20:
+            if not goal.strip() or len(goal) > 4000 or len(set(job_ids)) > 20:
                 raise ProbeError("INVALID_PROJECT")
             if any(step["state"] == "running" for step in record["steps"]):
                 raise ProbeError("PROJECT_RUNNING")

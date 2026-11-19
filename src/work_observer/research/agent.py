@@ -21,6 +21,12 @@ from work_observer.retrieval.catalog import Catalog, Filters
 
 LEGACY_RESEARCH_METHOD_VERSION = "research-method-v5-responsibility-boundaries"
 RESEARCH_METHOD_VERSION = "research-method-v6-versioned-qualification-validation"
+PUBLIC_ONLY_POLICY = (
+    "本轮仅研究已归档公开资料。fixed_scope已由程序冻结并展示，"
+    "可直接search_archived_sources查正文，无须先用query_jobs查看空岗位范围。"
+    "query_jobs仍可用于查看资料标题；标题不是证据。技术说明不证明企业采用或个人职责。"
+    "官方正文可直接说明tool类工具行为；API前置条件不是岗位资格，要求性质用unspecified。"
+)
 QUESTION_COVERAGE_POLICY = (
     "本轮按用户问题选择必要资料。固定候选是允许查阅的范围，不是必须逐岗生成判断的名单。"
     "不要为了覆盖无关候选而补写判断。若用户明确要求逐一比较、完整清单或总体统计，"
@@ -287,8 +293,30 @@ company_identity_status等业务库核验状态、归档完整性和未披露合
 
 
 def method_fingerprint(
-    approach="standard", *, review_feedback=False, requirement_guard=None, coverage_mode="all"
+    approach="standard",
+    *,
+    review_feedback=False,
+    requirement_guard=None,
+    coverage_mode="all",
+    public_only=False,
 ):
+    if public_only:
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "base": method_fingerprint(
+                        approach,
+                        review_feedback=review_feedback,
+                        requirement_guard=requirement_guard,
+                        coverage_mode=coverage_mode,
+                    ),
+                    "public_only_policy": PUBLIC_ONLY_POLICY,
+                    "version": "public-documents-v1",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     if coverage_mode not in {"all", "question"}:
         raise ProbeError("RESEARCH_COVERAGE_INVALID")
     if coverage_mode == "question":
@@ -564,7 +592,9 @@ async def _persisted_research(repository, question, settings, **options):
         raise ProbeError("RESEARCH_FEEDBACK_INVALID_RUN")
     if approach not in {"standard", "source_first", "work_map"}:
         raise ProbeError("RESEARCH_APPROACH_INVALID")
-    if approach == "source_first" and options.get("allow_public", False):
+    if approach == "source_first" and (
+        options.get("allow_public", False) or options.get("job_ids") == []
+    ):
         raise ProbeError("SOURCE_FIRST_LOCAL_JD_ONLY")
     parameters = redact(
         dict(
@@ -725,7 +755,7 @@ async def _research(
     catalog = Catalog(repository)
     if job_ids is not None:
         job_ids = list(dict.fromkeys(job_ids))
-        if not 1 <= len(job_ids) <= 20:
+        if len(job_ids) > 20:
             raise ProbeError("RESEARCH_JOB_LIMIT")
         for job_id in job_ids:
             repository.job(job_id)
@@ -761,9 +791,21 @@ async def _research(
                 current_public.order_by(versions.c.observed_at.desc(), versions.c.id).limit(500)
             )
         )
+        if job_ids == []:
+            scope["public_document_titles"] = [
+                {"id": row.id, "title": row.title[:200], "publisher": row.publisher}
+                for row in session.scalars(
+                    select(PublicDocument).where(PublicDocument.id.in_(archived_public_ids[:20]))
+                )
+            ]
     scope["archived_public_ids"] = archived_public_ids
     scope["archived_public_total"] = archived_public_total
     scope["archived_public_truncated"] = archived_public_total > len(archived_public_ids)
+    if job_ids == []:
+        scope["source_note"] = (
+            "本轮仅研究已归档公开资料，不使用岗位。标题只用于定位，须检索并引用正文。"
+            "技术文档可说明工具行为，不能证明企业采用、市场需求或个人岗位责任。"
+        )
     validation = (
         qualification.guard_contract()
         if _qualification_guard == qualification.CURRENT_GUARD
@@ -784,6 +826,8 @@ async def _research(
         method_version = VERSION
     if coverage_mode == "question":
         method_version += "-question-scope-v2"
+    if job_ids == []:
+        method_version += "-public-documents-v1"
     result = {
         "format_version": 1,
         "research_method_version": method_version,
@@ -792,6 +836,7 @@ async def _research(
             review_feedback=bool(review_feedback),
             requirement_guard=_qualification_guard,
             coverage_mode=coverage_mode,
+            public_only=job_ids == [],
         ),
         "approach": approach,
         "coverage_mode": coverage_mode,
@@ -942,7 +987,7 @@ async def _research(
             )
         return finalize(result)
     evidence = {}
-    queried = False
+    queried = job_ids == []
     required_jobs = (
         {job["id"] for job in scope["jobs"] if job["has_detail"]}
         if job_ids and coverage_mode == "all"
@@ -951,6 +996,8 @@ async def _research(
     system = SYSTEM
     if coverage_mode == "question":
         system += QUESTION_COVERAGE_POLICY
+    if job_ids == []:
+        system += PUBLIC_ONLY_POLICY
     if approach == "source_first":
         from work_observer.research.source_first import POLICY
 
@@ -1038,6 +1085,7 @@ async def _research(
                 review_feedback=True,
                 requirement_guard=_qualification_guard,
                 coverage_mode=coverage_mode,
+                public_only=job_ids == [],
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
@@ -1049,7 +1097,10 @@ async def _research(
         if approach in {"source_first", "work_map"} and result.get(
             "research_method_sha256"
         ) != method_fingerprint(
-            approach, requirement_guard=_qualification_guard, coverage_mode=coverage_mode
+            approach,
+            requirement_guard=_qualification_guard,
+            coverage_mode=coverage_mode,
+            public_only=job_ids == [],
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
@@ -1058,7 +1109,9 @@ async def _research(
             and result.get("research_method_sha256") is not None
             and result["research_method_sha256"]
             != method_fingerprint(
-                requirement_guard=_qualification_guard, coverage_mode=coverage_mode
+                requirement_guard=_qualification_guard,
+                coverage_mode=coverage_mode,
+                public_only=job_ids == [],
             )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
@@ -1784,7 +1837,7 @@ async def _research(
                             claim.basis == "direct"
                             and claim.category != "business"
                             and not (
-                                coverage_mode == "question"
+                                (coverage_mode == "question" or job_ids == [])
                                 and claim.category == "tool"
                                 and any(
                                     evidence.get(key, {}).get("evidence_kind") == "public_document"

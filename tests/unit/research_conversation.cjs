@@ -55,8 +55,24 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.equal(reply.reply_to_step_id,"c".repeat(32));
  assert.equal(context.calls.filter(c=>c.path.includes("/review")).length,0);
 
+ node("#research-source-mode").value="public";
+ const queriesBefore=context.calls.filter(c=>c.path.startsWith("jobs?")).length;
+ vm.runInContext('state.researchIds=["unrelated-job"];state.serviceContract.components.schemas.StepInput.properties.coverage_mode={enum:["all","question"]};api=async(path,options)=>{calls.push({path,options});if(path.startsWith("jobs?"))throw Error("Public-only research must not query jobs");return options?{id:"public-project"}:{id:"public-project",revision:1,job_ids:[],steps:[],worker_running:false};}',context);
+ await vm.runInContext('startResearchConversation("只研究公开文档")',context);
+ const publicProject=JSON.parse(context.calls.filter(c=>c.path==="projects").at(-1).options.body);
+ assert.deepEqual(publicProject.job_ids,[]);
+ assert.equal(context.calls.filter(c=>c.path.startsWith("jobs?")).length,queriesBefore);
+ const publicStep=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
+ assert.equal(publicStep.coverage_mode,"question");
+ node("#research-document-url").value="https://example.com/docs";
+ const runsBeforeArchive=context.calls.filter(c=>c.path.endsWith("/run")).length;
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});return {document:{id:"d".repeat(32),title:"<script>合成正文</script>",full_text_length:42}};}',context);
+ await vm.runInContext('archiveResearchDocument()',context);
+ assert.ok(node("#research-document-status").innerHTML.includes("&lt;script&gt;合成正文"));
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBeforeArchive);
+
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
- vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs"',context);
+ vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs";conversation.id="project-1"',context);
  await vm.runInContext('openResearchConversation("project-1",false)',context);
  assert.equal(context.location.hash,""); // Background refresh never forces navigation.
  assert.ok(node("#research-output").innerHTML.includes('id="conversation-followup"'));
