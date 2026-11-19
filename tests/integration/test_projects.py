@@ -190,10 +190,18 @@ def test_changed_preference_drops_prior_findings_and_scoped_memory(setup):
     assert [m["content"] for m in model.contexts[-1]["memory_context"]] == ["Java"]
 
 
-def test_explicit_short_followup_keeps_unreviewed_context_without_accepting_it(setup):
+@pytest.mark.parametrize("with_background", [False, True])
+def test_explicit_short_followup_keeps_unreviewed_context_without_accepting_it(
+    setup, with_background
+):
     repo, store, job_id = setup
     service = ProjectService(store)
     project = service.create("持续提问", "Python工作", [job_id], max_calls=12)
+    background = None
+    if with_background:
+        background = MemoryService(repo).create(
+            "preference", "Python工作研究", scope="project", project_id=project["id"]
+        )
     project = service.add(
         project["id"], "Python接口职责", revision=project["revision"], max_calls=4
     )
@@ -219,6 +227,9 @@ def test_explicit_short_followup_keeps_unreviewed_context_without_accepting_it(s
     assert context["previous_findings"][0]["review_state"] == "waiting_review"
     assert all(s["state"] == "waiting_review" and not s["depends_on"] for s in project["steps"])
     assert service.usage(project)["calls"] == 6
+    if background:
+        result = store.get(project["steps"][-1]["run_id"])["result"]
+        assert result["context_memory_used"][0]["id"] == background["id"]
 
 
 @pytest.mark.parametrize("keep_original", [True, False])

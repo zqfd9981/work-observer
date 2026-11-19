@@ -807,6 +807,7 @@ class ProjectService:
             excluded.add(step["review_run_id"])
         auditor = DependencyAudit(repository, excluded_runs=excluded)
         candidates, eligible = [], []
+        historical_reply = None
         for previous in record["steps"]:
             if previous["id"] == step["id"] or previous["state"] not in {
                 "completed",
@@ -826,6 +827,33 @@ class ProjectService:
             if excluded and not auditor.run(previous["run_id"])["eligible"]:
                 continue
             audit = audit_result(result, repository)
+            if (
+                is_reply
+                and audit["changed_sources"]
+                and all(
+                    change["reason"] == "job_current_version_changed"
+                    and change["retained_evidence_valid"]
+                    for change in audit["changed_sources"]
+                )
+                and not audit["stale_memory"]
+                and not audit.get("stale_knowledge")
+                and not audit["affected_strategy"]
+                and all(
+                    issue["reason"] == "source_changed"
+                    for issue in audit.get("dependency_issues", [])
+                )
+                and {j["id"] for j in result.get("scope", {}).get("jobs", [])} <= allowed
+                and (
+                    step.get("public_document_ids") is None
+                    or {
+                        ev["public_document_id"]
+                        for ev in result.get("evidence", [])
+                        if ev.get("public_document_id")
+                    }
+                    <= set(step["public_document_ids"])
+                )
+            ):
+                historical_reply = previous, result
             if (
                 audit["stale_memory"]
                 or audit.get("stale_knowledge")
@@ -851,6 +879,8 @@ class ProjectService:
                 (2 if is_reply else int(previous["id"] in dependencies), score, previous, result)
             )
         selected_runs = {previous["run_id"] for _, _, previous, _ in candidates}
+        if historical_reply:
+            selected_runs.add(historical_reply[0]["run_id"])
         related = [
             (previous, result)
             for previous, result in eligible
@@ -865,6 +895,8 @@ class ProjectService:
         candidates.sort(key=lambda value: value[:2], reverse=True)
         followups = {}
         eligible_runs = {previous["run_id"] for previous, _ in eligible}
+        if historical_reply:
+            eligible_runs.add(historical_reply[0]["run_id"])
         for previous, result in eligible:
             for revision in result.get("cognition_revisions", []):
                 if revision["previous_run_id"] not in eligible_runs:
@@ -915,6 +947,55 @@ class ProjectService:
                 "reply_to明确本次追问对象，不表示认可旧回答；findings_included=false时，"
                 "旧结论因未完成、被拒绝、来源/范围变化或上下文限制未复用，须从现有原文重新调查。"
             )
+        if historical_reply:
+            previous, result = historical_reply
+            historical = dict(
+                run_id=previous["run_id"],
+                question=previous["question"][:1000],
+                review_state=previous["state"],
+                reason="source_version_changed",
+                derived_claims=[],
+                total_claims=len(result.get("claims", [])),
+                omitted_claims=len(result.get("claims", [])),
+                read_evidence_ids=[e["id"] for e in result.get("evidence", [])],
+                note=(
+                    "仅供明确追问对照的旧判断，原文版本已变化，不是当前事实或新证据。"
+                    "必须读取本轮原文后才可用revisions说明保留、修订、撤回或未知；"
+                    "不能由新旧认识不同推定外部工作实际变化。"
+                ),
+            )
+            context["historical_reply"] = historical
+            query_tokens = _tokens(step["question"])
+            ranked = sorted(
+                enumerate(result.get("claims", [])),
+                key=lambda pair: -len(query_tokens & _tokens(pair[1]["text"])),
+            )
+            for index, claim in ranked:
+                selected = {"text": claim["text"], "previous_claim_index": index}
+                if decisions := followups.get((previous["run_id"], index)):
+                    selected["followup_decisions"] = decisions[-3:]
+                historical["derived_claims"].append(selected)
+                if len(json.dumps(context, ensure_ascii=False)) > 6000:
+                    historical["derived_claims"].pop()
+                    continue
+                historical["omitted_claims"] -= 1
+            if historical["derived_claims"]:
+                context["reply_to"]["historical_findings_included"] = True
+                context["memory_dependencies"] = [
+                    {key: ref.get(key) for key in ("id", "version", "kind")}
+                    for ref in [
+                        *result.get("memory_used", []),
+                        *result.get("context_memory_used", []),
+                    ]
+                ]
+                context["knowledge_dependencies"] = result.get("knowledge_used", [])[:]
+                if len(json.dumps(context, ensure_ascii=False)) > 14000:
+                    context.pop("historical_reply")
+                    context["reply_to"]["historical_findings_included"] = False
+                    context["memory_dependencies"] = []
+                    context["knowledge_dependencies"] = []
+            else:
+                context.pop("historical_reply")
         for _, _, previous, result in candidates[:3]:
             query_tokens = _tokens(step["question"])
             ranked = sorted(

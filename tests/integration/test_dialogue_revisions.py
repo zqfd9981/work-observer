@@ -8,13 +8,16 @@ import pytest
 from test_source_first_research import source_workspace as source_workspace
 
 from work_observer.config import Settings
+from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.public_documents import PublicDocumentService
+from work_observer.memory.service import MemoryService
 from work_observer.quality.reviews import QualityReviewService
-from work_observer.reports.results import render
+from work_observer.reports.results import audit_result, render
 from work_observer.research.agent import TOOLS, method_fingerprint, research
 from work_observer.research.dialogue import POLICY, VERSION, DialogueAnswer, tools, validate
 from work_observer.research.projects import ProjectService, execute_project
 from work_observer.research.store import ResearchStore
+from work_observer.storage.archive import RawArchive
 
 
 class ConversationModel:
@@ -156,6 +159,144 @@ def test_three_turn_reopened_conversation_carries_pending_revision_without_a_map
         assert service.usage(project)["calls"] == 6
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize("restriction", [None, "background_changed", "scope_removed"])
+def test_explicit_reply_can_reconsider_a_retained_old_claim_after_source_update(
+    source_workspace, tmp_path, restriction
+):
+    repo, store, _ = source_workspace
+    source = dict(
+        title="合成版本岗位",
+        company="合成公司",
+        external_id="changed-source",
+        data_kind="synthetic",
+    )
+    job_id = import_jd(
+        repo,
+        RawArchive(tmp_path / "version-raw"),
+        ManualJD(
+            **source,
+            description="岗位职责：负责接口开发；与平台团队协作。",
+        ),
+    )["job_id"]
+    service = ProjectService(store)
+    project = service.create("正文更新后纠正", "接口任务与权限", [job_id], max_calls=6)
+    memories = MemoryService(repo)
+    background = memories.create(
+        "preference", "接口工作研究", scope="project", project_id=project["id"]
+    )
+    project = service.add(
+        project["id"],
+        "接口任务",
+        revision=project["revision"],
+        coverage_mode="question",
+        max_calls=3,
+    )
+    project = asyncio.run(
+        execute_project(
+            service,
+            project["id"],
+            repo,
+            Settings(),
+            model=ConversationModel(),
+            max_steps=1,
+        )
+    )
+    first_step = project["steps"][0]
+    original = deepcopy(store.get(first_step["run_id"])["result"])
+    import_jd(
+        repo,
+        RawArchive(tmp_path / "updated-raw"),
+        ManualJD(
+            **source,
+            description="岗位职责：负责接口开发；与平台团队协作，上线须经平台团队批准。",
+        ),
+    )
+    if restriction == "background_changed":
+        memories.revise(background["id"], "新的用户目标")
+    if restriction == "scope_removed":
+        project = service.revise(
+            project["id"], revision=project["revision"], goal=project["goal"], job_ids=[]
+        )
+    project = service.add(
+        project["id"],
+        "补充的审批要求改变了上轮独立上线的判断吗？",
+        revision=project["revision"],
+        reply_to_step_id=first_step["id"],
+        coverage_mode="question",
+        max_calls=3,
+    )
+    # A reopened service must recover the exact old statement as a historical target.
+    service = ProjectService(store)
+    context = service.context(project["id"], project["steps"][-1], repo)
+    assert context["previous_findings"] == []
+    assert context["reply_to"]["findings_included"] is False
+    if restriction:
+        assert "historical_reply" not in context
+        assert store.get(first_step["run_id"])["result"] == original
+        return
+    historical = context["historical_reply"]
+    assert historical["run_id"] == original["run_id"]
+    assert historical["derived_claims"][0]["text"] == original["claims"][0]["text"]
+
+    class UpdatedSourceModel(ConversationModel):
+        async def turn(self, history):
+            outputs, call = await super().turn(history)
+            if call["name"] == "finish_research":
+                answer = json.loads(call["arguments"])
+                previous = json.loads(history[1]["content"])["project_context"]["historical_reply"]
+                answer["claims"][0]["text"] = (
+                    "新版原文写明上线须经平台团队批准，不能确认个人独立上线权限。"
+                )
+                answer["revisions"] = [
+                    {
+                        "previous_run_id": previous["run_id"],
+                        "previous_claim_index": 0,
+                        "decision": "revise",
+                        "trigger": "new_evidence",
+                        "new_claim_indices": [0],
+                        "evidence_ids": answer["claims"][0]["evidence_ids"],
+                        "reason": "新版增加平台团队批准条件，收窄旧的独立上线解释。",
+                    }
+                ]
+                call["arguments"] = json.dumps(answer)
+            return outputs, call
+
+    project = asyncio.run(
+        execute_project(
+            service,
+            project["id"],
+            repo,
+            Settings(),
+            model=UpdatedSourceModel(),
+            max_steps=1,
+        )
+    )
+    current_run = store.get(project["steps"][-1]["run_id"])
+    result = current_run["result"]
+    assert result is not None, current_run.get("error_code")
+    assert result["status"] == "completed"
+    assert result["continued_from"] == []  # The outdated answer is not current evidence.
+    revision = result["cognition_revisions"][0]
+    assert revision["previous_statement"] == original["claims"][0]["text"]
+    assert revision["evidence_relation"] == "new_to_prior_run"
+    assert not audit_result(result, repo)["stale_dependencies"]
+    assert result["context_memory_used"][0]["id"] == background["id"]
+    assert store.get(first_step["run_id"])["result"] == original
+    project = service.add(
+        project["id"],
+        "再看原来的解释",
+        revision=project["revision"],
+        reply_to_step_id=first_step["id"],
+        offline=True,
+    )
+    context = service.context(project["id"], project["steps"][-1], repo)
+    decisions = context["historical_reply"]["derived_claims"][0]["followup_decisions"]
+    assert decisions[-1]["run_id"] == result["run_id"]
+    assert any(row["run_id"] == result["run_id"] for row in context["previous_findings"])
+    memories.revise(background["id"], "更新后的背景")
+    assert audit_result(result, repo)["stale_memory"]
 
 
 def revision_case():

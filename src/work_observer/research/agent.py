@@ -960,6 +960,7 @@ async def _research(
 
     dialogue_enabled = approach == "standard" and bool(
         (conversation_context or {}).get("previous_findings")
+        or (conversation_context or {}).get("historical_reply")
     )
     if resume and checkpoint:
         frozen = checkpoint[0].load_checkpoint(checkpoint[1]) or {}
@@ -1081,7 +1082,12 @@ async def _research(
         from work_observer.reports.results import audit_result
 
         inherited = audit_result(
-            {"context_memory_used": result.get("context_memory_used", [])}, repository
+            {
+                "context_memory_used": result.get("context_memory_used", []),
+                "project_id": project_id,
+                "scope": result["scope"],
+            },
+            repository,
         )
         if inherited["stale_memory"] or inherited.get("stale_dependencies"):
             raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")

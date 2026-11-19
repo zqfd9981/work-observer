@@ -88,6 +88,8 @@ def validate_map(answer, evidence):
 def validate_revisions(answer, evidence, context):
     """Bind old statements from selected context, never from model-authored quotations."""
     prior = {row["run_id"]: row for row in (context or {}).get("previous_findings", [])}
+    if historical := (context or {}).get("historical_reply"):
+        prior[historical["run_id"]] = historical
     checked, seen = [], set()
     for revision in answer.revisions:
         row = prior.get(revision.previous_run_id)
