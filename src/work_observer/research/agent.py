@@ -1015,7 +1015,9 @@ async def _research(
         if approach == "standard" and coverage_mode == "question" and job_ids != [] and not offline
         else None
     )
-    budget_policy = TOOL_BUDGET_POLICY if delivery_policy else None
+    budget_policy = (
+        TOOL_BUDGET_POLICY if delivery_policy or (approach == "work_map" and not offline) else None
+    )
     if resume and checkpoint:
         frozen = checkpoint[0].load_checkpoint(checkpoint[1]) or {}
         budget_policy = frozen.get("result", {}).get("tool_budget_policy")
@@ -1273,7 +1275,11 @@ async def _research(
             )
         return finalize(result)
     evidence = {}
-    queried = job_ids == [] or coverage_mode == "question"
+    queried = (
+        job_ids == []
+        or coverage_mode == "question"
+        or (approach == "work_map" and bool(budget_policy))
+    )
     required_jobs = (
         {job["id"] for job in scope["jobs"] if job["has_detail"]}
         if job_ids and coverage_mode == "all"
