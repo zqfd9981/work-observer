@@ -115,6 +115,31 @@ def test_saved_report_preserves_active_unknown_and_revision_summary(synthetic_re
     assert "不是人工审核通过" in text and "不能覆盖上述原文动作" in text
 
 
+@pytest.mark.parametrize(
+    ("basis", "label"),
+    [
+        ("direct", "原文明示"),
+        ("synthesis", "研究归纳"),
+        ("inference", "研究推断"),
+        (None, "性质未标注"),
+    ],
+)
+def test_export_keeps_claim_basis_without_inventing_multiple_sources(
+    synthetic_result, basis, label
+):
+    result = deepcopy(synthetic_result)
+    if basis is None:
+        result["claims"][0].pop("basis")
+    else:
+        result["claims"][0]["basis"] = basis
+    original = deepcopy(result)
+    text = render(result)
+    assert f"**{label}** · 合成模型分析" in text
+    assert "研究归纳不代表多个独立来源" in text
+    assert "跨材料归纳" not in text
+    assert result == original
+
+
 def test_partial_unit_warning_does_not_rewrite_a_legacy_report_source(synthetic_result):
     row = next(
         row for row in synthetic_result["source_findings"] if row["active"] and row.get("citations")

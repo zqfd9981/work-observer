@@ -38,6 +38,13 @@ node("#research-approach").value="standard";
 vm.runInContext("updateResearchApproach()",context);
 assert.equal(node("#allow-public").disabled,false);
 assert.equal(node("#research-approach-note").hidden,true);
+context.basisTarget={innerHTML:""};
+vm.runInContext("renderResult({...fixture,claims:['direct','synthesis','inference',undefined].map(basis=>({...fixture.claims[0],basis}))},basisTarget)",context);
+assert.ok(context.basisTarget.innerHTML.includes("原文明示"));
+assert.ok(context.basisTarget.innerHTML.includes("研究归纳"));
+assert.ok(context.basisTarget.innerHTML.includes("研究推断"));
+assert.ok(context.basisTarget.innerHTML.includes("性质未标注"));
+assert.ok(!context.basisTarget.innerHTML.includes("跨材料归纳"));
 context.target={innerHTML:""};
 vm.runInContext("renderResult(fixture,target)",context);
 assert.ok(context.target.innerHTML.indexOf("原文分项记录") < context.target.innerHTML.indexOf("判断（模型分析）"));
@@ -129,6 +136,7 @@ vm.runInContext("api=async(path,options)=>{globalThis.sent=JSON.parse(options.bo
   vm.runInContext(fs.readFileSync(require("node:path").join(directory,"quality.js"),"utf8"),context);
   await vm.runInContext("openQuality('synthetic')",context);
   const quality=node("#quality-detail").innerHTML;
+  assert.ok(quality.includes("原文明示（模型标注）"));
   assert.ok(quality.indexOf("原文分项记录") < quality.indexOf("逐条判断与原文"));
   assert.ok(quality.includes("个人编码分工"));
   if(isV2){assert.ok(quality.includes("已声明的支持子集"));assert.ok(quality.includes("主体：系统"));}

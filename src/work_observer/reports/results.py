@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from work_observer.connectors.mcp_probe import ProbeError
 
+CLAIM_BASIS_LABELS = {"direct": "原文明示", "synthesis": "研究归纳", "inference": "研究推断"}
+
 FINDING_FACETS = {
     "work_task": "岗位建设与工作任务",
     "deliverable": "工作产出",
@@ -331,6 +333,8 @@ def render(result):
         else "判断（模型分析）"
     )
     lines.extend(["", "## " + heading, ""])
+    if result["claims"]:
+        lines.extend(["判断性质由模型标注，仍需核对原文；研究归纳不代表多个独立来源。", ""])
     if result.get("source_findings"):
         lines.extend(
             [
@@ -353,6 +357,7 @@ def render(result):
         requirement = {"required": "必备", "preferred": "加分", "unspecified": "未明确性质"}
         lines.append(
             f"- {category[claim['category']]} / {requirement[claim['requirement']]}："
+            f"**{CLAIM_BASIS_LABELS.get(claim.get('basis'), '性质未标注')}** · "
             f"{claim['text']} {cites}"
         )
         lines.extend(_render_analysis_notes(result, index))
