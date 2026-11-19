@@ -50,6 +50,60 @@ def dependency_steps(record, identities):
     return result
 
 
+def _map_context(context, item, result):
+    """Carry prior reasoning with its original indices within the existing context limit."""
+    from work_observer.reports.cognition import checked_map
+
+    if not result.get("work_map"):
+        return
+    value = checked_map(result)
+    keys = ("work_types", "ability_relations", "work_relations", "comparisons", "unknowns")
+    selected = {row["previous_claim_index"] for row in item["derived_claims"]}
+    output = {
+        "version": value["version"],
+        "scope_note": value["scope_note"],
+        "note": (
+            "这是原研究的分析结构，不是独立证据或已确认事实。previous_index是原地图下标，"
+            "claim_indices仍指原判断下标，relation_indices仍指原关系下标；不可按展示位置重编号。"
+            "先结合判断的followup_decisions核实后续修正，再读本轮原文。未展示不表示不存在。"
+        ),
+        "omitted": {key: len(value.get(key, [])) for key in keys},
+        **{key: [] for key in keys},
+    }
+    omitted = item.pop("work_map_omitted", None)
+    item["work_map"] = output
+    if len(json.dumps(context, ensure_ascii=False)) > 14000:
+        item.pop("work_map")
+        if omitted is not None:
+            item["work_map_omitted"] = omitted
+        return
+    for key in keys:
+        for index, row in enumerate(value.get(key, [])):
+            if key != "unknowns" and not set(row["claim_indices"]) <= selected:
+                continue
+            if key == "comparisons" and not set(row["relation_indices"]) <= {
+                r["previous_index"] for r in output["work_relations"]
+            }:
+                continue
+            bound = (
+                {"previous_index": index, "text": row}
+                if key == "unknowns"
+                else {
+                    **row,
+                    "previous_index": index,
+                }
+            )
+            if key == "work_relations" and row.get("source_claim_index") is not None:
+                # Canonical node text/category already live in the selected claims.
+                for field in ("source_text", "target_text", "source_kind", "target_kind"):
+                    bound.pop(field)
+            output[key].append(bound)
+            output["omitted"][key] -= 1
+            if len(json.dumps(context, ensure_ascii=False)) > 14000:
+                output[key].pop()
+                output["omitted"][key] += 1
+
+
 def historical_document_scope(repository, identities, selected):
     """An explicit reply may compare a retained version of the same selected source."""
     if selected is None or identities <= set(selected):
@@ -851,8 +905,7 @@ class ProjectService:
             if previous["run_id"] in excluded and not rejected_reply:
                 continue
             if excluded and any(
-                issue["reason"] != "source_changed"
-                for issue in auditor.result(result)["issues"]
+                issue["reason"] != "source_changed" for issue in auditor.result(result)["issues"]
             ):
                 continue
             audit = audit_result(result, repository)
@@ -967,7 +1020,7 @@ class ProjectService:
             refresh_note=step.get("refresh_note"),
             selection_note=(
                 "仅选择同范围、仍有效的相关研究；omitted_claims是未放入上下文的判断数，"
-                "未展示不能当作不存在。"
+                "work_map_omitted表示整份地图未带入时各类省略数；未展示不能当作不存在。"
             ),
         )
         if reply_id:
@@ -1006,7 +1059,8 @@ class ProjectService:
                 from work_observer.quality.reviews import QualityReviewService
 
                 review = next(
-                    row for row in QualityReviewService(self.store).list_run(previous["run_id"])
+                    row
+                    for row in QualityReviewService(self.store).list_run(previous["run_id"])
                     if not row["stale_result"] and row.get("decision") == "reject"
                 )
                 historical["reason"] = "quality_rejected"
@@ -1014,7 +1068,8 @@ class ProjectService:
                     key: review[key] for key in ("id", "status", "reviewer_kind")
                 }
                 historical["review_diagnostic"].update(
-                    note=review["note"][:1200], note_truncated=len(review["note"]) > 1200,
+                    note=review["note"][:1200],
+                    note_truncated=len(review["note"]) > 1200,
                 )
                 historical["note"] = (
                     "旧判断已被核对拒绝，仅供本次明确追问定位，不能作为当前事实或已接受结论。"
@@ -1079,14 +1134,27 @@ class ProjectService:
                 read_evidence_ids=[e["id"] for e in result.get("evidence", [])],
                 coverage_mode=result.get("coverage_mode", "all"),
             )
+            if result.get("work_map"):
+                item["work_map_omitted"] = {
+                    key: len(result["work_map"].get(key, []))
+                    for key in (
+                        "work_types",
+                        "ability_relations",
+                        "work_relations",
+                        "comparisons",
+                        "unknowns",
+                    )
+                }
             if previous["id"] == reply_id and result.get("application_plan"):
                 item["application_plan"] = result["application_plan"]
                 item["application_plan_note"] = (
                     "这是原研究的建议，不是已执行事实或能力证明；实际回报须读本轮归档原文。"
                 )
-                if len(json.dumps(context, ensure_ascii=False)) + len(
-                    json.dumps(item, ensure_ascii=False)
-                ) > 14000:
+                if (
+                    len(json.dumps(context, ensure_ascii=False))
+                    + len(json.dumps(item, ensure_ascii=False))
+                    > 14000
+                ):
                     item.pop("application_plan")
                     item["application_plan_note"] = "原建议超出本轮上下文限额，未带入，不能补造。"
             dependencies = [*result.get("memory_used", []), *result.get("context_memory_used", [])]
@@ -1121,6 +1189,7 @@ class ProjectService:
                     continue
                 item["omitted_claims"] -= 1
             item["derived_claims"].sort(key=lambda claim: claim["previous_claim_index"])
+            _map_context(context, item, result)
             if previous["id"] == reply_id:
                 context["reply_to"]["findings_included"] = True
                 if result.get("application_plan"):
