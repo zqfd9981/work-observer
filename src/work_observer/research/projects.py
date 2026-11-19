@@ -845,14 +845,23 @@ class ProjectService:
                 is_reply or corrects_reply
             ):
                 continue
-            if excluded and not auditor.run(previous["run_id"])["eligible"]:
+            rejected_reply = (
+                is_reply and previous["id"] in rejected and not step.get("review_run_id")
+            )
+            if previous["run_id"] in excluded and not rejected_reply:
+                continue
+            if excluded and any(
+                issue["reason"] != "source_changed"
+                for issue in auditor.result(result)["issues"]
+            ):
                 continue
             audit = audit_result(result, repository)
             evidence_ids = {ev["id"] for ev in result.get("evidence", [])}
             if (
                 is_reply
                 and (
-                    audit["changed_sources"]
+                    rejected_reply
+                    or audit["changed_sources"]
                     or any(
                         issue["reason"] == "source_changed" and issue["id"] in evidence_ids
                         for issue in audit.get("dependency_issues", [])
@@ -883,7 +892,8 @@ class ProjectService:
             ):
                 historical_reply = previous, result
             if (
-                audit["stale_memory"]
+                previous["id"] in rejected
+                or audit["stale_memory"]
                 or audit.get("stale_knowledge")
                 or audit.get("stale_dependencies")
                 or audit["changed_sources"]
@@ -992,6 +1002,25 @@ class ProjectService:
                     "不能由新旧认识不同推定外部工作实际变化。"
                 ),
             )
+            if previous["id"] in rejected:
+                from work_observer.quality.reviews import QualityReviewService
+
+                review = next(
+                    row for row in QualityReviewService(self.store).list_run(previous["run_id"])
+                    if not row["stale_result"] and row.get("decision") == "reject"
+                )
+                historical["reason"] = "quality_rejected"
+                historical["review_diagnostic"] = {
+                    key: review[key] for key in ("id", "status", "reviewer_kind")
+                }
+                historical["review_diagnostic"].update(
+                    note=review["note"][:1200], note_truncated=len(review["note"]) > 1200,
+                )
+                historical["note"] = (
+                    "旧判断已被核对拒绝，仅供本次明确追问定位，不能作为当前事实或已接受结论。"
+                    "核对意见是待核实诊断，不是新的来源证据；须读取本轮原文后再说明修订。"
+                    "普通追问重读原文时trigger使用recheck，不冒充已绑定专门复核补查或人审通过。"
+                )
             context["historical_reply"] = historical
             query_tokens = _tokens(step["question"])
             ranked = sorted(

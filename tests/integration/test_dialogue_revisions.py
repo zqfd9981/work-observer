@@ -12,6 +12,7 @@ from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.public_documents import PublicDocumentService
 from work_observer.memory.service import MemoryService
 from work_observer.quality.reviews import QualityReviewService
+from work_observer.quality.service import DIMENSIONS
 from work_observer.reports.results import audit_result, render
 from work_observer.research.agent import TOOLS, method_fingerprint, research
 from work_observer.research.dialogue import POLICY, VERSION, DialogueAnswer, tools, validate
@@ -33,6 +34,8 @@ class ConversationModel:
             if row.get("type") == "function_call_output"
         ]
         previous = (context.get("project_context") or {}).get("previous_findings", [])
+        if not previous and (context.get("project_context") or {}).get("historical_reply"):
+            previous = [context["project_context"]["historical_reply"]]
         if not outputs:
             if context["fixed_scope"]["jobs"]:
                 name, args = "read_job", {"job_id": context["fixed_scope"]["jobs"][0]["id"]}
@@ -347,6 +350,125 @@ def test_explicit_reply_can_reconsider_a_retained_old_claim_after_source_update(
     assert any(row["run_id"] == result["run_id"] for row in context["previous_findings"])
     memories.revise(background["id"], "更新后的背景")
     assert audit_result(result, repo)["stale_memory"]
+
+
+@pytest.mark.parametrize("restriction", [None, "background_changed", "scope_removed"])
+@pytest.mark.parametrize("reviewer_kind", ["agent_assisted", "human"])
+def test_rejected_explicit_reply_can_be_reconsidered_without_inheriting_its_rejection(
+    source_workspace, restriction, reviewer_kind
+):
+    repo, store, jobs = source_workspace
+    service = ProjectService(store)
+    project = service.create("合成拒绝后续问", "接口权限", jobs[:1], max_calls=6)
+    memory = MemoryService(repo)
+    background = memory.create(
+        "preference", "合成接口研究目标", scope="project", project_id=project["id"]
+    )
+    project = service.add(
+        project["id"],
+        "接口任务与权限",
+        revision=project["revision"],
+        coverage_mode="question",
+        max_calls=3,
+    )
+    project = asyncio.run(
+        execute_project(
+            service,
+            project["id"],
+            repo,
+            Settings(),
+            model=ConversationModel(),
+            max_steps=1,
+        )
+    )
+    first_step = project["steps"][0]
+    first = deepcopy(store.get(first_step["run_id"])["result"])
+    quality = QualityReviewService(store, repo)
+    review = quality.submit(
+        first["run_id"],
+        {
+            "result_sha256": quality.packet(first["run_id"])["result_sha256"],
+            "reviewer": "合成辅助核对",
+            "reviewer_kind": reviewer_kind,
+            "decision": "reject",
+            "note": "合成拒绝：协作任务不能证明个人独立上线权限。",
+            "dimensions": {key: {"rating": "fail", "reason": "合成机制检查"} for key in DIMENSIONS},
+            "claim_reviews": [
+                {
+                    "index": 0,
+                    "support": "unknown",
+                    "requirement": "correct",
+                    "note": "合成权限跨度错误",
+                }
+            ],
+        },
+    )
+    if restriction == "background_changed":
+        memory.revise(background["id"], "另一个合成目标")
+    if restriction == "scope_removed":
+        project = service.revise(
+            project["id"],
+            revision=project["revision"],
+            goal=project["goal"],
+            job_ids=jobs[1:],
+        )
+    project = service.add(
+        project["id"],
+        "重读原文核实上轮被拒绝的上线权限判断",
+        revision=project["revision"],
+        reply_to_step_id=first_step["id"],
+        coverage_mode="question",
+        max_calls=3,
+    )
+    context = service.context(project["id"], project["steps"][-1], repo)
+    assert context["previous_findings"] == []
+    if restriction:
+        assert "historical_reply" not in context
+        return
+    historical = context["historical_reply"]
+    assert historical["reason"] == "quality_rejected"
+    assert historical["review_diagnostic"]["id"] == review["id"]
+    assert historical["review_diagnostic"]["reviewer_kind"] == reviewer_kind
+    assert historical["derived_claims"][0]["text"] == first["claims"][0]["text"]
+    project = asyncio.run(
+        execute_project(
+            service,
+            project["id"],
+            repo,
+            Settings(),
+            model=ConversationModel(),
+            max_steps=1,
+        )
+    )
+    second = store.get(project["steps"][-1]["run_id"])["result"]
+    assert second["status"] == "completed"
+    assert second["continued_from"] == []
+    assert not audit_result(second, repo)["stale_dependencies"]
+    assert second["cognition_revisions"][0]["previous_statement"] == first["claims"][0]["text"]
+    assert second["cognition_revisions"][0]["previous_quality_review"]["id"] == review["id"]
+    assert (
+        "原质量核对未通过（人工核对）"
+        if reviewer_kind == "human"
+        else "原质量核对未通过（Agent辅助，非独立人审）"
+    ) in render(second)
+    assert store.get(first_step["run_id"])["result"] == first
+    assert quality.list_run(first["run_id"])[0]["status"] == "rejected"
+    assert service.usage(project)["reserved_calls"] == 6
+    project = service.add(
+        project["id"],
+        "再核实这条被拒绝的旧解释",
+        revision=project["revision"],
+        reply_to_step_id=first_step["id"],
+        offline=True,
+    )
+    context = service.context(project["id"], project["steps"][-1], repo)
+    decisions = context["historical_reply"]["derived_claims"][0]["followup_decisions"]
+    assert decisions[-1]["run_id"] == second["run_id"]
+    assert any(row["run_id"] == second["run_id"] for row in context["previous_findings"])
+    memory.revise(background["id"], "修订后的合成个人目标")
+    assert audit_result(second, repo)["stale_memory"]
+    context = service.context(project["id"], project["steps"][-1], repo)
+    assert not context["previous_findings"] and "historical_reply" not in context
 
 
 def revision_case():

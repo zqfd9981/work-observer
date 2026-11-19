@@ -102,12 +102,24 @@ def render_revisions(result, labels):
     states = {"waiting_review": "待核对", "completed": "项目内已接受（不等于独立质量审核）"}
     lines = ["", "## 认识修正记录", "", "以下是认识变化，不等于外部工作需求变化或人审。"]
     for row in revisions:
+        prior_quality = row.get("previous_quality_review") or {}
+        quality_notice = (
+            "原质量核对未通过（"
+            + (
+                "人工核对"
+                if prior_quality.get("reviewer_kind") == "human"
+                else "Agent辅助，非独立人审"
+            )
+            + "）。"
+            if prior_quality.get("status") == "rejected" else None
+        )
         lines.extend(
             [
                 "",
                 f"### {decisions[row['decision']]}旧判断 {row['previous_claim_index'] + 1}",
-                f"原运行：`{row['previous_run_id']}`；原核对状态："
+                f"原运行：`{row['previous_run_id']}`；原步骤状态："
                 + states.get(row["previous_review_state"], row["previous_review_state"]),
+                *([quality_notice] if quality_notice else []),
                 f"旧判断：{row['previous_statement']}",
                 *[f"本轮判断：{statement}" for statement in row["new_statements"]],
                 f"理由：{row['reason']}",

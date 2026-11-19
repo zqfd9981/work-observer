@@ -168,6 +168,8 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(correctionHtml.includes("认识修正记录"));assert.ok(correctionHtml.includes("待核对"));
  assert.ok(correctionHtml.includes("&lt;b&gt;旧解释&lt;/b&gt;"));
  assert.ok(!correctionHtml.includes("地图关系单独核对")); // Ordinary corrections do not require map review fields.
+ context.revisionRows[0].previous_quality_review={status:"rejected",reviewer_kind:"agent_assisted"};
+ assert.ok(vm.runInContext('renderQualityMap({cognition_revisions:revisionRows})',context).includes("原质量核对未通过（Agent辅助，非独立人审）"));
 
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
  vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs";conversation.id="project-1"',context);

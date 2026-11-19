@@ -119,6 +119,16 @@ def validate_revisions(answer, evidence, context):
                 **revision.model_dump(),
                 "previous_statement": old["text"],
                 "previous_review_state": row["review_state"],
+                **(
+                    {
+                        "previous_quality_review": {
+                            key: row["review_diagnostic"][key]
+                            for key in ("id", "status", "reviewer_kind")
+                        }
+                    }
+                    if row.get("review_diagnostic")
+                    else {}
+                ),
                 "new_statements": [answer.claims[i].text for i in revision.new_claim_indices],
                 "evidence_relation": "new_to_prior_run" if newly_read else "reread",
                 "notice": "认识变化记录；不是外部需求变化或独立人审。",
