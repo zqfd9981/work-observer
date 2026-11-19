@@ -233,6 +233,11 @@ class DependencyAudit:
                     if row.source_run_id:
                         parents.add(row.source_run_id)
                 for ref in result.get("knowledge_used", []):
+                    if ref.get("kind") == "domain_definition":
+                        definition = session.get(DomainDefinition, ref.get("id"))
+                        if definition and (definition.source_context or {}).get("run_id"):
+                            parents.add(definition.source_context["run_id"])
+                        continue
                     if ref.get("kind") != "work_relation":
                         continue
                     row = session.get(WorkRelation, ref.get("id"))
@@ -330,6 +335,18 @@ class DependencyAudit:
                 or row.reviewed_at != ref.get("reviewed_at")
             ):
                 return [self._issue("knowledge", identity, "domain_version_or_status_changed")]
+            context = row.source_context or {}
+            if context.get("run_id"):
+                if (
+                    not set(context.get("job_ids", [])) <= scope["job_ids"]
+                    or not set(context.get("public_document_ids", []))
+                    <= scope["public_document_ids"]
+                ):
+                    return [self._issue("knowledge", identity, "domain_source_scope_mismatch")]
+                return [
+                    *self._run(context["run_id"], evidence_ids=context.get("evidence_ids")),
+                    *self._inherited_scope(context["run_id"], scope),
+                ]
             return []
         if kind != "work_relation":
             return [self._issue("knowledge", identity, "unknown_knowledge_dependency")]
@@ -352,6 +369,19 @@ class DependencyAudit:
             domain = session.get(DomainDefinition, row.domain_id)
             if not domain or domain.status != "active":
                 found.append(self._issue("knowledge", identity, "relation_domain_changed"))
+            elif domain.source_context:
+                found.extend(
+                    self._knowledge(
+                        session,
+                        {
+                            "id": domain.id,
+                            "kind": "domain_definition",
+                            "version": domain.version,
+                            "reviewed_at": domain.reviewed_at,
+                        },
+                        scope,
+                    )
+                )
             for job_id in row.scope.get("job_ids", []):
                 corrections = session.scalars(
                     select(MemoryRecord)
@@ -387,14 +417,14 @@ class DependencyAudit:
                             self._issue("knowledge", identity, "domain_correction_invalid")
                         )
                     break
-            found.extend(
-                self._evidence(
-                    session, row.evidence, kind="knowledge", identity=identity, required=True
-                )
-            )
-            found.extend(
-                self._evidence(session, row.counterevidence, kind="knowledge", identity=identity)
-            )
+            for items, required in ((row.evidence, True), (row.counterevidence, False)):
+                batches = [items[start : start + 10] for start in range(0, len(items), 10)] or [[]]
+                for batch in batches:
+                    found.extend(
+                        self._evidence(
+                            session, batch, kind="knowledge", identity=identity, required=required
+                        )
+                    )
             for peer in session.scalars(
                 select(WorkRelation).where(WorkRelation.status.in_({"candidate", "conflicted"}))
             ):

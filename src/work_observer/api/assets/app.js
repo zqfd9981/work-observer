@@ -534,13 +534,49 @@ function renderCognitiveRevisions(result, evidence) {
   return `<section class="detail-section"><h2>认识修正记录</h2><p class="form-note">记录认识为什么保留或改变；不等于外部工作需求变化，也不表示旧判断已获人审。</p>${revisions.map(row=>`<article class="panel"><h3>${e(labels[row.decision])}旧判断 ${e(row.previous_claim_index+1)}</h3><p><strong>原判断：</strong>${e(row.previous_statement)}</p>${row.new_statements.map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(row.reason)}</p><p class="form-note">原步骤状态 ${e(priorState(row))} · ${row.evidence_relation === "reread" ? "重读原材料" : "含旧轮未读的引用；不表示新发布资料"}</p>${row.evidence_ids.filter(id=>evidence.has(id)).map(id=>`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`).join(" ")}<button class="text-button" data-open-run="${e(row.previous_run_id)}">查看旧研究 ↗</button></article>`).join("")}</section>`;
 }
 
+function renderMapRetention(data) {
+  const states={candidate:"待核对",active:"已采纳",conflicted:"存在冲突",rejected:"已拒绝",withdrawn:"已撤回",superseded:"已有新版"};
+  const domains='<option value="">选择工作类型</option>'+data.domains.map(row=>`<option value="${e(row.id)}" data-domain-key="${e(row.domain_key)}">${e(row.name)} · 第${row.version}版 · ${e(states[row.status]||row.status)}</option>`).join("");
+  return `<p class="form-note">${e(data.notice)} 工作类型保留问题、任务、产出、边界及未知；关系保留解释性质和迁移限制。</p>${data.work_types.map(row=>`<section class="research-context"><h3>${e(row.name)}</h3>${row.saved_id?`<p>${e(states[row.saved_status]||row.saved_status)} · <a href="#knowledge" data-knowledge-project="${e(data.project_id||'')}">查看领域定义与来源 ↗</a></p>`:`<form data-map-save="type-${row.index}" data-kind="work_type" data-index="${row.index}"><label>保存方式<select name="previous_domain_id"><option value="">建立新的工作类型候选</option>${domains.replace('<option value="">选择工作类型</option>',"")}</select></label><p class="form-note">选择已有定义时保存为新版本，保留原版本。</p><button class="secondary small">保留工作类型候选</button></form>`}</section>`).join("")}${data.ability_relations.map(row=>`<form class="research-context" data-map-save="ability-${row.index}" data-kind="ability_relation" data-index="${row.index}"><h3>${e(row.task)} → ${e(row.ability)}</h3><label>归入哪个工作类型<select name="domain_id" required>${domains}</select></label><label>是否更新已有关系<select name="previous_relation_id"><option value="">新建关系候选</option>${data.relations.map(old=>`<option value="${e(old.id)}" data-domain-id="${e(old.domain_id)}" data-domain-key="${e(old.domain_key)}">${e(old.source_text)} → ${e(old.target_text)}</option>`).join("")}</select></label>${row.saved_id?`<p class="form-note">这条关系已有保存记录；同一类型重复保存会复用原记录，也可明确选择其他类型。</p>`:""}<button class="secondary small">保留任务与能力关系</button></form>`).join("")}<p><a href="#knowledge" data-knowledge-project="${e(data.project_id||'')}">到领域与证据核对候选、原文及历史版本 ↗</a></p>`;
+}
+
+document.addEventListener("click",async event=>{
+  const button=event.target.closest("[data-map-retention-open]");if(!button)return;
+  const root=button.closest("[data-map-retention]"),body=root.querySelector("[data-map-retention-body]");
+  button.disabled=true;
+  try{body.innerHTML=renderMapRetention(await api("knowledge/research/"+encodeURIComponent(root.dataset.mapRetention)));}
+  catch(error){body.innerHTML=errorBox(error);}finally{button.disabled=false;}
+});
+
+document.addEventListener("change",event=>{
+  if(event.target.name!=="domain_id"||!event.target.closest("[data-map-save]"))return;
+  const select=event.target.form.elements.previous_relation_id;
+  for(const option of select.options)if(option.value)option.disabled=option.dataset.domainId!==event.target.value&&option.dataset.domainKey!==event.target.selectedOptions[0]?.dataset.domainKey;
+  if(select.selectedOptions[0]?.disabled)select.value="";
+});
+
+document.addEventListener("submit",async event=>{
+  const form=event.target;if(!form.matches("[data-map-save]"))return;event.preventDefault();
+  const root=form.closest("[data-map-retention]"),body=root.querySelector("[data-map-retention-body]"),button=event.submitter||form.querySelector("button");
+  const data=form.dataset.kind==="work_type"?{work_type_index:Number(form.dataset.index),previous_domain_id:form.elements.previous_domain_id.value||null}:{ability_relation_index:Number(form.dataset.index),domain_id:form.elements.domain_id.value,previous_relation_id:form.elements.previous_relation_id.value||null};
+  const drafts=[...body.querySelectorAll("form")].filter(row=>row!==form).map(row=>({key:row.dataset.mapSave,values:[...row.querySelectorAll("select")].map(select=>[select.name,select.value])}));
+  button.disabled=true;
+  try{
+    const path="knowledge/research/"+encodeURIComponent(root.dataset.mapRetention);
+    await api(path,{method:"POST",body:JSON.stringify(data)});
+    body.innerHTML=renderMapRetention(await api(path));
+    for(const draft of drafts){const row=body.querySelector(`[data-map-save="${draft.key}"]`);if(row)for(const [name,value] of draft.values)row.elements[name].value=value;}
+    notify("结构化候选已保存，来源和原报告保留。");
+  }catch(error){notify(error.message,true);button.disabled=false;}
+});
+
 function renderWorkMap(result, evidence) {
   const map = result.work_map;
   if (!map) return "";
   const refs = row => [...new Set(row.claim_indices.flatMap(index=>result.claims[index]?.evidence_ids || []))].filter(id=>evidence.has(id)).map(id=>`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`).join(" ");
   const claims = row => row.claim_indices.map(index=>`<p class="form-note">判断 ${index+1} · ${e(({direct:"原文明示",synthesis:"归纳",inference:"待验证解释"})[result.claims[index]?.basis] || "性质待核")} · ${e(requirementLabels[result.claims[index]?.requirement] || "性质待核")}：${e(result.claims[index]?.text || "引用失效，需核对")}</p>`).join("");
   const basis = row => badge(({direct:"原文明示",synthesis:"归纳",inference:"待验证解释"})[row.basis || "inference"],"muted");
-  return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${map.work_types.map(row=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details></article>`).join("")}<h2>任务与能力关系</h2>${map.ability_relations.map(row=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details></article>`).join("")}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map(text=>`<li>${e(text)}</li>`).join("")}</ul></section>`;
+  return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${map.work_types.map(row=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details></article>`).join("")}<h2>任务与能力关系</h2>${map.ability_relations.map(row=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details></article>`).join("")}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map(text=>`<li>${e(text)}</li>`).join("")}</ul>${result.run_id&&result.status==="completed"&&state.serviceContract?.paths?.["/api/knowledge/research/{id}"]?`<div data-map-retention="${e(result.run_id)}"><button class="secondary" type="button" data-map-retention-open>保留工作类型与任务能力关系 ↗</button><div data-map-retention-body></div></div>`:""}</section>`;
 }
 
 function renderApplicationPlan(result,evidence,replyStepId=null) {

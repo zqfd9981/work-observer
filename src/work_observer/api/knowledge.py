@@ -29,7 +29,7 @@ class UnifiedInput(KnowledgeInput):
 
 class DomainInput(KnowledgeInput):
     domain_key: str = Field(pattern="^[a-z][a-z0-9_]{1,79}$")
-    name: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=160)
     definition: str = Field(min_length=1, max_length=4000)
     inclusion: str = Field(default="", max_length=4000)
     exclusion: str = Field(default="", max_length=4000)
@@ -41,6 +41,14 @@ class DomainInput(KnowledgeInput):
 class KnowledgeReviewInput(KnowledgeInput):
     decision: Literal["accept", "reject", "withdraw"]
     reason: str = Field(min_length=1, max_length=1200)
+
+
+class ResearchKnowledgeInput(KnowledgeInput):
+    work_type_index: int | None = Field(default=None, ge=0, le=7)
+    ability_relation_index: int | None = Field(default=None, ge=0, le=11)
+    domain_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    previous_domain_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    previous_relation_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class RelationInput(KnowledgeInput):
@@ -78,7 +86,7 @@ class KnowledgeListQuery(KnowledgeInput):
     project_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
-def knowledge_routes(*, repository, response, read_json, busy):
+def knowledge_routes(*, repository, response, read_json, busy, store):
     def service():
         return DomainKnowledgeService(repository())
 
@@ -97,6 +105,18 @@ def knowledge_routes(*, repository, response, read_json, busy):
         data = UnifiedInput.model_validate(await read_json(request))
         result = await run_in_threadpool(UnifiedRetrieval(repository()).search, **data.model_dump())
         return response(result)
+
+    async def research_knowledge(request):
+        from work_observer.knowledge.research import ResearchKnowledgeService
+
+        transfer = ResearchKnowledgeService(repository(), store())
+        identity = request.path_params["id"]
+        if request.method == "GET":
+            return response(await run_in_threadpool(transfer.preview, identity))
+        if refused := conflict():
+            return refused
+        data = ResearchKnowledgeInput.model_validate(await read_json(request))
+        return response(await run_in_threadpool(transfer.save, identity, **data.model_dump()), 201)
 
     async def domains(request):
         query = KnowledgeListQuery.model_validate(dict(request.query_params))
@@ -159,6 +179,7 @@ def knowledge_routes(*, repository, response, read_json, busy):
         )
 
     return [
+        Route("/api/knowledge/research/{id}", research_knowledge, methods=["GET", "POST"]),
         Route("/api/retrieval/unified", unified, methods=["POST"]),
         Route("/api/knowledge/domains", domains, methods=["GET"]),
         Route("/api/knowledge/domains", create_domain, methods=["POST"]),

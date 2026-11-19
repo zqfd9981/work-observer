@@ -42,10 +42,11 @@ class DomainKnowledgeService:
         previous_id=None,
         change_kind="create",
         related_ids=None,
+        source_context=None,
     ):
         if not isinstance(domain_key, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,79}", domain_key):
             raise ProbeError("INVALID_DOMAIN_KEY")
-        name, definition = _text(name, 100), _text(definition)
+        name, definition = _text(name, 160), _text(definition)
         if not isinstance(inclusion, str) or not isinstance(exclusion, str):
             raise ProbeError("INVALID_KNOWLEDGE_TEXT")
         if len(inclusion) > 4000 or len(exclusion) > 4000:
@@ -93,6 +94,13 @@ class DomainKnowledgeService:
                 status="candidate",
                 change_kind=change_kind,
                 related_ids=related_ids,
+                source_context=(
+                    source_context
+                    if source_context is not None
+                    else dict(previous.source_context or {})
+                    if previous
+                    else {}
+                ),
                 review_reason=None,
                 created_at=now(),
                 reviewed_at=None,
@@ -117,6 +125,8 @@ class DomainKnowledgeService:
             ):
                 raise ProbeError("DOMAIN_REVIEW_STATE_CONFLICT")
             if decision == "accept":
+                if self.definition_validity(row):
+                    raise ProbeError("DOMAIN_RESEARCH_SOURCE_STALE")
                 if session.scalar(
                     select(DomainDefinition.id)
                     .where(
@@ -149,12 +159,42 @@ class DomainKnowledgeService:
         if not include_history:
             statement = statement.where(DomainDefinition.status.in_({"active", "candidate"}))
         with Session(self.repository.engine) as session:
-            return [
-                _record(row)
-                for row in session.scalars(
-                    statement.order_by(DomainDefinition.domain_key, DomainDefinition.version.desc())
-                )
-            ]
+            output = []
+            for row in session.scalars(
+                statement.order_by(DomainDefinition.domain_key, DomainDefinition.version.desc())
+            ):
+                reasons = self.definition_validity(row)
+                output.append({**_record(row), "stale": bool(reasons), "stale_reasons": reasons})
+            return output
+
+    def definition_validity(
+        self, row, *, job_ids=None, public_document_ids=None, project_id=None, scoped=False, at=None
+    ):
+        context = row.source_context or {}
+        if not context.get("run_id"):
+            return []
+        if scoped and (
+            not set(context.get("job_ids", [])) <= set(job_ids or [])
+            or not set(context.get("public_document_ids", [])) <= set(public_document_ids or [])
+        ):
+            return ["工作类型的来源不在本轮资料范围"]
+        eligible = self.memory.derived_eligibility(
+            context["run_id"],
+            job_ids=job_ids if scoped else context.get("job_ids", []),
+            project_id=project_id if scoped else context.get("project_id"),
+            at=at,
+            evidence_ids=context.get("evidence_ids"),
+        )["eligible"]
+        return [] if eligible else ["来源研究、原文或所用背景需要重新核对"]
+
+    def _relation_evidence(self, session, evidence):
+        if not isinstance(evidence, list) or not 1 <= len(evidence) <= 60:
+            raise ProbeError("MEMORY_EVIDENCE_REQUIRED")
+        return [
+            item
+            for start in range(0, len(evidence), 10)
+            for item in self.memory._validate_evidence(session, evidence[start : start + 10])
+        ]
 
     def propose_relation(
         self,
@@ -170,6 +210,7 @@ class DomainKnowledgeService:
         conflict_ids=None,
         project_id=None,
         source_run_id=None,
+        research_map=None,
     ):
         if source_kind not in DIMENSIONS or target_kind not in DIMENSIONS:
             raise ProbeError("INVALID_RELATION_DIMENSION")
@@ -193,12 +234,11 @@ class DomainKnowledgeService:
         if len(conflict_ids) > 20:
             raise ProbeError("INVALID_RELATION_CONFLICT")
         with Session(self.repository.engine) as session, session.begin():
-            if session.get(DomainDefinition, domain_id) is None:
+            domain = session.get(DomainDefinition, domain_id)
+            if domain is None:
                 raise ProbeError("DOMAIN_NOT_FOUND")
-            verified = self.memory._validate_evidence(session, evidence)
-            counter = (
-                self.memory._validate_evidence(session, counterevidence) if counterevidence else []
-            )
+            verified = self._relation_evidence(session, evidence)
+            counter = self._relation_evidence(session, counterevidence) if counterevidence else []
             if (source_kind != "business" or target_kind != "business") and not any(
                 item.get("job_id") for item in verified
             ):
@@ -223,10 +263,14 @@ class DomainKnowledgeService:
                     }
                 ),
                 "project_id": project_id,
+                **({"research_map": research_map} if research_map is not None else {}),
             }
             for identity in conflict_ids:
                 previous = session.get(WorkRelation, identity)
-                if previous is None or previous.domain_id != domain_id:
+                previous_domain = (
+                    session.get(DomainDefinition, previous.domain_id) if previous else None
+                )
+                if previous is None or previous_domain.domain_key != domain.domain_key:
                     raise ProbeError("INVALID_RELATION_CONFLICT")
             # 同一次研究的重复提议不成为第二份独立认识。
             if source_run_id:
@@ -243,6 +287,7 @@ class DomainKnowledgeService:
                         and old.predicate == predicate
                         and old.evidence == verified
                         and old.counterevidence == counter
+                        and old.scope.get("research_map") == research_map
                         and old.status != "invalidated"
                     ):
                         return _record(old)
@@ -283,6 +328,7 @@ class DomainKnowledgeService:
             reasons.append("来源研究依赖已变化、范围不符或无法核验")
         if domain.status != "active":
             reasons.append("领域定义已替换、撤回或尚未审核")
+        reasons.extend(self.definition_validity(domain))
         # 关系中的领域归属也服从明确的单岗纠正；不让旧图谱绕过人工口径。
         for job_id in row.scope.get("job_ids", []):
             for correction in self.memory.recall(
@@ -311,9 +357,9 @@ class DomainKnowledgeService:
             if row.id in other.conflict_ids:
                 reasons.append("存在待审核冲突关系")
         try:
-            verified = self.memory._validate_evidence(session, row.evidence)
+            verified = self._relation_evidence(session, row.evidence)
             if row.counterevidence:
-                verified.extend(self.memory._validate_evidence(session, row.counterevidence))
+                verified.extend(self._relation_evidence(session, row.counterevidence))
             from work_observer.connectors.public_models import PublicDocument
             from work_observer.storage.models import Job, JobSnapshot
 
@@ -390,15 +436,50 @@ class DomainKnowledgeService:
 
     def invalidate_research(self, run_ids):
         """忘记闭包调用：研究文本不能经关系知识复生，原文不删除。"""
+        affected = self.research_dependencies(run_ids)
         with Session(self.repository.engine) as session, session.begin():
+            for row in session.scalars(
+                select(DomainDefinition).where(DomainDefinition.id.in_(affected["domain_ids"]))
+            ):
+                origin = (row.source_context or {}).get("run_id")
+                row.name = row.definition = row.inclusion = row.exclusion = "[上游研究已失效]"
+                row.source_context = {"run_id": origin} if origin else {}
+                row.review_reason, row.status = None, "invalidated"
             rows = session.scalars(
-                select(WorkRelation).where(WorkRelation.source_run_id.in_(run_ids))
+                select(WorkRelation).where(WorkRelation.id.in_(affected["relation_ids"]))
             ).all()
             for row in rows:
                 row.source_text = row.target_text = "[上游研究已失效]"
                 row.evidence = row.counterevidence = row.conflict_ids = []
                 row.scope, row.review_reason, row.status = {}, None, "invalidated"
-            return {"invalidated_relation_ids": [row.id for row in rows]}
+            return {
+                "invalidated_relation_ids": [row.id for row in rows],
+                "invalidated_domain_ids": affected["domain_ids"],
+            }
+
+    def research_dependencies(self, run_ids):
+        """Find definition revisions and their relations before erasing source records."""
+        runs = set(run_ids)
+        with Session(self.repository.engine) as session:
+            domains = list(session.scalars(select(DomainDefinition)))
+            affected = {
+                row.id for row in domains if (row.source_context or {}).get("run_id") in runs
+            }
+            while True:
+                expanded = affected | {
+                    row.id
+                    for row in domains
+                    if row.previous_id in affected or set(row.related_ids or []) & affected
+                }
+                if expanded == affected:
+                    break
+                affected = expanded
+            relations = [
+                row.id
+                for row in session.scalars(select(WorkRelation))
+                if row.source_run_id in runs or row.domain_id in affected
+            ]
+            return {"domain_ids": sorted(affected), "relation_ids": relations}
 
     @staticmethod
     def _in_scope(row, job_ids, public_document_ids, project_id):
@@ -439,6 +520,16 @@ class DomainKnowledgeService:
                     reasons.append("review_changed")
                 if row and kind == "domain_definition" and row.version != item.get("version"):
                     reasons.append("version_changed")
+                if row and kind == "domain_definition":
+                    reasons.extend(
+                        self.definition_validity(
+                            row,
+                            job_ids=job_ids,
+                            public_document_ids=public_document_ids,
+                            project_id=project_id,
+                            scoped=True,
+                        )
+                    )
                 if row and kind == "work_relation":
                     if not self._in_scope(row, set(job_ids), set(public_document_ids), project_id):
                         reasons.append("scope_changed")
@@ -464,7 +555,15 @@ class DomainKnowledgeService:
                 for row in session.scalars(
                     select(DomainDefinition).where(DomainDefinition.status == "active")
                 )
-                if not cutoff or row.reviewed_at <= cutoff
+                if (not cutoff or row.reviewed_at <= cutoff)
+                and not self.definition_validity(
+                    row,
+                    job_ids=jobs,
+                    public_document_ids=public_ids,
+                    project_id=project_id,
+                    scoped=True,
+                    at=cutoff,
+                )
             }
             ranked, dependencies, source_runs = [], [], set()
             for row in session.scalars(select(WorkRelation).where(WorkRelation.status == "active")):
@@ -521,6 +620,7 @@ class DomainKnowledgeService:
                         "inclusion": row.inclusion[:500],
                         "exclusion": row.exclusion[:500],
                         "derived": True,
+                        "source_context": row.source_context or {},
                         "independent_source": False,
                     }
                 )

@@ -550,7 +550,12 @@ def create_app(
                     business_review = {
                         key: latest.get(key)
                         for key in (
-                            "id", "status", "reviewer_kind", "decision", "note", "created_at"
+                            "id",
+                            "status",
+                            "reviewer_kind",
+                            "decision",
+                            "note",
+                            "created_at",
                         )
                     }
             except ProbeError:
@@ -693,6 +698,10 @@ def create_app(
                 "STRATEGY_ALREADY_BASELINE": "当前已经使用稳定基线，无需回退。",
                 "INVALID_RETRIEVAL_TIME": "历史截止时间需要明确时区，请使用页面时间选择框。",
                 "KNOWLEDGE_RESEARCH_REQUIRED": "请选择已完成研究中的一条结论保存知识候选。",
+                "KNOWLEDGE_WORK_MAP_REQUIRED": "请从已完成的工作地图中保留工作类型或任务能力关系。",
+                "KNOWLEDGE_RESEARCH_SOURCE_STALE": "来源研究需要重新核对，请先处理来源问题。",
+                "KNOWLEDGE_MAP_ITEM_REQUIRED": "请选择地图中的一个工作类型或一条任务能力关系。",
+                "DOMAIN_RESEARCH_SOURCE_STALE": "这个工作类型的来源需要重新核对，暂时不能采纳。",
                 "INVALID_MEMORY_EVIDENCE": (
                     "知识候选需要可核对的岗位原文引用。公开搜索摘要暂不支持采纳。"
                 ),
@@ -793,7 +802,11 @@ def create_app(
 
     routes.extend(
         knowledge_routes(
-            repository=lambda: repository, response=response, read_json=read_json, busy=busy
+            repository=lambda: repository,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+            store=lambda: store,
         )
     )
     routes.extend(

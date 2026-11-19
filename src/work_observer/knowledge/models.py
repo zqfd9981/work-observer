@@ -23,6 +23,7 @@ class DomainDefinition(Base):
     status: Mapped[str]
     change_kind: Mapped[str]
     related_ids: Mapped[list] = mapped_column(JSON)
+    source_context: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     review_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str]
     reviewed_at: Mapped[str | None]

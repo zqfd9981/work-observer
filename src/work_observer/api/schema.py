@@ -18,6 +18,7 @@ def openapi(routes):
         KnowledgeDomainCorrection,
         KnowledgeReviewInput,
         RelationInput,
+        ResearchKnowledgeInput,
         UnifiedInput,
     )
     from work_observer.api.operations import (
@@ -82,6 +83,7 @@ def openapi(routes):
         ("/api/knowledge/domains", "POST"): DomainInput,
         ("/api/knowledge/domains/{id}/review", "POST"): KnowledgeReviewInput,
         ("/api/knowledge/relations", "POST"): RelationInput,
+        ("/api/knowledge/research/{id}", "POST"): ResearchKnowledgeInput,
         ("/api/knowledge/relations/{id}/review", "POST"): KnowledgeReviewInput,
         ("/api/knowledge/collection", "POST"): DomainCollectionInput,
         ("/api/knowledge/jobs/{id}/domains", "POST"): KnowledgeDomainCorrection,

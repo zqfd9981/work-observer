@@ -1,5 +1,6 @@
 <section id="page-knowledge" class="page" hidden aria-labelledby="knowledge-title">
   <div class="page-head"><div><div class="eyebrow">EVIDENCE AND EVOLVING KNOWLEDGE</div><h1 id="knowledge-title">领域与证据<span class="heading-dot">.</span></h1><p>统一查阅岗位与公开材料，再审核领域定义、工作关系和反例。</p></div><button class="secondary" id="knowledge-refresh">刷新资料</button></div>
+  <label class="panel">知识适用的研究<select id="knowledge-project"><option value="">通用范围</option></select><span class="form-note">选择研究后可核对该研究内保存的关系；通用知识同时显示。</span></label>
   <form id="unified-form" class="panel match-form">
     <h2>查找有来源的材料</h2><div class="form-grid">
       <label>检索词<input name="terms" required maxlength="1000" placeholder="如：Python、RAG、业务交付"></label>
@@ -12,7 +13,7 @@
   <section class="research-history"><div class="section-heading"><h2>领域定义与版本</h2><label class="checkbox-line"><input id="knowledge-history" type="checkbox">显示历史与撤回项</label></div>
     <details class="panel"><summary>新增、修订、合并或拆分领域</summary><form id="knowledge-domain-form" class="match-form">
       <input name="domain_key" type="hidden"><input name="previous_id" type="hidden">
-      <div class="form-grid"><label>领域名称<input name="name" required maxlength="100"></label><label>变更方式<select name="change_kind"><option value="create">新增定义</option><option value="revise">修订当前定义（先点已有卡片“修订”）</option><option value="merge">合并关联领域</option><option value="split">从关联领域拆出新领域</option></select></label></div>
+      <div class="form-grid"><label>领域名称<input name="name" required maxlength="160"></label><label>变更方式<select name="change_kind"><option value="create">新增定义</option><option value="revise">修订当前定义（先点已有卡片“修订”）</option><option value="merge">合并关联领域</option><option value="split">从关联领域拆出新领域</option></select></label></div>
       <label>定义<textarea name="definition" required maxlength="4000" rows="3" placeholder="用具体任务和业务边界说明这个领域"></textarea></label>
       <div class="form-grid"><label>包括哪些情形<textarea name="inclusion" maxlength="4000" rows="2"></textarea></label><label>不包括或尚未明确的情形<textarea name="exclusion" maxlength="4000" rows="2"></textarea></label></div>
       <label>关联已有领域（合并、拆分时选择；可多选）<select name="related_ids" multiple size="4"></select></label>

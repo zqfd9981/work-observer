@@ -246,6 +246,30 @@ class ResearchStore:
                     affected.append(identity)
         return affected
 
+    def dependent_knowledge_runs(self, domain_ids, relation_ids):
+        keys = {("domain_definition", value) for value in domain_ids}
+        keys.update(("work_relation", value) for value in relation_ids)
+        if not keys:
+            return []
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT id,record,checkpoint FROM research_checkpoints WHERE namespace=?",
+                (self.namespace,),
+            ).fetchall()
+        affected = []
+        for identity, encoded, checkpoint in rows:
+            values = [
+                json.loads(encoded).get("result") or {},
+                (json.loads(checkpoint).get("result") or {}) if checkpoint else {},
+            ]
+            if any(
+                (ref.get("kind"), ref.get("id")) in keys
+                for result in values
+                for ref in result.get("knowledge_used", [])
+            ):
+                affected.append(identity)
+        return affected
+
     def close(self):
         with self.lock:
             self.db.close()

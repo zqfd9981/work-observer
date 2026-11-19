@@ -271,6 +271,10 @@ def _cascade(
             closure.update(related["affected_run_ids"])
             affected_projects.update(related["affected_project_ids"])
             closure.update(store.dependent_runs(sorted(closure | affected_runs)))
+            structured = DomainKnowledgeService(repository).research_dependencies(
+                closure | affected_runs
+            )
+            closure.update(store.dependent_knowledge_runs(**structured))
             for project in projects.list(all_records=True):
                 if set(s.get("run_id") for s in project.get("steps", [])) & closure:
                     affected_projects.add(project["id"])
