@@ -66,10 +66,23 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.equal(publicStep.coverage_mode,"question");
  node("#research-document-url").value="https://example.com/docs";
  const runsBeforeArchive=context.calls.filter(c=>c.path.endsWith("/run")).length;
- vm.runInContext('api=async(path,options)=>{calls.push({path,options});return {document:{id:"d".repeat(32),title:"<script>合成正文</script>",full_text_length:42}};}',context);
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});const document={id:"d".repeat(32),title:"<script>合成正文</script>",full_text_length:42,integrity:"verified",publisher:"example.com"};return path.startsWith("public-documents?")?{documents:[document],total:1,limit:10,offset:0}:{document};}',context);
  await vm.runInContext('archiveResearchDocument()',context);
  assert.ok(node("#research-document-status").innerHTML.includes("&lt;script&gt;合成正文"));
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBeforeArchive);
+ assert.ok(node("#public-library-list").innerHTML.includes("&lt;script&gt;合成正文"));
+ assert.ok(!node("#public-library-list").innerHTML.includes("<script>"));
+ node("#question").value="我原有的问题";
+ const callsBeforeQuestion=context.calls.length;
+ await vm.runInContext('preparePublicDocumentQuestion("合成文档")',context);
+ assert.ok(node("#question").value.includes("合成文档"));
+ assert.ok(node("#question").value.includes("我原有的问题"));
+ assert.equal(node("#research-source-mode").value,"public");
+ assert.equal(context.calls.length,callsBeforeQuestion); // Selecting a document only drafts a question.
+ node("#public-library-query").value="Graph & API";
+ await vm.runInContext('loadPublicLibrary(10)',context);
+ const libraryQuery=new URLSearchParams(context.calls.at(-1).path.split("?")[1]);
+ assert.equal(libraryQuery.get("q"),"Graph & API");assert.equal(libraryQuery.get("offset"),"0");
 
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
  vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs";conversation.id="project-1"',context);

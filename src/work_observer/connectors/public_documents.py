@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlsplit
 from uuid import uuid4
 
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from work_observer.collection.contracts import now
@@ -271,6 +272,47 @@ class PublicDocumentService:
     def __init__(self, repository, archive_root):
         self.repository = repository
         self.archive_root = Path(archive_root)
+
+    def catalog(self, *, q="", limit=20, offset=0):
+        """List the latest archived version per requested URL, without fetching it again."""
+        if not isinstance(q, str) or len(q) > 200 or not 1 <= limit <= 50 or offset < 0:
+            raise ProbeError("INVALID_PUBLIC_DOCUMENT_QUERY")
+        versions = select(
+            PublicDocument.id,
+            func.row_number()
+            .over(
+                partition_by=PublicDocument.url,
+                order_by=(PublicDocument.observed_at.desc(), PublicDocument.id.desc()),
+            )
+            .label("version_rank"),
+        ).subquery()
+        query = (
+            select(PublicDocument)
+            .join(versions, PublicDocument.id == versions.c.id)
+            .where(versions.c.version_rank == 1)
+        )
+        if q.strip():
+            query = query.where(
+                or_(
+                    PublicDocument.title.contains(q.strip(), autoescape=True),
+                    PublicDocument.url.contains(q.strip(), autoescape=True),
+                    PublicDocument.publisher.contains(q.strip(), autoescape=True),
+                )
+            )
+        with Session(self.repository.engine) as session:
+            total = session.scalar(select(func.count()).select_from(query.subquery()))
+            documents = [
+                self._metadata(row)
+                for row in session.scalars(
+                    query.order_by(
+                        PublicDocument.observed_at.desc(),
+                        PublicDocument.id.desc(),
+                    )
+                    .offset(offset)
+                    .limit(limit)
+                )
+            ]
+        return {"documents": documents, "total": total, "limit": limit, "offset": offset}
 
     async def read(self, url):
         original = checked_url(url)

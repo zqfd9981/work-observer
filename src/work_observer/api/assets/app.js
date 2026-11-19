@@ -685,12 +685,48 @@ async function archiveResearchDocument() {
   try{
     const result=await api("public-documents",{method:"POST",body:JSON.stringify({url})});
     status.innerHTML=`已归档《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看全文 ↗</button> 保存未调用模型，可以继续提问。`;
+    await loadPublicLibrary();
   }catch(error){status.textContent=error.message;}
   finally{button.disabled=false;}
 }
 
 $("#archive-research-document").addEventListener("click",archiveResearchDocument);
 $("#research-source-mode").addEventListener("change",()=>{updateResearchScope();updateResearchApproach();});
+
+async function loadPublicLibrary(offset=0) {
+  const root=$("#public-library-list"),q=$("#public-library-query").value.trim();
+  if(q!==state.publicLibraryQuery)offset=0;
+  state.publicLibraryQuery=q;
+  const request=state.publicLibraryRequest=(state.publicLibraryRequest||0)+1;
+  root.innerHTML='<p class="form-note">正在查找本机归档…</p>';
+  try{
+    const data=await api("public-documents?"+new URLSearchParams({q,limit:10,offset}));
+    if(request!==state.publicLibraryRequest)return;
+    root.innerHTML=data.documents.length ? `<p class="form-note">共 ${e(data.total)} 份网址归档，显示 ${data.offset+1}–${data.offset+data.documents.length}；每个网址显示最新归档。</p>${data.documents.map(doc=>`<article class="detail-history"><h4>${e(doc.title)}</h4><p class="form-note">${e(doc.publisher)} · ${e(doc.full_text_length)}字符<br>归档于 ${e(when(doc.observed_at))} · 发布 ${doc.source_published_at?e(when(doc.source_published_at)):"时间未知"}</p>${doc.integrity!=="verified"?'<p class="form-note">归档文件缺失或内容已变化，须重新核对。</p>':""}<button type="button" class="text-button" data-public-source="${e(doc.id)}">查看全文 ↗</button><button type="button" class="text-button" data-public-question="${e(doc.title)}" ${doc.integrity!=="verified"?"disabled":""}>围绕这份资料提问</button></article>`).join("")}<div class="result-actions">${data.offset>0?`<button type="button" class="secondary small" data-public-library-page="${Math.max(0,data.offset-data.limit)}">上一页</button>`:""}${data.offset+data.documents.length<data.total?`<button type="button" class="secondary small" data-public-library-page="${data.offset+data.limit}">下一页</button>`:""}</div>` : '<p class="form-note">没有找到对应的归档。可调整关键词，或在上方补充公开网页。</p>';
+  }catch(error){if(request===state.publicLibraryRequest)root.innerHTML=errorBox(error);}
+}
+
+function preparePublicDocumentQuestion(title) {
+  const input=$("#question"),previous=state.publicQuestionPrefix;
+  const draft=previous&&input.value.startsWith(previous)?input.value.slice(previous.length):input.value;
+  const prefix="围绕归档文档《"+title+"》：\n";
+  if((prefix+draft).length>4000){notify("现有问题已保留，请先精简内容后再加入文档标题。",true);return;}
+  state.publicQuestionPrefix=prefix;
+  $("#research-source-mode").value="public";
+  updateResearchScope();updateResearchApproach();
+  input.value=prefix+draft;
+  input.focus();input.scrollIntoView({block:"center",behavior:"smooth"});
+}
+
+$("#public-library").addEventListener("toggle",event=>{if(event.target.open)loadPublicLibrary();});
+$("#refresh-public-library").addEventListener("click",()=>loadPublicLibrary());
+$("#public-library-query").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();loadPublicLibrary();}});
+document.addEventListener("click",event=>{
+  const page=event.target.closest("[data-public-library-page]");
+  if(page){loadPublicLibrary(Number(page.dataset.publicLibraryPage));return;}
+  const question=event.target.closest("[data-public-question]");
+  if(question&&!question.disabled)preparePublicDocumentQuestion(question.dataset.publicQuestion);
+});
 
 document.addEventListener("submit",async event=>{
   if(event.target.id!=="conversation-public-document")return;

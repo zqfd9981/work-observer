@@ -142,3 +142,60 @@ def test_redirect_to_paused_recruitment_is_blocked_before_second_request(web, mo
     )
     assert response.json()["error_code"] == "PUBLIC_DOCUMENT_RECRUITMENT_PAUSED"
     assert calls == ["https://example.com/docs"]
+
+
+def test_public_library_searches_latest_versions_without_refetching_or_erasing_history(
+    web, monkeypatch
+):
+    client, headers, settings, _ = web
+    titles = iter(["Original draft", "Current 100% state", "Separate document"])
+
+    async def fetch(url):
+        body = f"<title>{next(titles)}</title><main>checkpoint documentation</main>".encode()
+        return 200, {"content-type": "text/html"}, body
+
+    monkeypatch.setattr(public_documents, "pinned_request", fetch)
+    archived = [
+        client.post(
+            "/api/public-documents",
+            headers=headers,
+            json={"url": url},
+        ).json()["document"]
+        for url in (
+            "https://example.com/docs",
+            "https://example.com/docs",
+            "https://example.com/other",
+        )
+    ]
+
+    async def forbidden(url):
+        raise AssertionError("Browsing the library must not refetch a website")
+
+    monkeypatch.setattr(public_documents, "pinned_request", forbidden)
+    first = client.get("/api/public-documents?limit=1").json()
+    second = client.get("/api/public-documents?limit=1&offset=1").json()
+    assert first["total"] == second["total"] == 2
+    assert first["documents"][0]["id"] != second["documents"][0]["id"]
+    assert all("text" not in row and "path" not in row for row in first["documents"])
+    assert client.get("/api/public-documents", params={"q": "Original"}).json()["total"] == 0
+    found = client.get("/api/public-documents", params={"q": "%"}).json()
+    assert found["total"] == 1 and found["documents"][0]["id"] == archived[1]["id"]
+    assert found["documents"][0]["integrity"] == "verified"
+    assert client.get("/api/public-documents?q=example.com").json()["total"] == 2
+    old = client.get("/api/public-documents/" + archived[0]["id"]).json()
+    assert old["title"] == "Original draft" and old["integrity"] == "verified"
+    (settings.raw_directory / "public" / (archived[1]["id"] + ".html")).write_bytes(b"changed")
+    changed = client.get("/api/public-documents", params={"q": "%"}).json()
+    assert changed["documents"][0]["integrity"] == "missing_or_changed"
+    schema = client.get("/api/openapi.json").json()
+    assert {p["name"] for p in schema["paths"]["/api/public-documents"]["get"]["parameters"]} == {
+        "q",
+        "limit",
+        "offset",
+    }
+
+
+@pytest.mark.parametrize("query", ["limit=51", "offset=-1", "q=" + "x" * 201])
+def test_public_library_bounds_are_validated(web, query):
+    client, _, _, _ = web
+    assert client.get("/api/public-documents?" + query).status_code == 422

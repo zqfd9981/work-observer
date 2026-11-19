@@ -17,6 +17,13 @@ class PublicDocumentInput(BaseModel):
     url: str = Field(min_length=1, max_length=3000)
 
 
+class PublicDocumentQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    q: str = Field(default="", max_length=200)
+    limit: int = Field(default=20, ge=1, le=50)
+    offset: int = Field(default=0, ge=0)
+
+
 class MatchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filters: Filters = Field(default_factory=Filters)
@@ -64,6 +71,16 @@ def product_routes(*, repository, settings, model, response, read_json, busy, op
         return response(
             PublicDocumentService(repository(), settings.raw_directory / "public").document(
                 request.path_params["id"]
+            )
+        )
+
+    async def public_documents(request):
+        from work_observer.connectors.public_documents import PublicDocumentService
+
+        query = PublicDocumentQuery.model_validate(dict(request.query_params))
+        return response(
+            PublicDocumentService(repository(), settings.raw_directory / "public").catalog(
+                **query.model_dump()
             )
         )
 
@@ -228,6 +245,7 @@ def product_routes(*, repository, settings, model, response, read_json, busy, op
     return [
         Route("/api/jobs/{id}/compare-history", compare_history),
         Route("/api/public-documents/{id}", public_document),
+        Route("/api/public-documents", public_documents),
         Route("/api/public-documents", archive_public_document, methods=["POST"]),
         Route("/api/retrieval", retrieval, methods=["POST"]),
         Route("/api/strategies", strategies),

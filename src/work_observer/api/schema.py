@@ -31,6 +31,7 @@ def openapi(routes):
         MatchInput,
         ProfileInput,
         PublicDocumentInput,
+        PublicDocumentQuery,
         RetrievalInput,
         RollbackInput,
         StrategyInput,
@@ -189,6 +190,11 @@ def openapi(routes):
                 parameters.extend(
                     {"in": "query", "name": key, "required": False, "schema": schema}
                     for key, schema in JobQuery.model_json_schema()["properties"].items()
+                )
+            if route.path == "/api/public-documents" and method == "GET":
+                parameters.extend(
+                    {"in": "query", "name": key, "required": False, "schema": schema}
+                    for key, schema in PublicDocumentQuery.model_json_schema()["properties"].items()
                 )
             if route.path == "/api/search":
                 parameters.extend(
