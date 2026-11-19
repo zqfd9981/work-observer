@@ -51,12 +51,21 @@ def tools(base):
 
 
 def validate(answer, evidence, context, review_feedback=None):
+    for revision in answer.revisions:
+        if revision.trigger == "review":
+            historical = (context or {}).get("historical_reply") or {}
+            diagnostic = historical.get("review_diagnostic") or {}
+            explicit_rejection = (
+                historical.get("run_id") == revision.previous_run_id
+                and diagnostic.get("id")
+                and diagnostic.get("status") == "rejected"
+            )
+            if not explicit_rejection and (
+                not review_feedback or review_feedback.get("run_id") != revision.previous_run_id
+            ):
+                raise ValueError("本轮没有该旧判断的明确复核反馈，重读原文应使用recheck")
     checked = validate_revisions(answer, evidence, context)
     for revision in answer.revisions:
-        if revision.trigger == "review" and (
-            not review_feedback or review_feedback.get("run_id") != revision.previous_run_id
-        ):
-            raise ValueError("本轮没有该旧判断的明确复核反馈，重读原文应使用recheck")
         if revision.decision in {"retain", "revise"}:
             sources = set(revision.evidence_ids)
             claims = [answer.claims[i] for i in revision.new_claim_indices]

@@ -22,8 +22,9 @@ from work_observer.storage.archive import RawArchive
 
 
 class ConversationModel:
-    def __init__(self, *, record=True, interrupt=False):
+    def __init__(self, *, record=True, interrupt=False, revision_trigger="recheck"):
         self.record, self.interrupt, self.contexts = record, interrupt, []
+        self.revision_trigger = revision_trigger
 
     async def turn(self, history):
         context = json.loads(history[1]["content"])
@@ -66,7 +67,7 @@ class ConversationModel:
                         "previous_run_id": old["run_id"],
                         "previous_claim_index": old["derived_claims"][0]["previous_claim_index"],
                         "decision": "revise",
-                        "trigger": "recheck",
+                        "trigger": self.revision_trigger,
                         "new_claim_indices": [0],
                         "evidence_ids": [evidence],
                         "reason": "同一原文重读，只支持任务和协作，不支持个人上线权推断。",
@@ -354,8 +355,9 @@ def test_explicit_reply_can_reconsider_a_retained_old_claim_after_source_update(
 
 @pytest.mark.parametrize("restriction", [None, "background_changed", "scope_removed"])
 @pytest.mark.parametrize("reviewer_kind", ["agent_assisted", "human"])
+@pytest.mark.parametrize("revision_trigger", ["recheck", "review"])
 def test_rejected_explicit_reply_can_be_reconsidered_without_inheriting_its_rejection(
-    source_workspace, restriction, reviewer_kind
+    source_workspace, restriction, reviewer_kind, revision_trigger
 ):
     repo, store, jobs = source_workspace
     service = ProjectService(store)
@@ -436,12 +438,13 @@ def test_rejected_explicit_reply_can_be_reconsidered_without_inheriting_its_reje
             project["id"],
             repo,
             Settings(),
-            model=ConversationModel(),
+            model=ConversationModel(revision_trigger=revision_trigger),
             max_steps=1,
         )
     )
     second = store.get(project["steps"][-1]["run_id"])["result"]
     assert second["status"] == "completed"
+    assert second["cognition_revisions"][0]["trigger"] == revision_trigger
     assert second["continued_from"] == []
     assert not audit_result(second, repo)["stale_dependencies"]
     assert second["cognition_revisions"][0]["previous_statement"] == first["claims"][0]["text"]
@@ -531,6 +534,28 @@ def test_invalid_revision_cannot_change_provenance(mistake):
     if mistake == "fake_review":
         revision.trigger = "review"
     with pytest.raises(ValueError):
+        validate(answer, evidence, context)
+
+
+@pytest.mark.parametrize("missing", ["diagnostic", "id", "rejected_status", "same_run"])
+def test_review_trigger_requires_the_selected_old_runs_actual_rejection(missing):
+    answer, evidence, context = revision_case()
+    answer.revisions[0].trigger = "review"
+    historical = context["previous_findings"].pop()
+    historical["review_diagnostic"] = {
+        "id": "b" * 32, "status": "rejected", "reviewer_kind": "agent_assisted"
+    }
+    context["historical_reply"] = historical
+    if missing == "diagnostic":
+        historical.pop("review_diagnostic")
+    if missing == "id":
+        historical["review_diagnostic"].pop("id")
+    if missing == "rejected_status":
+        historical["review_diagnostic"]["status"] = "pending"
+    if missing == "same_run":
+        context["previous_findings"] = [deepcopy(historical)]
+        historical["run_id"] = "c" * 32
+    with pytest.raises(ValueError, match="明确复核反馈"):
         validate(answer, evidence, context)
 
 

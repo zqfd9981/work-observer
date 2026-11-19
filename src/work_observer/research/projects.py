@@ -1019,7 +1019,8 @@ class ProjectService:
                 historical["note"] = (
                     "旧判断已被核对拒绝，仅供本次明确追问定位，不能作为当前事实或已接受结论。"
                     "核对意见是待核实诊断，不是新的来源证据；须读取本轮原文后再说明修订。"
-                    "普通追问重读原文时trigger使用recheck，不冒充已绑定专门复核补查或人审通过。"
+                    "仅重读原文时trigger用recheck；依据此拒绝诊断修正可用review，"
+                    "不表示已绑定专门复核补查或人审通过。"
                 )
             context["historical_reply"] = historical
             query_tokens = _tokens(step["question"])
