@@ -12,7 +12,7 @@ from work_observer.quality.service import digest
 from work_observer.reports.results import audit_result
 from work_observer.retrieval.catalog import Filters
 
-VERSION = "research-method-v9-review-feedback"
+VERSION = "research-method-v10-review-feedback"
 POLICY = """
 review_feedback 是用户明确选择的旧结果复核诊断，不是新原文、用户偏好或人类批准。
 保留 reviewer_kind；Agent意见仍可能错误，须逐条回查。不要沿用旧答案或把诊断中的引文当证据。

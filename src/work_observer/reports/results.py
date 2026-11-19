@@ -280,6 +280,14 @@ def render(result):
                 "",
             ]
         )
+    if result.get("qualification_validation"):
+        lines.extend(
+            [
+                "",
+                "本轮使用更新后的局部否定识别，恢复时保留本轮检查口径；词面检查不代替原文语义核对。",
+                "",
+            ]
+        )
     if result.get("plan"):
         lines.extend(["", "## 调查计划", "", *[f"- {step}" for step in result["plan"]["steps"]]])
     if result.get("memory_used"):

@@ -15,10 +15,12 @@ from work_observer.collection.contracts import now
 from work_observer.config import validate_url
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
+from work_observer.research import requirements as qualification
 from work_observer.research.requirements import preferred_markers, required_markers
 from work_observer.retrieval.catalog import Catalog, Filters
 
-RESEARCH_METHOD_VERSION = "research-method-v5-responsibility-boundaries"
+LEGACY_RESEARCH_METHOD_VERSION = "research-method-v5-responsibility-boundaries"
+RESEARCH_METHOD_VERSION = "research-method-v6-versioned-qualification-validation"
 REQUIREMENT_POLICY = (
     "required表示来源明确列为岗位资格的条件，不保证现实录取的一票否决。"
     "任职资格/岗位要求中明确要求具备、掌握、熟悉、熟练、精通等个人条件，且无加分措辞时用required；"
@@ -275,13 +277,21 @@ company_identity_status等业务库核验状态、归档完整性和未披露合
 中文输出，结论简洁具体，信息不足写入 gaps。只能通过提供的函数完成回答。"""
 
 
-def method_fingerprint(approach="standard", *, review_feedback=False):
+def method_fingerprint(approach="standard", *, review_feedback=False, requirement_guard=None):
     if approach not in {"standard", "source_first"}:
         raise ProbeError("RESEARCH_APPROACH_INVALID")
+    guard = requirement_guard or qualification.CURRENT_GUARD
+    if guard not in {qualification.CURRENT_GUARD, qualification.LEGACY_GUARD}:
+        raise ProbeError("RESEARCH_VALIDATION_INVALID")
+    version = (
+        LEGACY_RESEARCH_METHOD_VERSION
+        if guard == qualification.LEGACY_GUARD
+        else RESEARCH_METHOD_VERSION
+    )
     baseline = hashlib.sha256(
         json.dumps(
             {
-                "version": RESEARCH_METHOD_VERSION,
+                "version": version,
                 "system": SYSTEM,
                 "requirement_policy": REQUIREMENT_POLICY,
                 "tools": [
@@ -292,6 +302,11 @@ def method_fingerprint(approach="standard", *, review_feedback=False):
                     PUBLIC_TOOL,
                     PUBLIC_READ_TOOL,
                 ],
+                **(
+                    {"qualification_validation": qualification.guard_contract()}
+                    if guard == qualification.CURRENT_GUARD
+                    else {}
+                ),
             },
             sort_keys=True,
             ensure_ascii=False,
@@ -482,6 +497,8 @@ async def _persisted_research(repository, question, settings, **options):
     # 恢复以权威输入为准；调用者未重复指定方法时也不能静默降级。
     if "review_feedback" in options:
         raise ProbeError("RESEARCH_FEEDBACK_CONTEXT_INTERNAL_ONLY")
+    if {"qualification_validation", "_qualification_guard"} & options.keys():
+        raise ProbeError("RESEARCH_VALIDATION_INTERNAL_ONLY")
     if options.get("resume") and options.get("checkpoint"):
         checkpoint_store, checkpoint_id = options["checkpoint"]
         original = checkpoint_store.get(checkpoint_id)["input"].get("approach", "standard")
@@ -557,6 +574,14 @@ async def _persisted_research(repository, question, settings, **options):
         options["checkpoint"] = (store, identity)
     repository.bind_research_store(store)
     try:
+        validation = qualification.select_guard(
+            store, identity, resume=options.get("resume", False)
+        )
+        options["_qualification_guard"] = (
+            validation["version"] if validation else qualification.LEGACY_GUARD
+        )
+        if validation:
+            parameters["qualification_validation"] = validation
         if options.get("review_run_id"):
             from work_observer.quality.feedback import load_feedback
 
@@ -648,7 +673,10 @@ async def _research(
     project_id=None,
     conversation_context=None,
     approach="standard",
+    _qualification_guard=qualification.CURRENT_GUARD,
 ):
+    if _qualification_guard not in {qualification.CURRENT_GUARD, qualification.LEGACY_GUARD}:
+        raise ProbeError("RESEARCH_VALIDATION_INVALID")
     if not question.strip() or len(question) > 4000:
         raise ProbeError("INVALID_QUESTION")
     if not 1 <= max_calls <= 12 or not 0 < timeout <= 300:
@@ -695,7 +723,12 @@ async def _research(
     scope["archived_public_ids"] = archived_public_ids
     scope["archived_public_total"] = archived_public_total
     scope["archived_public_truncated"] = archived_public_total > len(archived_public_ids)
-    method_version = RESEARCH_METHOD_VERSION
+    validation = (
+        qualification.guard_contract()
+        if _qualification_guard == qualification.CURRENT_GUARD
+        else None
+    )
+    method_version = RESEARCH_METHOD_VERSION if validation else LEGACY_RESEARCH_METHOD_VERSION
     if review_feedback:
         from work_observer.quality.feedback import VERSION as feedback_version
 
@@ -708,7 +741,7 @@ async def _research(
         "format_version": 1,
         "research_method_version": method_version,
         "research_method_sha256": method_fingerprint(
-            approach, review_feedback=bool(review_feedback)
+            approach, review_feedback=bool(review_feedback), requirement_guard=_qualification_guard
         ),
         "approach": approach,
         "requirement_policy": REQUIREMENT_POLICY,
@@ -744,6 +777,8 @@ async def _research(
             "note": "服务未提供可核实单价，费用未知；调用与时间有上限。",
         },
     }
+    if validation:
+        result["qualification_validation"] = validation
     if memory is None:
         from work_observer.memory.service import MemoryService
 
@@ -921,15 +956,25 @@ async def _research(
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
 
     check_feedback()
+
+    def check_validation():
+        if validation and qualification.guard_contract() != validation:
+            raise ProbeError("RESEARCH_VALIDATION_CHANGED_NEW_ROUND_REQUIRED")
+
+    check_validation()
     if resume:
         saved = store.load_checkpoint(identity) if store else None
         if not saved or saved.get("version") != 1:
             raise ProbeError("RESEARCH_CHECKPOINT_MISSING")
         result = saved["result"]
+        if result.get("qualification_validation") != validation:
+            raise ProbeError("RESEARCH_VALIDATION_CHANGED_NEW_ROUND_REQUIRED")
         if review_feedback and (
             result.get("review_feedback") != review_feedback
             or result.get("research_method_sha256")
-            != method_fingerprint(approach, review_feedback=True)
+            != method_fingerprint(
+                approach, review_feedback=True, requirement_guard=_qualification_guard
+            )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
         saved_approach = result.get("approach", "standard")
@@ -937,7 +982,15 @@ async def _research(
             raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
         if approach == "source_first" and result.get(
             "research_method_sha256"
-        ) != method_fingerprint(approach):
+        ) != method_fingerprint(approach, requirement_guard=_qualification_guard):
+            raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
+        if (
+            approach == "standard"
+            and not review_feedback
+            and result.get("research_method_sha256") is not None
+            and result["research_method_sha256"]
+            != method_fingerprint(requirement_guard=_qualification_guard)
+        ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         scope, pool, history = result["scope"], saved["pool"], saved["history"]
         candidates = {job["id"] for job in scope["jobs"]}
@@ -1025,6 +1078,7 @@ async def _research(
                     raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                 check_knowledge()
                 check_feedback()
+                check_validation()
                 tool_contract = None
                 if isinstance(model, ModelClient) and approach == "source_first":
                     from work_observer.research.source_views import build_source_views
@@ -1060,6 +1114,7 @@ async def _research(
                 if usage:
                     result["usage"].append(usage)
                 check_feedback()
+                check_validation()
                 check_knowledge()
                 history.extend(outputs)
                 name = call.get("name")
@@ -1576,7 +1631,7 @@ async def _research(
                         or (
                             claim.requirement == "preferred"
                             and required_markers(
-                                claim.text, contextual_negation=bool(review_feedback)
+                                claim.text, contextual_negation=bool(validation or review_feedback)
                             )
                         )
                     ]
@@ -1666,7 +1721,7 @@ async def _research(
                                         if answer.claims[index].requirement == "required"
                                         else required_markers(
                                             answer.claims[index].text,
-                                            contextual_negation=bool(review_feedback),
+                                            contextual_negation=bool(validation or review_feedback),
                                         )
                                     ),
                                 }

@@ -175,7 +175,7 @@ class ProfileService:
         if row.analyzer_version != ANALYZER_VERSION or row.prompt_version != PROMPT_VERSION:
             stale.append("画像分析方法已变化")
         if row.result.get("research_method_sha256") != method_fingerprint():
-            stale.append("采用的研究提示或工具合同已变化")
+            stale.append("采用的研究方法或检查口径已变化")
         strategy = row.result.get("strategy")
         if strategy and any(
             strategy.get(key) != value for key, value in self._strategy_context().items()

@@ -1,6 +1,6 @@
 [project]
 name = "work-observer"
-version = "0.15.0"
+version = "0.16.0"
 description = "单用户岗位研究Agent：证据、画像、记忆、评测及可部署中文工作台"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"

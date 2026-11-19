@@ -173,11 +173,13 @@ def test_new_unbound_store_can_seal_candidate_and_reject_invalid_value(tmp_path)
     store.close()
 
 
-def test_standard_fingerprint_and_api_default_remain_legacy_v5():
+def test_standard_default_has_versioned_validation_and_preserves_legacy_fingerprint():
     from work_observer.research.agent import RESEARCH_METHOD_VERSION, method_fingerprint
 
     assert ResearchInput(question="Synthetic default").approach == "standard"
-    assert RESEARCH_METHOD_VERSION == "research-method-v5-responsibility-boundaries"
+    assert RESEARCH_METHOD_VERSION == "research-method-v6-versioned-qualification-validation"
     assert (
-        method_fingerprint() == "39a1ac282065db07b44b5c0bc259599ceb2f05a626d0fe478885c43e397dff24"
+        method_fingerprint(requirement_guard="qualification-guard-v1")
+        == "39a1ac282065db07b44b5c0bc259599ceb2f05a626d0fe478885c43e397dff24"
     )
+    assert method_fingerprint() != method_fingerprint(requirement_guard="qualification-guard-v1")

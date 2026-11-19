@@ -112,7 +112,8 @@ def test_strict_tools_require_exposed_fields_but_hide_derived_claim_fields():
     assert "actor" in finding["parameters"]["$defs"]["SourceFinding"]["required"]
     assert TOOLS == original
     assert (
-        method_fingerprint() == "39a1ac282065db07b44b5c0bc259599ceb2f05a626d0fe478885c43e397dff24"
+        method_fingerprint(requirement_guard="qualification-guard-v1")
+        == "39a1ac282065db07b44b5c0bc259599ceb2f05a626d0fe478885c43e397dff24"
     )
 
 

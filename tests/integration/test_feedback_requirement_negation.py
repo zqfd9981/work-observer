@@ -76,7 +76,7 @@ def test_feedback_engine_accepts_negative_strength_explanations_without_retry(wo
     assert result["claims"][0]["text"] == text
 
 
-def test_plain_standard_guard_remains_unchanged(workspace):
+def test_new_plain_standard_uses_fixed_guard_without_feedback(workspace):
     repo, _, job, _, original, _, _ = workspace
     text = "Docker经验优先，不能提升为必备。"
     assert required_markers(text) == ["必备"]
@@ -91,7 +91,8 @@ def test_plain_standard_guard_remains_unchanged(workspace):
             allow_proposals=False,
         )
     )
-    assert result["status"] == "completed" and result["model_calls"] == 4
+    assert result["status"] == "completed" and result["model_calls"] == 3
+    assert result["qualification_validation"]["version"] == "qualification-guard-v2-local-negation"
 
 
 def test_feedback_engine_still_splits_a_real_positive_required_clause(workspace):

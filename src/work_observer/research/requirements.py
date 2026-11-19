@@ -2,6 +2,46 @@
 
 import re
 
+LEGACY_GUARD = "qualification-guard-v1"
+CURRENT_GUARD = "qualification-guard-v2-local-negation"
+
+
+def guard_contract():
+    """Seal the executable guard separately from the original model policy."""
+    import hashlib
+    import inspect
+    import sys
+
+    return {
+        "version": CURRENT_GUARD,
+        "sha256": hashlib.sha256(
+            "\n".join(inspect.getsource(sys.modules[__name__]).splitlines()).encode()
+        ).hexdigest(),
+    }
+
+
+def select_guard(store, identity, *, resume):
+    from work_observer.connectors.mcp_probe import ProbeError
+
+    if not resume:
+        return guard_contract()
+    run = store.get(identity)
+    if (run.get("result") or {}).get("status") in {
+        "completed",
+        "evidence_only",
+        "insufficient_evidence",
+    }:
+        raise ProbeError("RESEARCH_RUN_ALREADY_FINISHED")
+    saved = store.load_checkpoint(identity) or {}
+    recorded = run["input"].get("qualification_validation")
+    result_contract = (saved.get("result") or {}).get("qualification_validation")
+    if recorded is None and result_contract is None:
+        return None  # Historical input/result shape and checks remain untouched.
+    if recorded != result_contract or recorded != guard_contract():
+        raise ProbeError("RESEARCH_VALIDATION_CHANGED_NEW_ROUND_REQUIRED")
+    return recorded
+
+
 PREFERRED_CUE = re.compile(r"加分|优先(?!级|顺序)|有则更好")
 REQUIRED_CUE = re.compile(r"必备|必须具备|硬性资格|硬性要求|(?<![A-Za-z_])required(?![A-Za-z_])")
 NEGATED_PREFIX = re.compile(
