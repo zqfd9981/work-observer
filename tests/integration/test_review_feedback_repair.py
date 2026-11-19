@@ -320,6 +320,32 @@ def test_http_repair_preview_and_offline_round_preserve_original(workspace):
     assert store.get(original["run_id"]) == before
 
 
+@pytest.mark.parametrize("human", [False, True])
+def test_download_keeps_review_visible_without_overwriting_archived_answer(workspace, human):
+    repo, store, _, _, original, review, root = workspace
+    if human:
+        review = reject(
+            QualityReviewService(store, repo), original["run_id"],
+            kind="human", note="人工核对：资格性质错误，保留原回答。",
+        )
+    saved = save_result(original, root / "reports")
+    files = {key: Path(saved[key]).read_bytes() for key in ("json", "markdown")}
+    before = deepcopy(store.get(original["run_id"]))
+    with TestClient(
+        create_app(Settings(database_path=root / "app.db"), reports_dir=root / "reports"),
+        base_url="http://127.0.0.1",
+    ) as client:
+        path = "/api/reports/" + saved["report_id"]
+        exported = client.get(path + "/download/md").text
+        assert "核对状态：未通过" in exported
+        assert ("人工核对" if human else "Agent辅助核对，非独立人审") in exported
+        assert review["note"] in exported
+        assert "旧结论错误标记：Docker为必备" in exported
+        assert client.get(path + "/download/json").json()["business_review"]["id"] == review["id"]
+    assert store.get(original["run_id"]) == before
+    assert all(Path(saved[key]).read_bytes() == value for key, value in files.items())
+
+
 @pytest.mark.parametrize("extra", [{"approach": "source_first"}, {"allow_public": True}])
 def test_repair_cannot_enable_other_methods_or_public_search(workspace, extra):
     repo, _, job, _, original, _, _ = workspace

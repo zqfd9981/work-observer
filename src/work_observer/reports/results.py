@@ -256,9 +256,23 @@ def render(result):
         f"SQL 范围 {counts['scope_total']} 个；匹配 {counts['matched']} 个；"
         f"条件未知 {counts['unknown']} 个；候选完整正文 {counts['candidate_details']} 个。",
         "",
-        "## 本次候选",
-        "",
     ]
+    if result["status"] == "completed":
+        review = result.get("business_review") or {}
+        labels = {"approved": "通过", "rejected": "未通过", "pending": "待继续核对"}
+        source = {
+            "human": "人工核对", "agent_assisted": "Agent辅助核对，非独立人审"
+        }.get(review.get("reviewer_kind"))
+        label = labels.get(review.get("status"), "未附核对记录") if source else "未附核对记录"
+        lines.extend([f"核对状态：{label}" + (f"（{source}）" if source else "") + "。", ""])
+        if review.get("note"):
+            lines.extend([
+                "核对说明（不是新的来源证据）：",
+                *["> " + escape(line) for line in review["note"].splitlines()], "",
+            ])
+        if label != "通过":
+            lines.extend(["回答生成不表示质量核对通过；下文保留原回答及其引用。", ""])
+    lines.extend(["## 本次候选", ""])
     audit = result.get("audit") or {}
     if (
         audit.get("stale_memory")

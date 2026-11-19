@@ -548,7 +548,10 @@ def create_app(
                 latest = next((r for r in reviews if not r["stale_result"]), None)
                 if latest:
                     business_review = {
-                        key: latest.get(key) for key in ("status", "reviewer_kind", "decision")
+                        key: latest.get(key)
+                        for key in (
+                            "id", "status", "reviewer_kind", "decision", "note", "created_at"
+                        )
                     }
             except ProbeError:
                 pass
