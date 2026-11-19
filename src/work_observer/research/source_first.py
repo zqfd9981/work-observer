@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from work_observer.connectors.mcp_probe import ProbeError
 
-VERSION = "source-first-v9"
+VERSION = "source-first-v10"
 FACETS = {
     "work_task": "岗位建设与工作任务",
     "deliverable": "工作产出",

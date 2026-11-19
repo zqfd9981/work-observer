@@ -53,8 +53,8 @@ def _recover_scanned(service, records):
     return recovered
 
 
-def _ready(record):
-    completed = completed_steps(record)
+def _ready(record, rejected=()):
+    completed = completed_steps(record, rejected)
     return [
         step
         for step in record["steps"]
@@ -144,7 +144,8 @@ async def run_research_worker(
                     ready = [
                         record
                         for record in records
-                        if record["id"] not in blocked and _ready(record)
+                        if record["id"] not in blocked
+                        and _ready(record, service.rejected_steps(record))
                     ]
                     if not ready:
                         stop_reason = (
@@ -206,7 +207,7 @@ async def run_research_worker(
         records, total = _scan(service, project_id)
         waiting = []
         for record in records:
-            completed = completed_steps(record)
+            completed = completed_steps(record, service.rejected_steps(record))
             counts = {
                 key: sum(step["state"] == key for step in record["steps"])
                 for key in ("waiting_review", "waiting_material", "queued", "interrupted", "failed")

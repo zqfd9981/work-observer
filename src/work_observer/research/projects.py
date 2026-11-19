@@ -18,13 +18,13 @@ def step_reservation(step):
     }
 
 
-def completed_steps(record):
+def completed_steps(record, rejected=()):
     """审核后的补查可完成原等待事项；旧范围的完成状态不能用于新范围。"""
     current = record["scope_version"]
     completed = {
         s["id"]
         for s in record["steps"]
-        if s["state"] == "completed" and s["scope_version"] == current
+        if s["state"] == "completed" and s["scope_version"] == current and s["id"] not in rejected
     }
     for _ in range(len(record["steps"])):
         before = len(completed)
@@ -415,6 +415,25 @@ class ProjectService:
         ).get("signature")
         if old and material["signature"] == old and not (original["offline"] and not offline):
             raise ProbeError("NO_NEW_RESEARCH_MATERIAL")
+        if (
+            original.get("review_run_id")
+            and original["offline"]
+            and not offline
+            and old == material["signature"]
+        ):
+            if allow_public:
+                raise ProbeError("RESEARCH_FEEDBACK_STANDARD_ONLY")
+            return self.repair_reviewed(
+                identity,
+                step_id,
+                repository,
+                revision=revision,
+                review_id=original["review_id"],
+                note=note,
+                offline=False,
+                max_calls=max_calls,
+                timeout=timeout,
+            )
         with self.store.lock, self.store.db:
             record = self.get(identity)
             self._editable(record, revision)
@@ -441,7 +460,16 @@ class ProjectService:
                 "refresh_material_signature": material["signature"],
                 "legacy_material_basis": old is None,
             }
-            for key in ("started_at", "finished_at", "review", "replacement_step_id"):
+            for key in (
+                "started_at",
+                "finished_at",
+                "review",
+                "replacement_step_id",
+                "review_run_id",
+                "review_id",
+                "review_source_step_id",
+                "repair_note",
+            ):
                 step.pop(key, None)
             original["replacement_step_id"] = identity_new
             original["state"] = "superseded"
@@ -456,6 +484,36 @@ class ProjectService:
                 }
             )
             return self._write(record)
+
+    def repair_reviewed(self, identity, step_id, repository, **options):
+        from work_observer.research.project_feedback import repair_reviewed
+
+        return repair_reviewed(self, identity, step_id, repository, **options)
+
+    def rejected_steps(self, record):
+        from work_observer.quality.reviews import QualityReviewService
+
+        if not self.store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='quality_reviews'"
+        ).fetchone():
+            return set()
+        rejected = set()
+        quality = QualityReviewService(self.store)
+        for step in record["steps"]:
+            if not step.get("run_id"):
+                continue
+            run = self.store.get(step["run_id"])
+            if (run.get("result") or {}).get("status") != "completed" or run["state"] not in {
+                "finished",
+                "completed",
+            }:
+                continue
+            latest = next(
+                (r for r in quality.list_run(step["run_id"]) if not r["stale_result"]), None
+            )
+            if latest and latest["status"] == "rejected":
+                rejected.add(step["id"])
+        return rejected
 
     def usage(self, record):
         used = dict(calls=0, seconds=0.0, public=0, reserved_calls=0, reserved_seconds=0)
@@ -489,7 +547,7 @@ class ProjectService:
             self._editable(record)
             if any(s["state"] == "running" for s in record["steps"]):
                 raise ProbeError("PROJECT_RUNNING")
-            completed = completed_steps(record)
+            completed = completed_steps(record, self.rejected_steps(record))
             ready = [
                 s
                 for s in record["steps"]
@@ -550,6 +608,10 @@ class ProjectService:
                     result=None,
                     saved=None,
                 )
+                if step.get("review_run_id"):
+                    run["input"].update(
+                        review_run_id=step["review_run_id"], review_id=step["review_id"]
+                    )
                 self.store.db.execute(
                     "INSERT INTO research_checkpoints(namespace,id,record) VALUES (?,?,?)",
                     (self.store.namespace, run["id"], json.dumps(run, ensure_ascii=False)),
@@ -604,6 +666,8 @@ class ProjectService:
             run = self.store.get(step["run_id"]) if step.get("run_id") else {}
             result = run.get("result") or {}
             if action == "accept" and repository is not None:
+                if step["id"] in self.rejected_steps(record):
+                    raise ProbeError("STEP_QUALITY_REJECTION_REPAIR_REQUIRED")
                 from work_observer.reports.results import audit_result
 
                 audit = audit_result(result, repository)
@@ -671,6 +735,7 @@ class ProjectService:
 
     def context(self, identity, step, repository):
         """选择有界、仍有效的既往结论；引用仅是线索，当前轮必须重读原文。"""
+        from work_observer.memory.dependencies import DependencyAudit
         from work_observer.memory.service import _tokens
         from work_observer.reports.results import audit_result
 
@@ -678,6 +743,11 @@ class ProjectService:
         self._editable(record)
         allowed = set(step["job_ids"])
         dependencies = dependency_steps(record, step["depends_on"])
+        rejected = self.rejected_steps(record)
+        excluded = {s["run_id"] for s in record["steps"] if s["id"] in rejected}
+        if step.get("review_run_id"):
+            excluded.add(step["review_run_id"])
+        auditor = DependencyAudit(repository, excluded_runs=excluded)
         candidates = []
         for previous in record["steps"]:
             if previous["id"] == step["id"] or previous["state"] not in {
@@ -689,6 +759,8 @@ class ProjectService:
                 continue
             run = self.store.get(previous["run_id"])
             result = run.get("result") or {}
+            if excluded and not auditor.run(previous["run_id"])["eligible"]:
+                continue
             audit = audit_result(result, repository)
             if (
                 audit["stale_memory"]
@@ -856,6 +928,11 @@ async def _execute_project_locked(
                 checkpoint=(service.store, run_id),
                 resume=resume,
                 _lock_held=True,
+                **(
+                    {key: step[key] for key in ("review_run_id", "review_id")}
+                    if step.get("review_run_id")
+                    else {}
+                ),
             )
             service.store.save(run_id, state="finished", result=result)
             status = result.get("status")

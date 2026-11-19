@@ -2,6 +2,7 @@
 let qualityPacket = null;
 function renderQualityRepair(packet) {
   const item=packet.repair;
+  if (!item?.available && item?.project_id) return `<p class="form-note">这是项目内的研究，补查仍累计原项目总预算。<button class="secondary small" data-project-open="${e(item.project_id)}">到原项目安排补查</button></p>`;
   if (!item?.available) return "";
   return `<form id="quality-repair" class="panel strategy-editor"><h3>参考本次复核重新研究</h3><p class="form-note">${e(item.notice)} 前次已调用 ${e(item.previous_model_calls)} 次。当前仅支持原本地岗位范围的直接研究。</p><div class="form-grid"><label>本轮最多调用<input name="max_calls" type="number" min="2" max="12" value="8" required></label><label>本轮秒数上限<input name="timeout" type="number" min="1" max="300" value="240" required></label></div><label><input name="offline" type="checkbox">只预览反馈与证据，不调用模型</label><button class="primary">新建这一轮（预算另计）</button><p class="form-note">使用现有研究方法，复核意见需回查；不会把Agent复核当人审或自动采纳为知识。</p></form>`;
 }

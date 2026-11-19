@@ -244,6 +244,17 @@ def register(app):
                                 {k: v for k, v in data.items() if k != "step_id"}
                             ).model_dump(),
                         )
+                    elif action == "repair":
+                        from work_observer.api.projects import StepRepair
+
+                        result = service.repair_reviewed(
+                            id,
+                            data["step_id"],
+                            repo,
+                            **StepRepair.model_validate(
+                                {k: v for k, v in data.items() if k != "step_id"}
+                            ).model_dump(),
+                        )
                     elif action == "run":
                         from work_observer.storage.locks import exclusive
 

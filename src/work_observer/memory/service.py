@@ -617,7 +617,7 @@ class MemoryService:
             evidence_ids=evidence_ids,
         )
 
-    def recall(self, question, job_ids, project_id=None, at=None, kinds=None):
+    def recall(self, question, job_ids, project_id=None, at=None, kinds=None, excluded_runs=()):
         job_ids = set(job_ids or [])
         kinds = set(kinds) if kinds is not None else KINDS
         if not kinds.issubset(KINDS):
@@ -627,7 +627,7 @@ class MemoryService:
         selected = []
         from work_observer.memory.dependencies import DependencyAudit
 
-        auditor = DependencyAudit(self.repository, at=stamp)
+        auditor = DependencyAudit(self.repository, at=stamp, excluded_runs=excluded_runs)
         with Session(self.repository.engine) as session:
             rows = session.scalars(
                 select(MemoryRecord)

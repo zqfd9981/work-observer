@@ -65,6 +65,16 @@ class StepRefresh(BaseModel):
     timeout: int = Field(default=180, ge=1, le=300)
 
 
+class StepRepair(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    review_id: str = Field(pattern="^[a-f0-9]{32}$")
+    note: str = Field(min_length=1, max_length=1000)
+    offline: bool = True
+    max_calls: int = Field(default=8, ge=1, le=12)
+    timeout: int = Field(default=180, ge=1, le=300)
+
+
 def plan_project(service, project, offline=False):
     """固定业务步骤确保有反例和汇总；不把模型文字计划冒充已完成调查。"""
     parents = []
@@ -127,11 +137,13 @@ def project_routes(
 
     def detail(identity):
         from work_observer.quality.reviews import QualityReviewService
+        from work_observer.research.project_feedback import repair_preview
 
         svc = service()
         project = svc.get(identity)
         project["usage"] = svc.usage(project)
         for step in project["steps"]:
+            step["repair"] = repair_preview(svc, project, step, repository())
             if step.get("run_id"):
                 run = store().get(step["run_id"])
                 result = run.get("result")
@@ -267,6 +279,22 @@ def project_routes(
         )
         return response({"id": identity, "state": "running", "max_steps": 3}, 202)
 
+    async def repair_step(request):
+        data = StepRepair.model_validate(await read_json(request))
+        if busy():
+            return response(
+                {"error_code": "RESEARCH_BUSY", "message": "请先等待或暂停调查，再保存补查。"}, 409
+            )
+        return response(
+            service().repair_reviewed(
+                request.path_params["id"],
+                request.path_params["step_id"],
+                repository(),
+                **data.model_dump(),
+            ),
+            201,
+        )
+
     async def pause(request):
         identity = request.path_params["id"]
         service().get(identity)
@@ -285,6 +313,7 @@ def project_routes(
         Route("/api/projects/{id}/steps", add, methods=["POST"]),
         Route("/api/projects/{id}/steps/{step_id}/review", review, methods=["POST"]),
         Route("/api/projects/{id}/steps/{step_id}/refresh", refresh_step, methods=["POST"]),
+        Route("/api/projects/{id}/steps/{step_id}/repair", repair_step, methods=["POST"]),
         Route("/api/projects/{id}/run", run, methods=["POST"]),
         Route("/api/projects/{id}/pause", pause, methods=["POST"]),
     ]

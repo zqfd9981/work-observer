@@ -12,17 +12,19 @@ from work_observer.quality.service import digest
 from work_observer.reports.results import audit_result
 from work_observer.retrieval.catalog import Filters
 
-VERSION = "research-method-v6-review-feedback"
+VERSION = "research-method-v7-review-feedback"
 POLICY = """
 review_feedback 是用户明确选择的旧结果复核诊断，不是新原文、用户偏好或人类批准。
 保留 reviewer_kind；Agent意见仍可能错误，须逐条回查。不要沿用旧答案或把诊断中的引文当证据。
 按原问题与本轮原文重新调查，特别检查复核指出的遗漏、资格性质、主体和支持子集。
 明确交付用户要求的对照、建议和核实问题；未能完成的事项具体写入gaps，不用旁列原文替代回答。
-本轮是新预算的新运行，旧结果、复核和已消耗额度保留；不能修改旧记录或自动启用方法。
+本轮是新运行，项目内仍累计原项目总预算；旧结果、复核和已消耗额度保留，不能修改或重置。
 """
 
 
-def load_feedback(store, repository, run_id, *, question, job_ids, filters=None, review_id=None):
+def load_feedback(
+    store, repository, run_id, *, question, job_ids, filters=None, review_id=None, project_id=None
+):
     from work_observer.quality.reviews import QualityReviewService
 
     if not isinstance(run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", run_id):
@@ -32,7 +34,11 @@ def load_feedback(store, repository, run_id, *, question, job_ids, filters=None,
     if not run or run["state"] != "finished" or result.get("status") != "completed":
         raise ProbeError("RESEARCH_FEEDBACK_UNAVAILABLE")
     if run["input"].get("project_id") or result.get("project_id"):
-        raise ProbeError("RESEARCH_FEEDBACK_USE_PROJECT_BUDGET")
+        from work_observer.research.project_feedback import validate_source
+
+        validate_source(store, run, project_id)
+    elif project_id:
+        raise ProbeError("RESEARCH_FEEDBACK_PROJECT_MISMATCH")
     original_jobs = sorted(row["id"] for row in result.get("scope", {}).get("jobs", []))
     if (
         not original_jobs
@@ -92,6 +98,9 @@ def load_feedback(store, repository, run_id, *, question, job_ids, filters=None,
         if len(json.dumps(context, ensure_ascii=False)) > 6000:
             context["claim_issues"].pop()
             context["omitted_claim_reviews"] += 1
+    while len(json.dumps(context, ensure_ascii=False)) > 6000 and context["claim_issues"]:
+        context["claim_issues"].pop()
+        context["omitted_claim_reviews"] += 1
     return context
 
 
@@ -111,7 +120,18 @@ def repair_preview(store, repository, identity):
             filters=filters,
         )
     except (ProbeError, KeyError, TypeError, ValueError) as exc:
-        return {"available": False, "reason": getattr(exc, "code", "RESEARCH_FEEDBACK_UNAVAILABLE")}
+        preview = {
+            "available": False,
+            "reason": getattr(exc, "code", "RESEARCH_FEEDBACK_UNAVAILABLE"),
+        }
+        project_id = result.get("project_id")
+        if (
+            preview["reason"] == "RESEARCH_FEEDBACK_USE_PROJECT_BUDGET"
+            and isinstance(project_id, str)
+            and re.fullmatch(r"[a-f0-9]{32}", project_id)
+        ):
+            preview["project_id"] = project_id
+        return preview
     return {
         "available": True,
         "review_run_id": identity,

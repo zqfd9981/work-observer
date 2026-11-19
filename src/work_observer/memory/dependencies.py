@@ -18,13 +18,14 @@ from work_observer.tracking.models import RetrievalStrategy
 class DependencyAudit:
     """一次审计最多96个节点、12层；缺失、循环和不可核验依赖都拒绝默认复用。"""
 
-    def __init__(self, repository, *, at=None, max_nodes=96, max_depth=12):
+    def __init__(self, repository, *, at=None, max_nodes=96, max_depth=12, excluded_runs=()):
         from work_observer.memory.service import _timestamp
 
         self.repository = repository
         self.at = _timestamp(at) or now()
         self.max_nodes, self.max_depth = max_nodes, max_depth
         self.stack, self.cache = set(), {}
+        self.excluded_runs = set(excluded_runs)
         self.path = Path(
             getattr(
                 repository,
@@ -271,6 +272,8 @@ class DependencyAudit:
         return found
 
     def _run(self, identity, *, evidence_ids=None):
+        if identity in self.excluded_runs:
+            return [self._issue("run", identity, "review_source_excluded_from_context")]
         anchors = frozenset(evidence_ids) if evidence_ids else None
 
         def inspect():

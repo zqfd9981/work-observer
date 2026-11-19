@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 
-def test_review_repair_submit_and_diagnostic_display():
+@pytest.mark.parametrize("harness", ["review_feedback_display.cjs", "project_feedback_display.cjs"])
+def test_review_repair_submit_and_diagnostic_display(harness):
     node = shutil.which("node")
     if not node:
         pytest.skip("Node unavailable")
@@ -15,7 +16,7 @@ def test_review_repair_submit_and_diagnostic_display():
     outcome = subprocess.run(
         [
             node,
-            str(root / "tests/unit/review_feedback_display.cjs"),
+            str(root / "tests/unit" / harness),
             str(root / "src/work_observer/api/assets/app.js"),
         ],
         capture_output=True,

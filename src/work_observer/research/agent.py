@@ -303,7 +303,10 @@ def method_fingerprint(approach="standard", *, review_feedback=False):
         import inspect
         import sys
 
+        from work_observer.memory import dependencies
+        from work_observer.memory import service as memory_service
         from work_observer.quality import feedback
+        from work_observer.research import project_feedback, projects
 
         return hashlib.sha256(
             json.dumps(
@@ -311,6 +314,12 @@ def method_fingerprint(approach="standard", *, review_feedback=False):
                     "baseline": baseline,
                     "version": feedback.VERSION,
                     "implementation": "\n".join(inspect.getsource(feedback).splitlines()),
+                    "project_implementation": "\n".join(
+                        inspect.getsource(project_feedback).splitlines()
+                    ),
+                    "projects": "\n".join(inspect.getsource(projects).splitlines()),
+                    "dependencies": "\n".join(inspect.getsource(dependencies).splitlines()),
+                    "memory": "\n".join(inspect.getsource(memory_service).splitlines()),
                     "engine": "\n".join(inspect.getsource(sys.modules[__name__]).splitlines()),
                 },
                 ensure_ascii=False,
@@ -482,7 +491,15 @@ async def _persisted_research(repository, question, settings, **options):
                 raise ProbeError("RESEARCH_INPUT_CHANGED_NEW_RUN_REQUIRED")
             options.setdefault(key, original_input.get(key))
         if original_input.get("review_run_id"):
-            for key in ("job_ids", "filters"):
+            for key in (
+                "job_ids",
+                "filters",
+                "project_id",
+                "offline",
+                "max_calls",
+                "timeout",
+                "allow_public",
+            ):
                 options.setdefault(key, original_input.get(key))
             options["filters"] = Filters.model_validate(options.get("filters") or {})
     approach = options.get("approach", "standard")
@@ -542,9 +559,13 @@ async def _persisted_research(repository, question, settings, **options):
         if options.get("review_run_id"):
             from work_observer.quality.feedback import load_feedback
 
-            if approach != "standard" or options.get("allow_public") or options.get("project_id"):
+            if approach != "standard" or options.get("allow_public"):
                 raise ProbeError("RESEARCH_FEEDBACK_STANDARD_ONLY")
             selected = options.get("review_id") or store.get(identity)["input"].get("review_id")
+            if options.get("project_id"):
+                from work_observer.research.project_feedback import validate_execution
+
+                validate_execution(store, identity, parameters | {"review_id": selected})
             feedback = load_feedback(
                 store,
                 repository,
@@ -553,6 +574,7 @@ async def _persisted_research(repository, question, settings, **options):
                 job_ids=options.get("job_ids"),
                 filters=options.get("filters"),
                 review_id=selected,
+                project_id=options.get("project_id"),
             )
             options["review_feedback"] = feedback
             parameters["review_id"] = feedback["review_id"]
@@ -736,7 +758,12 @@ async def _research(
         )
         if inherited["stale_memory"] or inherited.get("stale_dependencies"):
             raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
-        return memory.recall(question, list(candidates), project_id=project_id)
+        return memory.recall(
+            question,
+            list(candidates),
+            project_id=project_id,
+            **({"excluded_runs": [review_feedback["run_id"]]} if review_feedback else {}),
+        )
 
     def check_knowledge():
         from work_observer.knowledge.service import DomainKnowledgeService
@@ -874,6 +901,11 @@ async def _research(
             return
         from work_observer.quality.feedback import load_feedback
 
+        if project_id:
+            from work_observer.research.project_feedback import validate_execution
+
+            validate_execution(store, identity, store.get(identity)["input"])
+
         current = load_feedback(
             store,
             repository,
@@ -882,6 +914,7 @@ async def _research(
             job_ids=job_ids,
             filters=filters,
             review_id=review_feedback["review_id"],
+            project_id=project_id,
         )
         if current != review_feedback:
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
