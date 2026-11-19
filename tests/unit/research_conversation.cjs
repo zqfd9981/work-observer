@@ -35,6 +35,13 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  const expanded=JSON.parse(context.calls.find(c=>c.options?.method==="PATCH").options.body);
  assert.deepEqual(expanded.job_ids,["job-1","job-2"]);assert.equal(expanded.goal,"合成研究目标");
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,2); // Saving context/material never starts a model.
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});return {document:{id:"d".repeat(32),title:"<script>合成文档</script>",full_text_length:120,publisher:"example.com"},truncated:false};}',context);
+ await vm.runInContext('archiveConversationDocument("https://example.com/docs")',context);
+ assert.ok(node("#conversation-public-status").innerHTML.includes("&lt;script&gt;合成文档"));
+ assert.ok(!node("#conversation-public-status").innerHTML.includes("<script>"));
+ assert.ok(node("#conversation-question").value.includes("结合刚归档"));
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,2);
+
 
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
  vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs"',context);

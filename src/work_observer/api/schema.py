@@ -30,6 +30,7 @@ def openapi(routes):
         DomainCorrectionInput,
         MatchInput,
         ProfileInput,
+        PublicDocumentInput,
         RetrievalInput,
         RollbackInput,
         StrategyInput,
@@ -90,6 +91,7 @@ def openapi(routes):
         ("/api/import-assets/{id}/extract", "POST"): ImageExtractInput,
         ("/api/import", "POST"): ManualJD,
         ("/api/research", "POST"): ResearchInput,
+        ("/api/public-documents", "POST"): PublicDocumentInput,
         ("/api/memories", "POST"): MemoryInput,
         ("/api/memories/{id}/{action}", "POST"): MemoryRevision,
         ("/api/profiles/{id}", "POST"): ProfileInput,
@@ -259,6 +261,7 @@ def openapi(routes):
                     "/api/inbox/followup",
                     "/api/profiles/{id}/correction",
                     "/api/import-assets",
+                    "/api/public-documents",
                 }
                 else "200"
             )

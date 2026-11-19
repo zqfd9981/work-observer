@@ -580,18 +580,20 @@ async function openResearchConversation(id, navigate=true) {
     conversation.notes=Array.isArray(notes)?notes.filter(note=>note.project_id===id && note.status==="active" && ["preference","correction"].includes(note.kind)):[];
     conversation.notesFor=id;
   }
+  const publicReadSupported=Boolean(state.serviceContract?.paths?.["/api/public-documents"]?.post);
   const root=$("#research-output");
   const same=conversation.renderedId===id;
   const draft=same ? $("#conversation-question")?.value || "" : "";
   const contextDraft=same ? $("#conversation-context-content")?.value || "" : "";
+  const publicDraft=same ? $("#conversation-public-url")?.value || "" : "";
   const contextKind=same ? $("#conversation-context [name=kind]")?.value || "preference" : "preference";
   conversation.renderedId=id;
-  const active=same && ["conversation-question","conversation-context-content"].includes(document.activeElement?.id) ? document.activeElement.id : null;
+  const active=same && ["conversation-question","conversation-context-content","conversation-public-url"].includes(document.activeElement?.id) ? document.activeElement.id : null;
   const selection=active ? [$("#"+active).selectionStart,$("#"+active).selectionEnd] : null;
   const offline=project.steps.at(-1)?.offline ?? $("#offline").checked;
   const exhausted=project.usage.reserved_calls+2>project.budget.max_calls && !offline;
   if(project.state==="invalidated"){root.innerHTML=empty("这项研究已忘记","可以从左侧开始新问题。");setBusy(false);return;}
-  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div><details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(note.content)}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details></article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><button class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p class="form-note">${exhausted?"本研究额度已分配，记录保留。可继续未完成的调查，或从左侧开始新研究。":"沿用本研究的资料范围和剩余额度。旧判断仍需核对，不会自动当成事实。"}</p></form>`;
+  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(note.content)}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details></article><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><button class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p class="form-note">${exhausted?"本研究额度已分配，记录保留。可继续未完成的调查，或从左侧开始新研究。":"沿用本研究的资料范围和剩余额度。旧判断仍需核对，不会自动当成事实。"}</p></form>`;
   $("#conversation-offline").addEventListener("change",event=>{$("#conversation-followup button").disabled=project.worker_running || (project.usage.reserved_calls+2>project.budget.max_calls && !event.target.checked);});
   const turns=$("#conversation-turns");
   for(const step of project.steps){
@@ -627,6 +629,25 @@ document.addEventListener("click",async event=>{
   const pause=event.target.closest("[data-conversation-pause]"),resume=event.target.closest("[data-conversation-resume]");
   if(!pause&&!resume)return;
   try{await api("projects/"+conversation.id+(pause?"/pause":"/run"),{method:"POST",body:"{}"});await openResearchConversation(conversation.id);}catch(error){notify(error.message,true);}
+});
+
+async function archiveConversationDocument(url) {
+  const targetProject=conversation.id;
+  const result=await api("public-documents",{method:"POST",body:JSON.stringify({url})});
+  const document=result.document;
+  if(conversation.id!==targetProject)return result;
+  $("#conversation-public-status").innerHTML=`<p>已归档：<strong>${e(document.title)}</strong> · ${e(document.full_text_length)}字符</p><button type="button" class="text-button" data-public-source="${e(document.id)}">核对已归档全文 ↗</button><p class="form-note">来源 ${e(document.publisher)}；发布时间未知。${result.truncated?"归档保留全文，后续检索按片段读取。":""}</p>`;
+  $("#conversation-question").value="结合刚归档的《"+document.title+"》与岗位原文，当前解释有哪些得到支持，哪些仍缺证据？请分别说明来源和推断边界。";
+  return result;
+}
+
+document.addEventListener("submit",async event=>{
+  if(event.target.id!=="conversation-public-document")return;
+  event.preventDefault();const button=event.target.querySelector("button"),status=$("#conversation-public-status");
+  button.disabled=true;status.textContent="正在读取并归档公开正文，最多等待40秒…";
+  try{await archiveConversationDocument(event.target.elements.url.value.trim());notify("公开正文已归档，可以在下方继续核实。");}
+  catch(error){status.textContent=({PUBLIC_DOCUMENT_RECRUITMENT_PAUSED:"招聘来源仍暂停，不能通过网页入口访问。",PUBLIC_DOCUMENT_URL_DENIED:"请填写公开HTTPS网页，不能包含登录凭据或私有地址。",PUBLIC_DOCUMENT_TIMEOUT:"网页读取超时，未取得正文。",PUBLIC_DOCUMENT_TOO_LARGE:"网页超过归档大小上限，未取得正文。"})[error.code] || error.message;}
+  finally{button.disabled=false;}
 });
 
 async function attachConversationMaterial(projectId, jobId) {

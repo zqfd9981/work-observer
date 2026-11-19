@@ -19,7 +19,7 @@ from work_observer.connectors.public_models import PublicDocument
 from work_observer.connectors.public_search import public_url
 
 MAX_BYTES = 1_000_000
-EXTRACTOR_VERSION = "public-html-v2"
+EXTRACTOR_VERSION = "public-html-v3"
 
 
 class TextExtractor(HTMLParser):
@@ -39,7 +39,7 @@ class TextExtractor(HTMLParser):
         "section",
         "article",
     }
-    OMIT = {"script", "style", "noscript", "svg", "nav", "footer", "header"}
+    OMIT = {"script", "style", "noscript", "svg", "nav", "footer", "header", "template"}
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -105,6 +105,11 @@ def checked_url(value):
     cleaned = public_url(value)
     if cleaned is None:
         raise ProbeError("PUBLIC_DOCUMENT_URL_DENIED")
+    host = urlsplit(cleaned).hostname.casefold()
+    if any(
+        host == domain or host.endswith("." + domain) for domain in ("zhipin.com", "bosszhipin.com")
+    ):
+        raise ProbeError("PUBLIC_DOCUMENT_RECRUITMENT_PAUSED")
     return cleaned
 
 

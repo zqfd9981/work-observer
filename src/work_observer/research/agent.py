@@ -26,6 +26,9 @@ QUESTION_COVERAGE_POLICY = (
     "不要为了覆盖无关候选而补写判断。若用户明确要求逐一比较、完整清单或总体统计，"
     "仍须实际查足相应资料；做不到就明确缺口，不把未读当不存在或用检索命中代替总体。"
     "回答和建议区分原文与推断，说明只调查了范围中的哪些材料，不自称全面覆盖。"
+    "query_jobs中的body_preview只用于定位正文，不能作为引用；正文专名未出现在标题时，"
+    "先检索该专名再判断资料缺失。公开技术文档正文可直接说明工具行为，"
+    "不能据此声称企业采用该工具，或把工具行为当作岗位职责、任职要求或个人权限。"
 )
 REQUIREMENT_POLICY = (
     "required表示来源明确列为岗位资格的条件，不保证现实录取的一票否决。"
@@ -297,7 +300,7 @@ def method_fingerprint(
                 {
                     "base": baseline,
                     "coverage_policy": QUESTION_COVERAGE_POLICY,
-                    "version": "question-scope-v1",
+                    "version": "question-scope-v2",
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -780,7 +783,7 @@ async def _research(
 
         method_version = VERSION
     if coverage_mode == "question":
-        method_version += "-question-scope-v1"
+        method_version += "-question-scope-v2"
     result = {
         "format_version": 1,
         "research_method_version": method_version,
@@ -1193,6 +1196,20 @@ async def _research(
                 result["trace"].append(entry)
                 if name == "query_jobs" and arguments == {}:
                     data = scope
+                    if coverage_mode == "question":
+                        data = {
+                            **scope,
+                            "jobs": [
+                                {
+                                    **job,
+                                    "body_preview": "\n".join(
+                                        row["quote"] for row in pool.get(job["id"], [])
+                                    )[:180],
+                                    "preview_not_evidence": True,
+                                }
+                                for job in scope["jobs"]
+                            ],
+                        }
                     queried = True
                 elif name == "browse_domain_knowledge" and set(arguments) == {"terms"}:
                     if not queried:
@@ -1766,6 +1783,14 @@ async def _research(
                         or any(
                             claim.basis == "direct"
                             and claim.category != "business"
+                            and not (
+                                coverage_mode == "question"
+                                and claim.category == "tool"
+                                and any(
+                                    evidence.get(key, {}).get("evidence_kind") == "public_document"
+                                    for key in claim.evidence_ids
+                                )
+                            )
                             and not any(
                                 evidence.get(key, {}).get("job_id") in candidates
                                 and evidence.get(key, {}).get("snapshot_id")

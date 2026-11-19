@@ -10,7 +10,9 @@ from typer.testing import CliRunner
 
 from work_observer.cli import app
 from work_observer.config import Settings
+from work_observer.connectors import public_documents
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.connectors.public_documents import PublicDocumentService
 from work_observer.research.agent import method_fingerprint, research
 
 
@@ -22,6 +24,13 @@ class SubsetModel:
         if not outputs:
             name, arguments = "query_jobs", {}
         elif not any(row.get("evidence") for row in outputs):
+            if "body_preview" in outputs[0]["jobs"][0]:
+                assert "接口开发" in outputs[0]["jobs"][0]["body_preview"]
+                assert outputs[0]["jobs"][0]["preview_not_evidence"] is True
+                assert (
+                    "body_preview"
+                    not in json.loads(history[1]["content"])["fixed_scope"]["jobs"][0]
+                )
             name, arguments = "read_job", {"job_id": outputs[0]["jobs"][0]["id"]}
         else:
             source = next(row["evidence"][0] for row in outputs if row.get("evidence"))
@@ -118,3 +127,72 @@ def test_cli_question_scope_is_explicit_and_persisted(source_workspace, monkeypa
     )
     assert response.exit_code == 0, response.output
     assert store.list()[0]["input"]["coverage_mode"] == "question"
+
+
+class PublicToolModel:
+    def __init__(self, category):
+        self.category = category
+
+    async def turn(self, history):
+        outputs = [
+            json.loads(row["output"])
+            for row in history
+            if row.get("type") == "function_call_output"
+        ]
+        sources = next((row["evidence"] for row in outputs if row.get("evidence")), None)
+        if not outputs:
+            name, arguments = "query_jobs", {}
+        elif sources is None:
+            name, arguments = "search_archived_sources", {"terms": ["checkpoint"]}
+        else:
+            source = next(row for row in sources if row.get("public_document_id"))
+            name, arguments = (
+                "finish_research",
+                {
+                    "claims": [
+                        {
+                            "category": self.category,
+                            "basis": "direct",
+                            "requirement": "unspecified",
+                            "text": "合成技术文档说明checkpoint保存执行状态。",
+                            "evidence_ids": [source["id"]],
+                        }
+                    ],
+                    "gaps": ["工具说明不能证明企业采用或个人权限。"],
+                },
+            )
+        call = dict(
+            type="function_call",
+            name=name,
+            arguments=json.dumps(arguments),
+            call_id=str(len(history)),
+        )
+        return [call], call
+
+
+@pytest.mark.parametrize(
+    "category,expected", [("tool", "completed"), ("responsibility", "incomplete")]
+)
+def test_public_document_can_explain_tool_but_cannot_prove_job_responsibility(
+    source_workspace, monkeypatch, tmp_path, category, expected
+):
+    repo, _, jobs = source_workspace
+
+    async def fetch(url):
+        return 200, {"content-type": "text/plain"}, b"checkpoint preserves execution state."
+
+    monkeypatch.setattr(public_documents, "pinned_request", fetch)
+    asyncio.run(PublicDocumentService(repo, tmp_path / "public").read("https://example.com/docs"))
+    result = asyncio.run(
+        research(
+            repo,
+            "合成工具说明",
+            Settings(),
+            job_ids=jobs,
+            coverage_mode="question",
+            max_calls=3,
+            model=PublicToolModel(category),
+        )
+    )
+    assert result["status"] == expected
+    assert result["model_calls"] == 3

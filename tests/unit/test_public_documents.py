@@ -30,7 +30,8 @@ def test_html_archive_retains_raw_bytes_and_verifiable_exact_plain_text(service,
     raw = (
         "<html><head><title>模拟官网</title><script>secret script</script></head>"
         "<body><nav>菜单</nav><main><h1>产品介绍</h1><p>提供智能体开发工具。</p>"
-        "<style>hide</style></main></body></html>"
+        "<style>hide</style><template>隐藏的编译代码与页面索引"
+        "<script>nested payload</script>still hidden</template></main></body></html>"
     ).encode()
 
     async def fetch(url):
@@ -238,7 +239,7 @@ def test_html_meta_refresh_follows_public_target_and_archives_final_body(service
     assert calls == ["https://example.com/old", "https://docs.example.com/overview"]
     assert result["document"]["url"] == "https://example.com/old"
     assert result["document"]["final_url"] == "https://docs.example.com/overview"
-    assert result["document"]["extractor_version"] == "public-html-v2"
+    assert result["document"]["extractor_version"] == "public-html-v3"
     assert result["evidence"][0]["quote"] == "实际技术说明正文。"
 
 
