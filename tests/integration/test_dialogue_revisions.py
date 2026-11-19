@@ -588,6 +588,8 @@ def test_finish_contract_is_copied_and_old_standard_fingerprint_is_preserved():
 
 
 def test_legacy_checkpoint_keeps_its_original_finish_contract(source_workspace):
+    from work_observer.research import agent
+
     repo, store, jobs = source_workspace
     context = {
         "previous_findings": [
@@ -627,6 +629,7 @@ def test_legacy_checkpoint_keeps_its_original_finish_contract(source_workspace):
     frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(POLICY, "")
     frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(delivery_policy, "")
     frozen["history"][0]["content"] = frozen["history"][0]["content"].replace(budget_policy, "")
+    frozen["history"][0]["content"] = agent.SYSTEM + agent.QUESTION_COVERAGE_POLICY
     payload = json.loads(frozen["history"][1]["content"])
     payload.pop("research_budget", None)
     frozen["history"][1]["content"] = json.dumps(payload, ensure_ascii=False)

@@ -75,6 +75,9 @@ ANSWER_DELIVERY_POLICY = (
     "提交前对照用户的问题检查遗漏和重复；未完成的部分在gaps说明，不宣称全面回答。"
 )
 TOOL_BUDGET_POLICY = (
+    "流程：fixed_scope已由程序冻结，按问题直接选择必要原文调查并回答。"
+    "query_jobs只在摘要有助定位时使用；plan_research只在确需拆解调查时使用，"
+    "两者都不是普通提问的必经步骤；工具仍可自主选择，不得扩大冻结范围。"
     "research_budget是程序在每次调用前更新的真实额度，remaining_model_calls包含本次调用。"
     "finish_research也需要一次模型调用，查证时为提交保留一次。固定范围已提供时不重复确认，"
     "简单问题不另行登记已有计划。优先完成问题所需的原文核对，减少无必要的准备步骤。"
@@ -1277,6 +1280,17 @@ async def _research(
         else set()
     )
     system = SYSTEM
+    if budget_policy:
+        # The frozen workflow below replaces these mandatory preparation steps.
+        # Keep SYSTEM itself intact so existing method hashes remain reproducible.
+        system = system.replace(
+            "流程：先 query_jobs 确认 SQL 范围，再自主选择 search_evidence 或 read_job 调查。\n",
+            "",
+        ).replace(
+            "确认范围后调用 plan_research，把用户问题拆成少量具体调查步骤；"
+            "用证据调整解释，不扩大范围。\n",
+            "",
+        )
     if delivery_policy:
         system += delivery_policy
     if budget_policy:

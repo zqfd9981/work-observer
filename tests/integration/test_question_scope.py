@@ -374,6 +374,7 @@ def test_answer_guidance_is_frozen_with_the_original_progress(
         budget_policy = saved["result"].pop("tool_budget_policy")
         saved["history"][0]["content"] = saved["history"][0]["content"].replace(policy, "")
         saved["history"][0]["content"] = saved["history"][0]["content"].replace(budget_policy, "")
+        saved["history"][0]["content"] = agent.SYSTEM + agent.QUESTION_COVERAGE_POLICY
         context = json.loads(saved["history"][1]["content"])
         context.pop("research_budget")
         saved["history"][1]["content"] = json.dumps(context, ensure_ascii=False)
@@ -419,6 +420,10 @@ def test_each_turn_has_current_budget_while_two_sources_are_read_and_cited(sourc
             self.seen = []
 
         async def turn(self, history):
+            system = history[0]["content"]
+            assert "流程：先 query_jobs" not in system
+            assert "确认范围后调用 plan_research" not in system
+            assert "两者都不是普通提问的必经步骤" in system
             self.seen.append(json.loads(history[1]["content"])["research_budget"])
             return await super().turn(history)
 
