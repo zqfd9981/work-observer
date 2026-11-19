@@ -7,10 +7,12 @@ The caller must pass actual read evidence, never unvisited search/list results.
 """
 
 import hashlib
+import json
 import re
 from collections import defaultdict
 
 _SEPARATORS = re.compile(r"[。；！？;!?](?:\r\n|[\r\n])*|\r\n|[\r\n]")
+_SOURCE_FIELDS = ("document_id", "document_sha256", "content_sha256")
 _LAYER_LABELS = {
     "job_description": "招聘正文（已读原文）",
     "list_summary": "列表摘要（不是招聘全文）",
@@ -64,11 +66,14 @@ def _ranges(rows):
     return blocks, conflict
 
 
-def _parts(block, rows):
+def _parts(block, rows, total):
     """Split literal spans, then keep each citation inside one original evidence."""
     text, base = block["text"], block["start"]
     cursor = 0
-    for stop in [match.end() for match in _SEPARATORS.finditer(text)] + [len(text)]:
+    separator_stops = {match.end() for match in _SEPARATORS.finditer(text)}
+    for stop in sorted(separator_stops | {len(text)}):
+        unit_start, unit_end = base + cursor, base + stop
+        complete = (cursor > 0 or base == 0) and (stop in separator_stops or block["end"] == total)
         while cursor < stop:
             absolute = base + cursor
             candidates = [row for row in rows if row["start"] <= absolute < row["end"]]
@@ -76,7 +81,7 @@ def _parts(block, rows):
             end = min(base + stop, row["end"])
             value = text[cursor : end - base]
             if value.strip():
-                yield row, absolute, end, value
+                yield row, absolute, end, value, unit_start, unit_end, complete
             cursor = end - base
 
 
@@ -92,6 +97,18 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
     At most 42,000 input quote characters are processed (60 Catalog chunks);
     additional rows get an explicit limit issue. Whitespace-only lines have no
     standalone citation. No body or heading text is fetched from outside input.
+
+    ``unit_*`` describes one separator-delimited span before evidence slicing,
+    not a proven semantic unit. All its evidence pieces share a unit ID based on
+    job/version/layer/absolute bounds. ``unit_complete_read`` is false when an
+    unknown block edge might cut that span; those bounds then describe only the
+    observed fragment. ``unit_all_parts_shown`` independently checks that the
+    displayed pieces cover the entire observed unit without gaps. Display caps
+    or omitted whitespace-only evidence pieces can make it false. Cross-sentence
+    qualifications still require review. Existing sentence IDs are unchanged.
+    Optional source hashes/IDs are copied from each actual evidence, never filled
+    into a sentence from another row. Conflicting nonempty identities within a
+    version/layer block the entire source's citations; absent metadata is None.
     """
     if type(max_evidence) is not int or not 1 <= max_evidence <= 60:
         raise ValueError("max_evidence must be between 1 and 60")
@@ -135,6 +152,10 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
             code = "invalid_offsets"
         elif not row["quote"].strip():
             code = "empty_body_no_evidence"
+        elif any(
+            row.get(key) is not None and not isinstance(row[key], str) for key in _SOURCE_FIELDS
+        ):
+            code = "invalid_source_metadata"
         layer = None
         if code is None:
             supplied_layer = row.get("source_layer", row.get("field", "job_description"))
@@ -164,6 +185,12 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
             issues.append("conflicting_overlap")
         if total is None:
             issues.append("conflicting_full_text_length")
+        source_metadata = {}
+        for key in _SOURCE_FIELDS:
+            values = {row[key] for row in rows if row.get(key)}
+            source_metadata[key] = next(iter(values)) if len(values) == 1 else None
+            if len(values) > 1:
+                issues.append("conflicting_" + key)
         intervals = [{"start": b["start"], "end": b["end"]} for b in blocks]
         gaps, cursor = [], 0
         if total is not None:
@@ -175,6 +202,7 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
                 gaps.append({"start": cursor, "end": total})
         source = {
             "snapshot_id": snapshot_id,
+            **source_metadata,
             "source_layer": layer,
             "label": _LAYER_LABELS[layer],
             "sentences": [],
@@ -199,7 +227,7 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
             continue
         for block in blocks:
             headings = []
-            for row, start, end, text in _parts(block, rows):
+            for row, start, end, text, unit_start, unit_end, complete in _parts(block, rows, total):
                 line_start = start == 0 or (
                     start > block["start"] and block["text"][start - block["start"] - 1] in "\r\n"
                 )
@@ -211,12 +239,22 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
                     source["all_sentences_shown"] = result["all_sentences_shown"] = False
                     continue
                 identity = hashlib.sha256(f"{row['id']}:{start}:{end}".encode()).hexdigest()[:24]
+                unit_id = hashlib.sha256(
+                    json.dumps([job_id, snapshot_id, layer, unit_start, unit_end]).encode()
+                ).hexdigest()[:24]
                 sentence = {
                     "sentence_id": identity,
                     "evidence_id": row["id"],
+                    "job_id": job_id,
+                    "snapshot_id": snapshot_id,
+                    **{key: row.get(key) or None for key in _SOURCE_FIELDS},
                     "start": start,
                     "end": end,
                     "text": text,
+                    "unit_id": unit_id,
+                    "unit_start": unit_start,
+                    "unit_end": unit_end,
+                    "unit_complete_read": complete,
                     "context": [dict(heading) for heading in headings],
                     "heading_heuristic": level is not None,
                     "read_boundary_start": start == block["start"] and start > 0,
@@ -233,10 +271,25 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
                             "start": start,
                             "end": end,
                             "evidence_id": row["id"],
+                            "job_id": job_id,
+                            "snapshot_id": snapshot_id,
+                            **{key: row.get(key) or None for key in _SOURCE_FIELDS},
                             "level": level,
                             "heuristic": True,
                         }
                     )
+        units = defaultdict(list)
+        for sentence in source["sentences"]:
+            units[sentence["unit_id"]].append(sentence)
+        for parts in units.values():
+            cursor = parts[0]["unit_start"]
+            for part in parts:
+                if part["start"] != cursor:
+                    break
+                cursor = part["end"]
+            all_shown = cursor == parts[0]["unit_end"]
+            for part in parts:
+                part["unit_all_parts_shown"] = all_shown
     result["jobs"] = list(jobs.values())
     result["sentence_count"] = displayed
     result["accepted_evidence_count"] = sum(len(rows) for rows in grouped.values())

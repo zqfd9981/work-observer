@@ -240,18 +240,61 @@ function updateResearchApproach() {
   $("#research-approach-note").hidden = !trial;
 }
 
-const findingFacets = {work_task:"岗位建设与工作任务",deliverable:"工作产出",personal_coding_share:"个人编码分工",independent_delivery:"独立端到端负责程度",release_authority:"上线决策与责任",runtime_role:"平台运行中的角色",human_control:"人工控制与接管",qualification:"任职资格与强度",tool_usage:"工具使用",business_context:"岗位业务方向"};
+const findingFacets = {work_task:"岗位建设与工作任务",deliverable:"工作产出",personal_coding_share:"个人编码分工",independent_delivery:"独立端到端负责程度",task_independence:"原文明示的独立子任务",team_collaboration:"团队协作",execution_safety:"执行安全与技术隔离",release_authority:"上线决策与责任",runtime_role:"平台运行中的角色",human_control:"人工控制与接管",qualification:"任职资格与强度",tool_usage:"工具使用",business_context:"岗位业务方向"};
 const findingStates = {stated:"登记为原文明示（语义待核）",explicitly_denied:"登记为原文明示否定（语义待核）",not_disclosed:"已读归档正文中未披露（待核实）",unresolved:"尚不能判断（待核实）"};
+const findingActors = {job_holder:"招聘岗位承担者",human_operator:"人工操作角色",team:"团队",system:"系统",agent:"Agent",unspecified:"主体未明确"};
+
+function renderFindingActor(row) {
+  return Object.prototype.hasOwnProperty.call(row,"actor") ? `<small> · 主体：${e(findingActors[row.actor] || row.actor || "主体未明确")}</small>` : "";
+}
+
+function renderFindingHistory(revisions, findings) {
+  if (!revisions.length) return "";
+  return `<details><summary>分项修订记录 · ${revisions.length} 条历史</summary><p class="form-note">历史保留，不作为活动结论。</p>${revisions.map(row=>{
+    const replacement=findings.find(item=>item.id === row.superseded_by);
+    const v2=Object.prototype.hasOwnProperty.call(row,"actor");
+    return `<section class="detail-section"><p>${e(row.id)} → ${e(row.superseded_by || "后续记录")} · ${e(findingFacets[row.facet] || row.facet)}${renderFindingActor(row)} · 原状态：${e(findingStates[row.state] || "待核")}<br>修订说明（研究登记，待核）：${e(replacement?.reason || "请核对原始记录")}</p>${v2 ? `<p class="form-note">原登记理由（待核）：${e(row.reason || "未记录")}${replacement ? `<br>更正后维度：${e(findingFacets[replacement.facet] || replacement.facet)}${renderFindingActor(replacement)}` : ""}</p>${(row.citations || []).map(cite=>`${(cite.context || []).length ? `<p class="form-note">原文上下文（定位信息，仍需核对）：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>` : ""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")} · 版本 ${e(cite.snapshot_id || "待核")}</p>`).join("")}` : ""}</section>`;
+  }).join("")}</details>`;
+}
+
+function renderClaimSentenceSupport(claim, evidence = null) {
+  if (!Object.prototype.hasOwnProperty.call(claim,"bindings") && !Object.prototype.hasOwnProperty.call(claim,"sentence_citations")) return "";
+  return `<details class="detail-section" open><summary>已声明的支持子集 · 仍需语义核对</summary><p class="form-note">分句绑定不保证语义支持。请继续核对主体、范围、资格强度与遗漏；这些分句不是额外独立证据。</p>${(claim.bindings || []).map(binding=>`<p class="form-note">分项 ${e(binding.finding_id)} · 原文分句：${(binding.sentence_ids || []).map(id=>e(id)).join("、")}</p>`).join("")}${(claim.sentence_citations || []).map(cite=>{
+    const ev=evidence?.get(cite.evidence_id);
+    const canLocate=ev && ev.start <= cite.start && ev.end >= cite.end;
+    return `<section class="detail-section"><p class="form-note">${e(cite.finding_id || "分项待核")} · ${e(findingFacets[cite.facet] || cite.facet || "维度待核")}${renderFindingActor(cite)}<br>岗位 ${e(cite.job_id || "待核")} · 版本 ${e(cite.snapshot_id || "待核")} · 原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")}</p>${(cite.context || []).length ? `<p class="form-note">原文上下文（定位信息，仍需核对）：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>` : ""}<blockquote class="body-text">${e(cite.text || "")}</blockquote>${canLocate ? `<button class="cite" data-cite="${e(cite.evidence_id)}" data-cite-start="${e(cite.start)}" data-cite-end="${e(cite.end)}">${e(ev.label)} · 定位原文 ↗</button>` : ""}</section>`;
+  }).join("")}</details>`;
+}
+
+function renderClaimAnalysisNotes(result, index) {
+  const notes=[result.analysis_notes,result.source_binding_check?.analysis_notes].find(rows=>Array.isArray(rows) && rows.length) || [];
+  const count=Array.isArray(result.claims) ? result.claims.length : 0;
+  return notes.filter(note=>note && Number.isInteger(note.index) && note.index >= 0 && note.index < count && note.index === index).map(note=>`<section class="research-context"><strong>多维分析提示 · 仍须语义核对</strong><p class="form-note">多维分析不表示同口径单维可比，也不表示语义通过。${e(note.notice || "")}</p>${(note.sides || []).map(side=>`<p class="form-note">分项 ${e(side.finding_id || "待核")} · 岗位 ${e(side.job_id || "待核")} · ${e(findingFacets[side.facet] || side.facet || "维度待核")}${renderFindingActor(side)}</p>`).join("")}</section>`).join("");
+}
+
+function renderReviewScopeContext(packet) {
+  const scope=packet.scope_context;
+  if (!scope || !Array.isArray(scope.jobs)) return "";
+  const jobs=scope.jobs.filter(job=>job.layer === "frozen_job_metadata");
+  const identityStates={source_id:"有来源公司编号（身份仍待核）",unknown:"待核（未知）",unverified:"待核（未核实）",not_disclosed:"待核（未披露）",source_reported_unverified:"待核（来源标注，未独立核实）"};
+  return `<section class="research-context"><h3>冻结岗位标识（不是JD逐字内容）</h3><p class="form-note">${e(scope.notice || "")} 这些标识不证明岗位隶属或当前招聘状态，公司身份仍待核。</p>${jobs.map(job=>`<section class="detail-section"><p class="body-text">岗位标题：${e(job.title || "标题待核")}<br>公司标注：${e(job.company_name_raw || "公司名称待核")}<br>身份状态：${e(identityStates[job.company_identity_status] || "待核")}</p><details><summary>查看冻结标识与版本</summary><p class="form-note">岗位标识：${e(job.job_id || "待核")}<br>版本：${e(job.snapshot_id || "待核")}<br>资料层：冻结岗位元数据</p></details></section>`).join("")}</section>`;
+}
 
 function renderReviewFindings(packet) {
+  const scopeContext=renderReviewScopeContext(packet);
   const findings = (packet.source_findings || []).filter(row=>row.active !== false);
-  if (!findings.length) return "";
+  const history = packet.source_finding_history || (packet.source_findings || []).filter(row=>row.active === false);
+  const supportedClaims = (packet.claims || []).map((claim,index)=>{
+    const support=renderClaimAnalysisNotes(packet,claim.index ?? index)+renderClaimSentenceSupport(claim);
+    return support ? `<section class="detail-section"><h4>判断 ${(claim.index ?? index)+1} 的分句支持</h4><p class="body-text">${e(claim.text || "")}</p>${support}</section>` : "";
+  }).join("");
+  if (!findings.length && !history.length && !supportedClaims) return scopeContext;
   const titles = new Map();
   const addTitle = source=>{const id=source.job_id || source.id;if(id && source.title && !titles.has(id))titles.set(id,source.title);};
   (packet.scope?.jobs || []).forEach(addTitle);
   (packet.frozen_sources || []).forEach(addTitle);
   (packet.claims || []).forEach(claim=>(claim.citations || []).forEach(addTitle));
-  return `<section class="research-context"><h3>原文分项记录 · 一并核对</h3><p class="form-note">以下是研究登记，明示与否定的解释仍需语义审核，不表示已经核对通过。岗位建设任务、个人分工、独立程度、上线责任与平台运行角色分别核对；流程中的人或Agent不自动等于应聘者。未知不能抹去已披露的原文动作。</p>${[...new Set(findings.map(row=>row.job_id))].map(id=>`<section class="detail-section"><h4>${e(titles.get(id) || "指定岗位 · "+id)}</h4>${[false,true].map(unknown=>{const selected=findings.filter(row=>row.job_id===id && ["not_disclosed","unresolved"].includes(row.state)===unknown);return selected.length?`<h5>${unknown?"待核实的维度（不等于没有该职责）":"有原文分句的登记"}</h5>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet_label || row.facet)}</strong> ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`${cite.context?.length?`<p class="form-note">原文上下文：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>`:""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")}</p>`).join("")}</section>`).join("")}`:"";}).join("")}</section>`).join("")}</section>`;
+  return scopeContext+`<section class="research-context"><h3>原文分项记录 · 一并核对</h3><p class="form-note">以下是研究登记，明示与否定的解释仍需语义审核，不表示已经核对通过。岗位建设任务、个人分工、独立程度、上线责任与平台运行角色分别核对；流程中的人或Agent不自动等于应聘者。未知不能抹去已披露的原文动作。</p>${[...new Set(findings.map(row=>row.job_id))].map(id=>`<section class="detail-section"><h4>${e(titles.get(id) || "指定岗位 · "+id)}</h4>${[false,true].map(unknown=>{const selected=findings.filter(row=>row.job_id===id && ["not_disclosed","unresolved"].includes(row.state)===unknown);return selected.length?`<h5>${unknown?"待核实的维度（不等于没有该职责）":"有原文分句的登记"}</h5>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet_label || row.facet)}</strong>${renderFindingActor(row)} ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`${cite.context?.length?`<p class="form-note">原文上下文：${cite.context.map(item=>e(item.text || "")).join(" › ")}</p>`:""}<blockquote class="body-text">${e(cite.text || "")}</blockquote><p class="form-note">原文字符 ${e(cite.start ?? "?")}–${e(cite.end ?? "?")}</p>`).join("")}</section>`).join("")}`:"";}).join("")}</section>`).join("")}${renderFindingHistory(history,[...findings,...history])}${supportedClaims}</section>`;
 }
 
 function renderSourceFindings(result, evidence) {
@@ -264,12 +307,12 @@ function renderSourceFindings(result, evidence) {
     const groups = [false,true].map(unknown=>{
       const selected = active.filter(row=>["not_disclosed","unresolved"].includes(row.state) === unknown);
       if (!selected.length) return "";
-      return `<h4>${unknown ? "待核实的维度" : "有原文分句的登记"}</h4>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet)}</strong> ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`<blockquote>${e(cite.text)}</blockquote><p class="form-note">原文字符 ${e(cite.start)}–${e(cite.end)} ${evidence.has(cite.evidence_id) ? `<button class="cite" data-cite="${e(cite.evidence_id)}" data-cite-start="${e(cite.start)}" data-cite-end="${e(cite.end)}">${e(evidence.get(cite.evidence_id).label)} · 定位原文 ↗</button>` : "来源待定位"}</p>`).join("")}</section>`).join("")}`;
+      return `<h4>${unknown ? "待核实的维度" : "有原文分句的登记"}</h4>${selected.map(row=>`<section class="detail-section"><strong>${e(findingFacets[row.facet] || row.facet)}</strong>${renderFindingActor(row)} ${badge(findingStates[row.state] || "状态待核","muted")}<small> ${e(row.id)}</small>${(row.citations || []).map(cite=>`<blockquote>${e(cite.text)}</blockquote><p class="form-note">原文字符 ${e(cite.start)}–${e(cite.end)} ${evidence.has(cite.evidence_id) ? `<button class="cite" data-cite="${e(cite.evidence_id)}" data-cite-start="${e(cite.start)}" data-cite-end="${e(cite.end)}">${e(evidence.get(cite.evidence_id).label)} · 定位原文 ↗</button>` : "来源待定位"}</p>`).join("")}</section>`).join("")}`;
     }).join("");
     return `<section class="detail-section"><h3>${e(job?.title || id)} · ${e(job?.company || "公司待核")}</h3>${groups}</section>`;
   }).join("");
   const revisions = all.filter(row=>!row.active);
-  const history = revisions.length ? `<details><summary>分项修订记录 · ${revisions.length} 条历史</summary><p class="form-note">历史保留，不作为活动结论。</p>${revisions.map(row=>{const replacement=all.find(item=>item.id === row.superseded_by);return `<p>${e(row.id)} → ${e(row.superseded_by || "后续记录")} · ${e(findingFacets[row.facet] || row.facet)} · 原状态：${e(findingStates[row.state] || "待核")}<br>修订说明（研究登记，待核）：${e(replacement?.reason || "请核对原始记录")}</p>`;}).join("")}</details>` : "";
+  const history = renderFindingHistory(revisions,all);
   return `<section class="research-context"><h2>原文分项记录 <small>试验 · 语义待核</small></h2><p class="form-note">这是研究中的分项登记，不是人工审核通过。未知不等于没有职责；模型分析不能覆盖原文动作。</p>${content}${history}</section>`;
 }
 
@@ -296,7 +339,7 @@ function renderResult(result, target, runId = null) {
     ${renderResearchCandidates(result)}
     ${renderSourceFindings(result,evidence)}
     ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
-    ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${claim.basis ? badge(({direct:"原文明示",synthesis:"跨材料归纳",inference:"研究推断"})[claim.basis] || claim.basis,"muted") : ""} ${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${runIdentity && result.status === "completed" && claim.evidence_ids.every(id=>evidence.get(id)?.public_document_id || (evidence.get(id)?.document_id && evidence.get(id)?.snapshot_id)) ? `<button class="text-button" data-knowledge-run="${e(runIdentity)}" data-claim-index="${index}">留作知识候选 ＋</button>` : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}
+    ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${claim.basis ? badge(({direct:"原文明示",synthesis:"跨材料归纳",inference:"研究推断"})[claim.basis] || claim.basis,"muted") : ""} ${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${runIdentity && result.status === "completed" && claim.evidence_ids.every(id=>evidence.get(id)?.public_document_id || (evidence.get(id)?.document_id && evidence.get(id)?.snapshot_id)) ? `<button class="text-button" data-knowledge-run="${e(runIdentity)}" data-claim-index="${index}">留作知识候选 ＋</button>` : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}
     <div class="gaps"><strong>资料缺口与研究范围</strong><ul>${result.gaps.map(gap=>`<li>${e(gap)}</li>`).join("")}</ul>${!completed ? `<p>结束原因：${e(reasonLabels[result.stop_reason] || "本次未能完成研究，可核对范围后重试；已有资料仍可查看。")}</p>` : ""}</div>
     <details class="detail-section"><summary>本次候选与统计口径</summary><p class="form-note">统计在分页前计算。本次实际研究 ${result.scope.jobs.length} 个候选${result.scope.truncated ? "，候选较多，已截取前 20 个，请收窄范围" : ""}；未知条件不等于符合。</p>${result.scope.jobs.map(job=>`<div class="detail-history"><button class="job-link" data-job="${e(job.id)}">${e(job.title)} · ${e(job.company)}</button>${badge(job.has_detail ? "有正文" : "仅摘要","muted")} ${job.match_status === "unknown" ? badge("条件未知","amber") : ""}</div>`).join("")}</details>
     <div class="result-actions">${reportId ? `${badge("已保存")}<a class="secondary" href="/api/reports/${e(reportId)}/download/md" download>下载 Markdown</a><a class="secondary" href="/api/reports/${e(reportId)}/download/json" download>下载 JSON</a>` : runId ? `<button class="primary" data-save-research="${e(runId)}">保存这次研究</button><small class="form-note">保存问题、范围、结果与原文依据。</small>` : ""}</div>

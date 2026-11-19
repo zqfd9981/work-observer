@@ -1,5 +1,7 @@
 """Literal source localization, independent of models, stores or semantic labels."""
 
+import hashlib
+
 import pytest
 
 from work_observer.research.source_views import build_source_views
@@ -191,3 +193,114 @@ def test_empty_body_and_conflicting_overlap_or_total_do_not_create_citations():
 def test_limits_cannot_be_bypassed(kwargs):
     with pytest.raises(ValueError):
         build_source_views([], **kwargs)
+
+
+def test_qualification_crossing_700_chunks_is_one_complete_literal_unit_with_all_parts():
+    heading = "任职要求：\r\n"
+    text = heading + "有" + "Ａ" * (700 - len(heading) - 2) + "者优先；\r\n"
+    metadata = {"document_id": "d1", "document_sha256": "a" * 64, "content_sha256": "b" * 64}
+    rows = [
+        evidence(text, end=700, **metadata),
+        evidence(text, start=700, identity="e2", **metadata),
+    ]
+    item = source(build_source_views(rows))
+    parts = item["sentences"][1:]
+    assert len(parts) == 2 and parts[0]["text"].endswith("者")
+    assert parts[1]["text"] == "优先；\r\n"
+    assert len({part["unit_id"] for part in parts}) == 1
+    assert all(part["unit_complete_read"] and part["unit_all_parts_shown"] for part in parts)
+    assert all(
+        part["unit_start"] == len(heading) and part["unit_end"] == len(text) for part in parts
+    )
+    assert "".join(part["text"] for part in parts) == text[len(heading) :]
+    for part in parts:
+        assert (
+            part["sentence_id"]
+            == hashlib.sha256(
+                f"{part['evidence_id']}:{part['start']}:{part['end']}".encode()
+            ).hexdigest()[:24]
+        )  # Original sentence identity contract remains unchanged.
+        assert part["context"][0]["text"] == heading
+        assert part["context"][0]["start"] == 0 and part["context"][0]["end"] == len(heading)
+        assert part["job_id"] == "j1" and part["snapshot_id"] == "s1"
+        for key, value in metadata.items():
+            assert item[key] == part[key] == part["context"][0][key] == value
+    unsplit = source(build_source_views([evidence(text, identity="whole", **metadata)]))
+    assert unsplit["sentences"][1]["unit_id"] == parts[0]["unit_id"]
+    different = source(build_source_views([evidence(text, job="j2", **metadata)]))
+    assert different["sentences"][1]["unit_id"] != parts[0]["unit_id"]
+    different = source(build_source_views([evidence(text, snapshot="s2", **metadata)]))
+    assert different["sentences"][1]["unit_id"] != parts[0]["unit_id"]
+
+
+def test_units_at_unknown_window_edges_and_across_gap_are_incomplete_without_invented_bounds():
+    text = "前文。熟悉工具者优先；尾文。"
+    left, right = text.index("熟悉"), text.index("；") + 1
+    whole = source(build_source_views([evidence(text)]))
+    qualified = next(row for row in whole["sentences"] if "熟悉" in row["text"])
+    assert qualified["unit_complete_read"]
+    window = source(build_source_views([evidence(text, start=left, end=right)]))
+    assert not window["coverage"]["fully_read"]
+    assert window["sentences"][0]["unit_complete_read"] is False  # Left delimiter was not read.
+    assert window["sentences"][0]["unit_all_parts_shown"]
+    disconnected = source(
+        build_source_views(
+            [evidence(text, end=left + 2), evidence(text, start=left + 3, identity="e2")]
+        )
+    )
+    pieces = [
+        row for row in disconnected["sentences"] if row["start"] >= left and row["start"] < right
+    ]
+    assert len(pieces) == 2 and len({row["unit_id"] for row in pieces}) == 2
+    assert all(not row["unit_complete_read"] for row in pieces)
+    assert all(row["unit_all_parts_shown"] for row in pieces)
+    assert pieces[0]["unit_end"] < pieces[1]["unit_start"]
+
+
+def test_display_cut_inside_shared_unit_does_not_masquerade_as_complete_visible_unit():
+    prefix = "短句。" * 199
+    text = prefix + "具有全角Ａ经验者优先。"
+    boundary = len(prefix) + 8
+    item = source(
+        build_source_views(
+            [evidence(text, end=boundary), evidence(text, start=boundary, identity="e2")]
+        )
+    )
+    assert item["coverage"]["fully_read"]
+    assert item["truncated"] and not item["all_sentences_shown"]
+    part = item["sentences"][-1]
+    assert part["unit_complete_read"] and not part["unit_all_parts_shown"]
+    assert part["end"] < part["unit_end"] == len(text)
+    assert part["unit_start"] == len(prefix)
+    assert all(row["unit_all_parts_shown"] for row in item["sentences"][:-1])
+
+
+@pytest.mark.parametrize("key", ["document_id", "document_sha256", "content_sha256"])
+def test_conflicting_source_identity_cannot_silently_share_snapshot(key):
+    text = "任职要求：\n工具开发经验者优先。"
+    rows = [evidence(text, **{key: "a"}), evidence(text, identity="e2", **{key: "b"})]
+    item = source(build_source_views(rows))
+    assert item["issues"] == ["conflicting_" + key]
+    assert not item["sentences"] and not item["coverage"]["fully_read"]
+    assert not item["all_sentences_shown"]
+
+
+def test_missing_hashes_are_none_and_are_not_borrowed_from_another_piece():
+    text = "任职要求：\n具备经验者优先。"
+    boundary = text.index("具备")
+    item = source(
+        build_source_views(
+            [
+                evidence(text, end=boundary, document_id="d1", document_sha256="a" * 64),
+                evidence(text, start=boundary, identity="e2"),
+            ]
+        )
+    )
+    assert item["document_id"] == "d1" and item["content_sha256"] is None
+    part = item["sentences"][-1]
+    assert part["document_id"] is None and part["document_sha256"] is None
+    assert part["context"][0]["document_id"] == "d1"
+    assert part["unit_complete_read"]
+    malformed = build_source_views([evidence(text, document_sha256={"untrusted": "hash"})])
+    assert malformed["issues"][0]["code"] == "invalid_source_metadata"
+    assert not malformed["jobs"]

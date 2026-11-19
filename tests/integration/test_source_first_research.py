@@ -9,7 +9,7 @@ from work_observer.config import Settings
 from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.research.agent import method_fingerprint, research
-from work_observer.research.source_first import REQUIRED_FACETS
+from work_observer.research.source_first import REQUIRED_FACETS, VERSION
 from work_observer.research.store import ResearchStore
 from work_observer.storage.archive import RawArchive
 from work_observer.storage.database import upgrade
@@ -327,9 +327,7 @@ def test_benchmark_pins_approach_and_keeps_the_complete_ledger_in_anonymous_pack
             arm: {
                 "approach": approach,
                 "method_sha256": method_fingerprint(approach),
-                "method_version": RESEARCH_METHOD_VERSION
-                if approach == "standard"
-                else "source-first-v1",
+                "method_version": RESEARCH_METHOD_VERSION if approach == "standard" else VERSION,
             }
             for arm, approach in (("baseline", "standard"), ("candidate", "source_first"))
         },

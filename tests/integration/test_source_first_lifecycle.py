@@ -18,7 +18,7 @@ from work_observer.quality.reviews import QualityReviewService
 from work_observer.quality.service import DIMENSIONS
 from work_observer.reports.results import read_result, save_result
 from work_observer.research.agent import RESEARCH_METHOD_VERSION, method_fingerprint, research
-from work_observer.research.source_first import REQUIRED_FACETS, review_findings
+from work_observer.research.source_first import REQUIRED_FACETS, VERSION, review_findings
 from work_observer.research.store import ResearchStore
 from work_observer.retrieval.catalog import Catalog
 from work_observer.storage.archive import RawArchive
@@ -162,7 +162,7 @@ def test_source_first_ledger_backup_restore_and_actual_memory_erasure(tmp_path):
                     "method_sha256": method_fingerprint(approach),
                     "method_version": RESEARCH_METHOD_VERSION
                     if approach == "standard"
-                    else "source-first-v1",
+                    else VERSION,
                 }
                 for arm, approach in (("baseline", "standard"), ("candidate", "source_first"))
             },

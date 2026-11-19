@@ -7,7 +7,7 @@ from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.quality.service import DIMENSIONS, digest, load_corpus, read_json
 from work_observer.reports.inbox import InboxService
-from work_observer.reports.results import audit_result
+from work_observer.reports.results import audit_result, source_analysis_notes
 
 
 class QualityReviewService:
@@ -112,10 +112,16 @@ class QualityReviewService:
             "reviews": self.list_run(identity, result_sha256=digest(result)),
             "notice": "未审核保持待核对；程序只核对来源与合同，语义由审核者逐条判断。",
         }
+        notes = source_analysis_notes(result)
+        if notes:
+            packet["analysis_notes"] = notes
         if result.get("source_findings"):
-            from work_observer.research.source_first import review_findings
+            from work_observer.research.source_first import review_finding_history, review_findings
 
             packet["source_findings"] = review_findings(result["source_findings"])
+            history = review_finding_history(result["source_findings"])
+            if history:
+                packet["source_finding_history"] = history
         return packet
 
     def list_run(self, identity, *, result_sha256=None):

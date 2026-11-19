@@ -136,7 +136,7 @@ def test_unknown_finding_cannot_be_used_to_deny_a_positive_responsibility():
     checked = check_answer(source_answer([ev["id"]], ["F1"]), findings, {ev["id"]: ev}, set())
     assert not checked["binding_passed"]
     assert checked["claim_finding_issues"][0]["reason"] == (
-        "unknown_cannot_support_exclusionary_claim"
+        "unknown_findings_belong_in_unknown_section"
     )
     assert not checked["semantic_approval"]
 
@@ -145,12 +145,12 @@ def test_unknown_finding_cannot_be_used_to_deny_a_positive_responsibility():
     "basis,facet,ok",
     [
         ("direct", "work_task", False),
-        ("inference", "work_task", False),
-        ("synthesis", "release_authority", False),
+        ("inference", "work_task", True),
+        ("synthesis", "release_authority", True),
         ("synthesis", "work_task", True),
     ],
 )
-def test_cross_job_comparison_needs_both_sides_same_facet_and_synthesis(basis, facet, ok):
+def test_cross_job_analysis_can_link_multiple_facets_but_cannot_be_direct(basis, facet, ok):
     ev1, _ = view()
     ev2, _ = view(job="j2")
     views = build_source_views([ev1, ev2])
@@ -165,6 +165,8 @@ def test_cross_job_comparison_needs_both_sides_same_facet_and_synthesis(basis, f
         set(),
     )
     assert checked["binding_passed"] is ok
+    assert checked["semantic_approval"] is False
+    assert bool(checked["analysis_notes"]) is (facet != "work_task")
 
 
 def test_finish_keeps_missing_facets_and_inactive_finding_visible_as_errors():

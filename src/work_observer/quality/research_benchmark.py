@@ -7,7 +7,9 @@ import json
 import math
 import random
 import re
+import sqlite3
 import unicodedata
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -19,7 +21,7 @@ from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.memory.service import MemoryService
 from work_observer.quality.service import DIMENSIONS, digest, freeze, load_corpus
-from work_observer.reports.results import audit_result
+from work_observer.reports.results import audit_result, source_analysis_notes
 
 TABLES = (
     "research_benchmarks",
@@ -34,6 +36,35 @@ GATES = {
     "minimum_candidate_answer_gain": 1,
     "automatic_activation": False,
 }
+SCOPE_CONTEXT_NOTICE = (
+    "以下公司名称与身份状态仅为冻结资料中的来源标识和核验状态，不是JD逐字业务声明；"
+    "不证明岗位的组织隶属、公司整体业务或来源当前仍在招聘。"
+)
+
+
+def _frozen_scope_context(directory, documents, job_ids):
+    """Read only whitelisted naming metadata from the verified frozen corpus, never live scope."""
+    path = (Path(directory) / "corpus.db").resolve()
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database:
+        database.row_factory = sqlite3.Row
+        rows = []
+        for job_id in sorted(job_ids):
+            row = database.execute(
+                "SELECT j.id AS job_id,j.title,j.company_name_raw,"
+                "COALESCE(c.identity_status,'unknown') AS company_identity_status "
+                "FROM jobs j LEFT JOIN companies c ON c.id=j.company_id WHERE j.id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise ProbeError("BENCHMARK_FROZEN_SCOPE_METADATA_MISSING")
+            rows.append(
+                {
+                    **dict(row),
+                    "snapshot_id": documents[job_id]["snapshot_id"],
+                    "layer": "frozen_job_metadata",
+                }
+            )
+    return {"notice": SCOPE_CONTEXT_NOTICE, "jobs": rows}
 
 
 class Criterion(BaseModel):
@@ -280,6 +311,9 @@ class ResearchBenchmarkService:
                 }
                 for job in sorted(task["job_ids"])
             ]
+            task["scope_context"] = _frozen_scope_context(
+                self.root / identity / "corpus", docs, task["job_ids"]
+            )
             fingerprint = digest(
                 {"question": _normal(task["question"]), "sources": task["sources"]}
             )
@@ -293,6 +327,7 @@ class ResearchBenchmarkService:
             )
         protocol = {
             "version": "business-research-benchmark-v1",
+            "packet_context_version": 2,
             "id": identity,
             "title": title.strip(),
             "locked_at": now(),
@@ -836,6 +871,9 @@ class ResearchBenchmarkService:
                     ],
                 }
             )
+            for field in ("bindings", "sentence_citations"):
+                if field in claim:
+                    formatted[-1][field] = claim[field]
         value = {
             "packet_id": packet_id,
             "protocol_sha256": benchmark["protocol_sha256"],
@@ -871,10 +909,20 @@ class ResearchBenchmarkService:
                 "元数据隐藏不保证审核者此前未见过答案。"
             ),
         }
+        notes = source_analysis_notes(result)
+        if benchmark["protocol"].get("packet_context_version", 1) == 2:
+            if "scope_context" not in task:
+                raise ProbeError("BENCHMARK_FROZEN_SCOPE_METADATA_MISSING")
+            value["scope_context"] = task["scope_context"]
+        if notes:
+            value["analysis_notes"] = notes
         if result.get("source_findings"):
-            from work_observer.research.source_first import review_findings
+            from work_observer.research.source_first import review_finding_history, review_findings
 
             value["source_findings"] = review_findings(result["source_findings"])
+            history = review_finding_history(result["source_findings"])
+            if history:
+                value["source_finding_history"] = history
         value["packet_sha256"] = digest(value)
         return value
 

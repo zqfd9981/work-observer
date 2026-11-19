@@ -617,11 +617,14 @@ async def _research(
     scope["archived_public_ids"] = archived_public_ids
     scope["archived_public_total"] = archived_public_total
     scope["archived_public_truncated"] = archived_public_total > len(archived_public_ids)
+    method_version = RESEARCH_METHOD_VERSION
+    if approach == "source_first":
+        from work_observer.research.source_first import VERSION
+
+        method_version = VERSION
     result = {
         "format_version": 1,
-        "research_method_version": RESEARCH_METHOD_VERSION
-        if approach == "standard"
-        else "source-first-v1",
+        "research_method_version": method_version,
         "research_method_sha256": method_fingerprint(approach),
         "approach": approach,
         "requirement_policy": REQUIREMENT_POLICY,
@@ -1048,13 +1051,28 @@ async def _research(
                         data = {
                             "saved": True,
                             "active_findings": [
-                                {key: row[key] for key in ("id", "job_id", "facet", "state")}
+                                {
+                                    key: row.get(key)
+                                    for key in (
+                                        "id",
+                                        "job_id",
+                                        "facet",
+                                        "state",
+                                        "actor",
+                                        "sentence_ids",
+                                    )
+                                }
                                 for row in findings
                                 if row["active"]
                             ],
                             "semantic_approval": False,
                             "notice": "只核对定位、范围和结构；仍须独立核对概括、否定及角色语义。",
                         }
+                        data["unknown_finding_ids"] = [
+                            row["id"]
+                            for row in findings
+                            if row["active"] and row["state"] in {"not_disclosed", "unresolved"}
+                        ]
                 elif name == "plan_research" and set(arguments) == {"objective", "steps"}:
                     if (
                         not queried
@@ -1334,8 +1352,9 @@ async def _research(
                         raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                     check_knowledge()
                     citation_ids = {item.get("citation_key"): key for key, item in evidence.items()}
+                    resolution_issues = []
                     if approach == "source_first":
-                        from work_observer.research.source_first import SourceAnswer
+                        from work_observer.research.source_first import SourceAnswer, resolve_answer
 
                         answer = SourceAnswer.model_validate(arguments)
                     else:
@@ -1344,8 +1363,20 @@ async def _research(
                         claim.evidence_ids = [
                             citation_ids.get(key, key) for key in claim.evidence_ids
                         ]
+                    if approach == "source_first":
+                        answer, resolution_issues = resolve_answer(
+                            answer, result.get("source_findings", []), evidence
+                        )
                     used = {key for claim in answer.claims for key in claim.evidence_ids}
                     covered = {evidence[key]["job_id"] for key in used if key in evidence}
+                    if approach == "source_first":
+                        covered.update(
+                            row["job_id"]
+                            for row in result.get("source_findings", [])
+                            if row["active"]
+                            and row["id"] in answer.unknown_finding_ids
+                            and row["state"] == "not_disclosed"
+                        )
                     mixed_requirements = [
                         index
                         for index, claim in enumerate(answer.claims)
@@ -1363,6 +1394,8 @@ async def _research(
                             required_jobs
                             or {job["id"] for job in scope["jobs"] if job["has_detail"]},
                         )
+                        finding_check["claim_resolution_issues"] = resolution_issues
+                        finding_check["binding_passed"] &= not resolution_issues
                         result["source_binding_check"] = finding_check
                     if (
                         not queried
@@ -1401,9 +1434,11 @@ async def _research(
                             **(
                                 {
                                     "source_finding_check": finding_check,
-                                    "source_finding_feedback": "逐侧登记原文；未知单独展示，"
-                                    "不得支撑否定职责。跨岗比较同维度、双方引用并用synthesis。"
-                                    "结构通过仍不等于语义通过。",
+                                    "source_finding_feedback": "事实用bindings选择对应finding的"
+                                    "完整分句，程序生成引用，不必拼证据ID。未知维度仅在"
+                                    "unknown_finding_ids列ID，不写自由事实。混合已知/未知"
+                                    "请拆开，不能删已知。对比仍同维度+synthesis。"
+                                    "结构通过不是语义通过。",
                                 }
                                 if finding_check
                                 else {}
@@ -1445,6 +1480,10 @@ async def _research(
                             stop_reason="answered",
                             claims=[claim.model_dump() for claim in answer.claims],
                         )
+                        if approach == "source_first":
+                            result["unknown_finding_ids"] = answer.unknown_finding_ids
+                            if finding_check.get("analysis_notes"):
+                                result["analysis_notes"] = finding_check["analysis_notes"]
                         result["gaps"].extend(answer.gaps)
                         persist()
                         break

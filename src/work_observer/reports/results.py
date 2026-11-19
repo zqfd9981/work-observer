@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from html import escape
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +14,9 @@ FINDING_FACETS = {
     "deliverable": "工作产出",
     "personal_coding_share": "个人编码分工",
     "independent_delivery": "独立端到端负责程度",
+    "task_independence": "原文明示的独立子任务",
+    "team_collaboration": "团队协作",
+    "execution_safety": "执行安全与技术隔离",
     "release_authority": "上线决策与责任",
     "runtime_role": "平台运行中的角色",
     "human_control": "人工控制与接管",
@@ -26,6 +30,96 @@ FINDING_STATES = {
     "not_disclosed": "已读归档正文中未披露（待核实）",
     "unresolved": "尚不能判断（待核实）",
 }
+FINDING_ACTORS = {
+    "job_holder": "招聘岗位承担者",
+    "human_operator": "人工操作角色",
+    "team": "团队",
+    "system": "系统",
+    "agent": "Agent",
+    "unspecified": "主体未明确",
+}
+
+
+def _finding_actor(row):
+    if "actor" not in row:
+        return ""
+    return "；主体：" + escape(str(FINDING_ACTORS.get(row["actor"], row["actor"])))
+
+
+def _finding_facet(row):
+    label = str(FINDING_FACETS.get(row["facet"], row["facet"]))
+    return escape(label) if "actor" in row else label
+
+
+def source_analysis_notes(result):
+    """Only expose persisted analysis notices; do not infer comparability from bindings."""
+    claim_count = len(result.get("claims") or [])
+    for notes in (
+        result.get("analysis_notes"),
+        (result.get("source_binding_check") or {}).get("analysis_notes"),
+    ):
+        if isinstance(notes, list) and notes:
+            return [
+                note
+                for note in notes
+                if isinstance(note, dict)
+                and type(note.get("index")) is int
+                and 0 <= note["index"] < claim_count
+            ]
+    return []
+
+
+def _render_analysis_notes(result, index):
+    lines = []
+    for note in source_analysis_notes(result):
+        if note.get("index") != index:
+            continue
+        lines.extend(
+            [
+                "",
+                "  多维分析提示（不表示同口径单维可比，也不表示语义通过）：",
+                "  " + escape(str(note.get("notice", "仍须语义核对"))),
+            ]
+        )
+        for side in note.get("sides", []):
+            lines.append(
+                f"  - 分项 {escape(str(side.get('finding_id', '待核')))}；"
+                f"岗位 `{escape(str(side.get('job_id', '待核')))}`；"
+                f"{_finding_facet(side) if 'facet' in side else '维度待核'}"
+                f"{_finding_actor(side)}"
+            )
+    return lines
+
+
+def _render_claim_sentences(claim):
+    if "bindings" not in claim and "sentence_citations" not in claim:
+        return []
+    lines = [
+        "",
+        "  已声明的支持子集（不保证语义支持，仍需核对主体、范围与强度）：",
+    ]
+    for binding in claim.get("bindings", []):
+        lines.append(
+            "  - 分项 "
+            + escape(str(binding.get("finding_id", "待核")))
+            + "；原文分句："
+            + escape("、".join(binding.get("sentence_ids", [])))
+        )
+    for cite in claim.get("sentence_citations", []):
+        lines.append(
+            f"  - {escape(str(cite.get('finding_id', '待核')))}；"
+            f"{_finding_facet(cite) if 'facet' in cite else '维度待核'}"
+            f"{_finding_actor(cite)}；岗位 `{escape(str(cite.get('job_id', '待核')))}`；"
+            f"版本 `{escape(str(cite.get('snapshot_id', '待核')))}`；"
+            f"原文字符 {cite.get('start', '?')}–{cite.get('end', '?')}"
+        )
+        for context in cite.get("context", []) or []:
+            lines.extend(["", "    原文上下文（定位信息，仍需核对）："])
+            lines.extend("    > " + escape(line) for line in context.get("text", "").splitlines())
+        lines.append("")
+        lines.extend("    > " + escape(line) for line in cite.get("text", "").splitlines())
+    lines.append("")
+    return lines
 
 
 def _render_source_findings(result, labels):
@@ -54,8 +148,9 @@ def _render_source_findings(result, labels):
             lines.extend(["#### 待核实的维度" if unknown else "#### 有原文分句的登记", ""])
             for row in selected:
                 lines.append(
-                    f"- {FINDING_FACETS.get(row['facet'], row['facet'])}："
+                    f"- {_finding_facet(row)}："
                     f"{FINDING_STATES.get(row['state'], '状态待核')}（{row['id']}）"
+                    f"{_finding_actor(row)}"
                 )
                 for cite in row.get("citations", []):
                     label = labels.get(cite.get("evidence_id"))
@@ -78,10 +173,34 @@ def _render_source_findings(result, labels):
             )
             lines.append(
                 f"- {row['id']} → {row.get('superseded_by', '后续记录')}；"
-                f"{FINDING_FACETS.get(row['facet'], row['facet'])}；原状态："
+                f"{_finding_facet(row)}{_finding_actor(row)}；原状态："
                 f"{FINDING_STATES.get(row['state'], '待核')}；"
                 f"修订说明（研究登记，待核）：{replacement.get('reason', '请核对原始记录')}"
             )
+            if "actor" in row:
+                lines.append(f"  - 原登记理由（待核）：{escape(row.get('reason', '未记录'))}")
+                if replacement:
+                    lines.append(
+                        f"  - 更正后维度：{_finding_facet(replacement)}"
+                        f"{_finding_actor(replacement)}"
+                    )
+                for cite in row.get("citations", []):
+                    lines.extend(
+                        [
+                            "",
+                            f"    原登记所引分句；字符 {cite.get('start', '?')}–"
+                            f"{cite.get('end', '?')}；版本 "
+                            f"`{escape(str(cite.get('snapshot_id', '待核')))}`：",
+                        ]
+                    )
+                    for context in cite.get("context", []) or []:
+                        lines.append("    原文上下文（定位信息，仍需核对）：")
+                        lines.extend(
+                            "    > " + escape(line) for line in context.get("text", "").splitlines()
+                        )
+                    lines.extend(
+                        "    > " + escape(line) for line in cite.get("text", "").splitlines()
+                    )
     return lines
 
 
@@ -140,7 +259,7 @@ def render(result):
                 "",
             ]
         )
-    for claim in result["claims"]:
+    for index, claim in enumerate(result["claims"]):
         cites = " ".join(
             f"[{labels[key]}](#{labels[key].lower()})" for key in claim["evidence_ids"]
         )
@@ -157,6 +276,8 @@ def render(result):
             f"- {category[claim['category']]} / {requirement[claim['requirement']]}："
             f"{claim['text']} {cites}"
         )
+        lines.extend(_render_analysis_notes(result, index))
+        lines.extend(_render_claim_sentences(claim))
     lines.extend(
         [
             "",
