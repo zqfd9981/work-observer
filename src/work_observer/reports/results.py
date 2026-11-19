@@ -29,6 +29,7 @@ def _memory_text(content):
             pass
     return content
 
+
 FINDING_FACETS = {
     "work_task": "岗位建设与工作任务",
     "deliverable": "工作产出",
@@ -412,6 +413,33 @@ def render(result):
         )
         lines.extend(_render_analysis_notes(result, index))
         lines.extend(_render_claim_sentences(claim))
+    if plan := result.get("application_plan"):
+        lines.extend(
+            [
+                "",
+                "## 应用行动（研究建议，效果尚未验证）",
+                "",
+                f"目标：{plan['goal']}；采用第 {plan['background_version']} 版个人背景。",
+                f"投入与限制：{plan['constraints'] or '未说明，不作假设'}",
+                plan["notice"],
+            ]
+        )
+        for index, action in enumerate(plan["actions"], 1):
+            cites = " ".join(
+                f"[{labels[key]}](#{labels[key].lower()})" for key in action["evidence_ids"]
+            )
+            lines.extend(
+                [
+                    "",
+                    f"### {index}. {action['title']}",
+                    f"针对任务或能力：{action['task_or_ability']}",
+                    f"交付物（建议）：{action['deliverable']}",
+                    f"完成检查（建议）：{action['completion_check']}",
+                    cites,
+                    *[f"- 需要确认的前提：{text}" for text in action["assumptions"]],
+                ]
+            )
+        lines.extend(f"- 行动前待明确：{text}" for text in plan["open_questions"])
     lines.extend(
         [
             "",

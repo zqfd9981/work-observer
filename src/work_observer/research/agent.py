@@ -317,7 +317,31 @@ def method_fingerprint(
     dialogue_revisions=False,
     archive_versions=False,
     archive_version=None,
+    application_actions=False,
 ):
+    if application_actions:
+        from work_observer.research import applications
+
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "base": method_fingerprint(
+                        approach,
+                        review_feedback=review_feedback,
+                        requirement_guard=requirement_guard,
+                        coverage_mode=coverage_mode,
+                        public_only=public_only,
+                        work_materials=work_materials,
+                        dialogue_revisions=dialogue_revisions,
+                        archive_versions=archive_versions,
+                        archive_version=archive_version,
+                    ),
+                    "application_actions": applications.contract(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     if archive_versions:
         from work_observer.research.archive_versions import TOOL, VERSION, policy
 
@@ -924,8 +948,10 @@ async def _research(
                 "本轮只研究本机归档资料，不使用岗位。网页正文与粘贴工作资料分别标记；"
                 "标题只用于定位，须检索并引用原文；来源说明不等于独立核实或执行结果。"
             )
+    from work_observer.research import applications
     from work_observer.research import archive_versions as archive_history
 
+    application_enabled = False
     archive_pairs = archive_history.pairs(repository, archived_public_ids)
     archive_enabled = approach == "standard" and bool(archive_pairs)
     archive_contract_version = archive_history.VERSION
@@ -944,6 +970,10 @@ async def _research(
         if frozen_dialogue and frozen_dialogue != dialogue_version:
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         dialogue_enabled = frozen_dialogue == dialogue_version
+        frozen_application = frozen.get("result", {}).get("application_actions_version")
+        if frozen_application and frozen_application != applications.VERSION:
+            raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
+        application_enabled = frozen_application == applications.VERSION
         frozen_archive = frozen.get("result", {}).get("archive_versions_version")
         if frozen_archive and frozen_archive not in archive_history.KNOWN_VERSIONS:
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
@@ -990,6 +1020,7 @@ async def _research(
             dialogue_revisions=dialogue_enabled,
             archive_versions=archive_enabled,
             archive_version=archive_contract_version,
+            application_actions=application_enabled,
         ),
         "approach": approach,
         "coverage_mode": coverage_mode,
@@ -1084,6 +1115,26 @@ async def _research(
 
     result["memory_used"] = recall()
     result["project_id"] = project_id
+    application_background = applications.background(result["memory_used"], project_id)
+    if not resume:
+        application_enabled = (
+            approach == "standard" and not offline and application_background is not None
+        )
+    if application_enabled:
+        result["application_actions_version"] = applications.VERSION
+        result["research_method_version"] += "-" + applications.VERSION
+        result["research_method_sha256"] = method_fingerprint(
+            approach,
+            review_feedback=bool(review_feedback),
+            requirement_guard=_qualification_guard,
+            coverage_mode=coverage_mode,
+            public_only=job_ids == [],
+            work_materials=has_work_materials,
+            dialogue_revisions=dialogue_enabled,
+            archive_versions=archive_enabled,
+            archive_version=archive_contract_version,
+            application_actions=True,
+        )
     result["continued_from"] = [
         item["run_id"] for item in (conversation_context or {}).get("previous_findings", [])
     ]
@@ -1159,6 +1210,8 @@ async def _research(
         else set()
     )
     system = SYSTEM
+    if application_enabled:
+        system += applications.POLICY
     if archive_enabled:
         system += archive_history.policy(archive_contract_version)
     if coverage_mode == "question":
@@ -1194,6 +1247,11 @@ async def _research(
                     "fixed_scope": scope,
                     "budget": max_calls,
                     "memory_context": result["memory_used"],
+                    **(
+                        {"application_background": application_background}
+                        if application_enabled
+                        else {}
+                    ),
                     "project_context": conversation_context,
                     "public_search_allowed": allow_public,
                     **({"review_feedback": review_feedback} if review_feedback else {}),
@@ -1263,6 +1321,7 @@ async def _research(
                 dialogue_revisions=dialogue_enabled,
                 archive_versions=archive_enabled,
                 archive_version=archive_contract_version,
+                application_actions=application_enabled,
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
@@ -1282,6 +1341,7 @@ async def _research(
             dialogue_revisions=dialogue_enabled,
             archive_versions=archive_enabled,
             archive_version=archive_contract_version,
+            application_actions=application_enabled,
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
@@ -1297,6 +1357,7 @@ async def _research(
                 dialogue_revisions=dialogue_enabled,
                 archive_versions=archive_enabled,
                 archive_version=archive_contract_version,
+                application_actions=application_enabled,
             )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
@@ -1388,6 +1449,8 @@ async def _research(
                     + (PROPOSAL_TOOLS if allow_proposals else [])
                     + ([INVESTIGATION_TOOL] if project_id else [])
                 )
+                if application_enabled:
+                    model.tools = applications.tools(model.tools)
             for _ in range(max_calls - result["model_calls"]):
                 if recall() != result["memory_used"]:
                     raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
@@ -1956,6 +2019,16 @@ async def _research(
                     check_knowledge()
                     citation_ids = {item.get("citation_key"): key for key, item in evidence.items()}
                     resolution_issues = []
+                    application_error, application_plan = None, None
+                    if application_enabled:
+                        arguments = dict(arguments)
+                        raw_plan = arguments.pop("application_plan", None)
+                        try:
+                            application_plan = applications.validate(
+                                raw_plan, evidence, result["memory_used"], project_id
+                            )
+                        except ValueError as exc:
+                            application_error = str(exc)
                     if approach == "source_first":
                         from work_observer.research.source_first import (
                             SourceAnswer,
@@ -2055,6 +2128,7 @@ async def _research(
                         not queried
                         or map_error
                         or revision_error
+                        or application_error
                         or (finding_check and not finding_check["binding_passed"])
                         or mixed_requirements
                         or not used.issubset(evidence)
@@ -2104,6 +2178,11 @@ async def _research(
                             "query_jobs_required": not queried,
                             **({"work_map_error": map_error} if map_error else {}),
                             **({"revision_error": revision_error} if revision_error else {}),
+                            **(
+                                {"application_error": application_error}
+                                if application_error
+                                else {}
+                            ),
                             **(
                                 {
                                     "source_finding_check": finding_check,
@@ -2157,6 +2236,8 @@ async def _research(
                             stop_reason="answered",
                             claims=[claim.model_dump() for claim in answer.claims],
                         )
+                        if application_plan is not None:
+                            result["application_plan"] = application_plan
                         if work_map is not None:
                             result["work_map"] = work_map
                             result["analysis_origin"] = "research_agent"
@@ -2241,6 +2322,11 @@ def finalize(result):
             scope_notice if gap == MATERIAL_SCOPE_NOTICE else gap for gap in result["gaps"]
         ]
     used = {key for claim in result["claims"] for key in claim["evidence_ids"]}
+    used.update(
+        key
+        for action in (result.get("application_plan") or {}).get("actions", [])
+        for key in action["evidence_ids"]
+    )
     public_only = bool(result["scope"].get("source_note")) and not result["scope"]["jobs"]
     if result.get("coverage_mode") == "question":
         scoped = {j["id"] for j in result["scope"]["jobs"] if j["has_detail"]}

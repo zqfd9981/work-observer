@@ -540,6 +540,11 @@ function renderWorkMap(result, evidence) {
   return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${map.work_types.map(row=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details></article>`).join("")}<h2>任务与能力关系</h2>${map.ability_relations.map(row=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details></article>`).join("")}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map(text=>`<li>${e(text)}</li>`).join("")}</ul></section>`;
 }
 
+function renderApplicationPlan(result,evidence) {
+  const plan=result.application_plan;if(!plan?.actions?.length)return "";
+  return `<section class="detail-section"><h2>应用行动 · 研究建议</h2><p class="form-note">目标：${e(plan.goal)} · 采用第 ${e(plan.background_version)} 版个人背景。${e(plan.constraints?"投入与限制："+plan.constraints:"投入限制未说明。")}</p><p class="form-note">${e(plan.notice)} 行动建议仍需结合实际核对，判断审核不代表行动效果已验证。</p><ol>${plan.actions.map(action=>`<li class="detail-section"><h3>${e(action.title)}</h3><p>针对任务或能力：${e(action.task_or_ability)}</p><p><strong>交付物：</strong>${e(action.deliverable)}</p><p><strong>完成检查：</strong>${e(action.completion_check)}</p>${action.assumptions?.length?`<p class="form-note">需要确认的前提：${action.assumptions.map(e).join("；")}</p>`:""}${action.evidence_ids.map(id=>evidence.has(id)?`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`:"").join("")}</li>`).join("")}</ol>${plan.open_questions?.length?`<h3>行动前还需明确</h3><ul>${plan.open_questions.map(text=>`<li>${e(text)}</li>`).join("")}</ul>`:""}</section>`;
+}
+
 function renderResult(result, target, runId = null, replyStepId = null) {
   const evidence = new Map(result.evidence.map((ev,index)=>[ev.id,{...ev,label:`E${index+1}`}])) ;
   const counts = result.scope.counts;
@@ -555,6 +560,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
     ${renderArchiveComparisons(result)}
     ${renderWorkMap(result,evidence)}
     ${renderCognitiveRevisions(result,evidence)}
+    ${renderApplicationPlan(result,evidence)}
     ${renderSourceFindings(result,evidence)}
     ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
     ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${replyStepId ? `<button class="text-button" data-conversation-claim="${e(claim.text)}" data-reply-step="${e(replyStepId)}">针对这条判断继续核实 ↗</button>` : ""}${badge(claimBasisLabel(claim),"muted")} ${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${runIdentity && result.status === "completed" && claim.evidence_ids.every(id=>evidence.get(id)?.public_document_id || (evidence.get(id)?.document_id && evidence.get(id)?.snapshot_id)) ? `<button class="text-button" data-knowledge-run="${e(runIdentity)}" data-claim-index="${index}">留作知识候选 ＋</button>` : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}

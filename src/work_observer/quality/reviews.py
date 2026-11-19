@@ -116,6 +116,19 @@ class QualityReviewService:
         from work_observer.quality.source_context import source_context
 
         packet["source_context"] = source_context(result, self.repository)
+        if result.get("application_plan"):
+            packet["application_plan"] = result["application_plan"]
+            packet["application_evidence"] = [
+                row
+                for row in result.get("evidence", [])
+                if row["id"]
+                in {
+                    key
+                    for action in result["application_plan"]["actions"]
+                    for key in action["evidence_ids"]
+                }
+            ]
+            packet["application_notice"] = "逐判断审核不表示行动建议或实际效果已核实。"
         if result.get("work_map"):
             from work_observer.reports.cognition import checked_map
 

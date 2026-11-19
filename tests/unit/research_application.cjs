@@ -59,5 +59,12 @@ vm.runInContext('conversation.id=project.id;api=async(path,options)=>{calls.push
  assert.equal(vm.runInContext('applicationProfile(legacy,project.id)',context),null);
  context.notes.push({...current,id:"b".repeat(32),root_id:"b".repeat(32),previous_id:null});
  await assert.rejects(vm.runInContext('prepareResearchApplication("合成经历", "合成目标")',context),/多份背景/);
+ context.planResult={application_plan:{goal:"<script>合成目标</script>",background_version:2,constraints:"",notice:"建议不是企业验收",actions:[{title:"合成动作",task_or_ability:"合成能力",deliverable:"</p>合成产物",completion_check:"核对正常与失败请求",assumptions:["合成待确认权限"],evidence_ids:["source"]}],open_questions:["合成时间待说明"]}};
+ const planHtml=vm.runInContext('renderApplicationPlan(planResult,new Map([["source",{label:"E1"}]]))',context);
+ assert.ok(planHtml.includes("应用行动 · 研究建议"));assert.ok(planHtml.includes("交付物"));
+ assert.ok(planHtml.includes("完成检查"));assert.ok(planHtml.includes('data-cite="source"'));
+ assert.ok(planHtml.includes("&lt;script&gt;合成目标"));assert.ok(planHtml.includes("&lt;/p&gt;合成产物"));
+ assert.ok(!planHtml.includes("<script>"));assert.ok(planHtml.includes("合成待确认权限"));
+ assert.equal(vm.runInContext('renderApplicationPlan({},new Map())',context),"");
  console.log("Application entry: scoped saving, evidence question, drafts, retries and budget checks passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});
