@@ -44,5 +44,69 @@ api=async(path,options)=>{
  await assert.rejects(vm.runInContext('askResearchConversation("已保存原问题")',context),/正在发送/);
  await pending;
  assert.equal(context.writes,1);assert.equal(context.starts,1);
- console.log("Conversation retry: lost save/start/view responses, original budget and double-submit checks passed.");
+
+ // Start uses the actual project creation identity, including after a lost response.
+ context.created=new Map();context.createBodies=[];context.messages=[];
+ vm.runInContext(`
+ notify=message=>messages.push(message);state.researchIds=["original-job"];
+ api=async(path,options)=>{
+   if(path==="projects"){
+     const body=JSON.parse(options.body);createBodies.push(body);
+     const key=body.source_key||crypto.randomUUID();
+     if(!created.has(key))created.set(key,{...fresh(),id:"project-"+created.size,job_ids:body.job_ids});
+     project=created.get(key);
+     if(failCreate){failCreate=false;throw Error("create response lost");}
+     return project;
+   }
+   if(!options)return project;
+   if(path.endsWith("/steps")){
+     const body=JSON.parse(options.body);
+     if(!project.steps.some(step=>step.key===body.key)){writes++;project.steps.push({...body,id:"first",state:"queued"});}
+     if(failSave){failSave=false;throw Error("save response lost");}
+     return project;
+   }
+   if(path.endsWith("/run")){starts++;project.steps[0].state="waiting_review";if(failRun){failRun=false;throw Error("run response lost");}return {};}
+ };
+ `,context);
+ for(const failure of ["failCreate","failSave","failRun","failView"]){
+   context.created.clear();context.createBodies.length=0;storage.clear();
+   context.failCreate=false;context.failSave=false;context.failRun=false;context.failView=false;context[failure]=true;
+   vm.runInContext('writes=0;starts=0;opens=0;conversationSendKeys.clear()',context);
+   await vm.runInContext('startResearchConversation("第一次提出的问题")',context);
+   assert.ok(context.messages.at(-1).includes("lost"));
+   // Reload the whole production script: only session storage and the server survive.
+   const reloaded={document:context.document,window:context.window,location:context.location,
+     sessionStorage:context.sessionStorage,crypto:context.crypto,URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
+   vm.createContext(reloaded);vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),reloaded);
+   reloaded.api=context.api;reloaded.openResearchConversation=context.openResearchConversation;reloaded.notify=context.notify;
+   vm.runInContext('restorePendingResearch()',reloaded);
+   assert.equal(node("#question").value,"第一次提出的问题");
+   await vm.runInContext('startResearchConversation("第一次提出的问题")',reloaded);
+   assert.equal(context.created.size,1,failure+": one project");
+   assert.equal(context.writes,1,failure+": one step");
+   assert.equal(context.starts,1,failure+": one investigation");
+   assert.deepEqual(context.createBodies[0],context.createBodies[1]);
+   assert.ok(context.createBodies[0].source_key);
+   assert.equal(storage.has("wo-pending-research"),false);
+ }
+
+ // A filter result may change while the response is lost; retry keeps the original scope.
+ context.created.clear();context.createBodies.length=0;storage.clear();context.failCreate=true;
+ vm.runInContext(`state.researchIds=null;state.filters={keyword:"原筛选"};globalThis.jobQueries=0;
+ const originalApi=api;api=async(path,options)=>path.startsWith("jobs?")?(jobQueries++,{jobs:[{id:jobQueries===1?"original-job":"new-job"}]}):originalApi(path,options);`,context);
+ await vm.runInContext('startResearchConversation("固定原范围")',context);
+ await vm.runInContext('startResearchConversation("固定原范围")',context);
+ assert.equal(context.jobQueries,1);assert.deepEqual(Array.from(context.createBodies[1].job_ids),["original-job"]);
+ // After a confirmed success, explicitly starting again gets a fresh project and budget.
+ await vm.runInContext('startResearchConversation("固定原范围")',context);
+ assert.equal(context.created.size,2);assert.equal(context.jobQueries,2);
+ assert.notEqual(context.createBodies[1].source_key,context.createBodies[2].source_key);
+
+ // Even a second click before the first scope lookup returns cannot create another project.
+ context.created.clear();context.createBodies.length=0;storage.clear();
+ vm.runInContext('writes=0;starts=0;state.researchIds=["original-job"]',context);
+ const starting=vm.runInContext('startResearchConversation("连续双击")',context);
+ await vm.runInContext('startResearchConversation("连续双击")',context);await starting;
+ assert.equal(context.createBodies.length,1);assert.equal(context.writes,1);assert.equal(context.starts,1);
+ console.log("Conversation retry: lost create/save/start/view responses, reload, fixed scope, original budget and double-submit checks passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

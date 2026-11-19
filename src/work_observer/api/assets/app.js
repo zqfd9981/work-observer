@@ -716,22 +716,56 @@ async function startResearch(event) {
   } catch (error) { setBusy(false); notify(error.message,true); }
 }
 
+let conversationStarting=false;
+
+function restorePendingResearch() {
+  if(location.hash && location.hash!=="#research")return;
+  let receipt=null;try{receipt=JSON.parse(sessionStorage.getItem("wo-pending-research")||"null");}catch{}
+  if(!receipt)return;
+  const intent=JSON.parse(receipt.intent);
+  $("#question").value=intent.question;
+  $("#offline").checked=intent.offline;$("#allow-public").checked=intent.allowPublic;
+  $("#research-source-mode").value=intent.publicOnly?"public":"jobs";
+  $("#research-approach").value="standard";
+  state.researchIds=intent.jobs;state.filters=intent.filters;
+  const titles=new Map(selectedResearchDocuments);selectedResearchDocuments.clear();
+  for(const id of intent.documents)selectedResearchDocuments.set(id,titles.get(id)||"所选归档资料");
+  conversation.id=receipt.projectId||null;
+  if(receipt.projectId)sessionStorage.setItem("wo-conversation",receipt.projectId);
+  else sessionStorage.removeItem("wo-conversation");
+  notify("已恢复上次未确认的问题和原资料范围。再次开始调查会复用原记录。");
+}
+
 async function startResearchConversation(question) {
+  if(conversationStarting)return;
+  conversationStarting=true;
   clearTimeout(conversation.timer);
   setBusy(true);
   try {
-    const publicOnly=$("#research-source-mode")?.value === "public";
-    const scope = publicOnly ? [] : state.researchIds?.length ? state.researchIds : (await api("jobs?"+new URLSearchParams({...state.filters,limit:20}))).jobs.map(job=>job.id);
-    if(!scope.length){
-      const hasArchived=selectedResearchDocuments.size>0||(await api("public-documents?limit=1")).total>0;
-      if(!hasArchived)throw new Error("当前范围还没有原文，请先粘贴工作资料、归档网页或补充岗位原文。");
-      if(!publicOnly){$("#research-source-mode").value="public";updateResearchScope();updateResearchApproach();}
+    const offline=$("#offline").checked,allowPublic=$("#allow-public").checked;
+    const intent=()=>JSON.stringify({question,publicOnly:$("#research-source-mode")?.value==="public",
+      jobs:state.researchIds?.length?[...state.researchIds].sort():null,filters:state.researchIds?.length?{}:state.filters,
+      documents:[...selectedResearchDocuments.keys()].sort(),offline,allowPublic});
+    let receipt=null;
+    try{receipt=JSON.parse(sessionStorage.getItem("wo-pending-research")||"null");}catch{}
+    if(receipt?.intent!==intent()){
+      const publicOnly=$("#research-source-mode")?.value === "public";
+      const scope = publicOnly ? [] : state.researchIds?.length ? state.researchIds : (await api("jobs?"+new URLSearchParams({...state.filters,limit:20}))).jobs.map(job=>job.id);
+      if(!scope.length){
+        const hasArchived=selectedResearchDocuments.size>0||(await api("public-documents?limit=1")).total>0;
+        if(!hasArchived)throw new Error("当前范围还没有原文，请先粘贴工作资料、归档网页或补充岗位原文。");
+        if(!publicOnly){$("#research-source-mode").value="public";updateResearchScope();updateResearchApproach();}
+      }
+      receipt={intent:intent(),body:{title:question.slice(0,100),goal:question,job_ids:scope,...(selectedResearchDocuments.size?{public_document_ids:[...selectedResearchDocuments.keys()]}:{}),max_calls:24,max_seconds:720,max_rounds:6,max_public:allowPublic?4:0,source_key:"conversation:"+crypto.randomUUID()}};
+      sessionStorage.setItem("wo-pending-research",JSON.stringify(receipt));
     }
-    const project = await api("projects",{method:"POST",body:JSON.stringify({title:question.slice(0,100),goal:question,job_ids:scope,...(selectedResearchDocuments.size?{public_document_ids:[...selectedResearchDocuments.keys()]}:{}),max_calls:24,max_seconds:720,max_rounds:6,max_public:$("#allow-public").checked?4:0})});
+    const project = await api("projects",{method:"POST",body:JSON.stringify(receipt.body)});
+    receipt.projectId=project.id;sessionStorage.setItem("wo-pending-research",JSON.stringify(receipt));
     conversation.id=project.id;sessionStorage.setItem("wo-conversation",project.id);
     conversation.replyToStepId=null;
-    await askResearchConversation(question);
+    await askResearchConversation(question,{offline,allowPublic});
   } catch(error) {setBusy(false);notify(error.message,true);}
+  finally{conversationStarting=false;}
 }
 
 function conversationAllocation(project, offline, allowPublic=false) {
@@ -757,6 +791,12 @@ function updateConversationAllocation(project) {
 
 const conversationSendKeys=new Map(),conversationSending=new Set();
 
+function clearConversationReceipt(projectId) {
+  conversationSendKeys.delete(projectId);sessionStorage.removeItem("wo-pending-question:"+projectId);
+  let receipt=null;try{receipt=JSON.parse(sessionStorage.getItem("wo-pending-research")||"null");}catch{}
+  if(receipt?.projectId===projectId)sessionStorage.removeItem("wo-pending-research");
+}
+
 async function askResearchConversation(question, options={}) {
   const id=conversation.id;
   if(conversationSending.has(id))throw new Error("这条问题正在发送，请稍候。");
@@ -778,7 +818,7 @@ async function sendResearchConversation(question, options={}) {
     if(!project.worker_running&&["queued","interrupted"].includes(saved.state))await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
     conversation.replyToStepId=undefined;
     await openResearchConversation(project.id);
-    conversationSendKeys.delete(project.id);sessionStorage.removeItem(receiptKey);
+    clearConversationReceipt(project.id);
     return;
   }
   if(project.worker_running)throw new Error("正在调查，请等本轮结束后继续追问。");
@@ -795,7 +835,7 @@ async function sendResearchConversation(question, options={}) {
   await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
   conversation.replyToStepId=undefined;
   await openResearchConversation(project.id);
-  conversationSendKeys.delete(project.id);sessionStorage.removeItem(receiptKey);
+  clearConversationReceipt(project.id);
 }
 
 async function openResearchConversation(id, navigate=true) {
@@ -2011,6 +2051,7 @@ document.addEventListener("click",async event=>{
 });
 
 document.addEventListener("DOMContentLoaded",async function boot(){
+  restorePendingResearch();
   updateResearchApproach();
   await loadResearchFormats();
   await route();
