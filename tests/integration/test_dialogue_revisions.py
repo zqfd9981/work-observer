@@ -161,27 +161,50 @@ def test_three_turn_reopened_conversation_carries_pending_revision_without_a_map
         reopened.close()
 
 
-@pytest.mark.parametrize("restriction", [None, "background_changed", "scope_removed"])
+@pytest.mark.parametrize(
+    "restriction", [None, "background_changed", "scope_removed", "unrelated_source"]
+)
+@pytest.mark.parametrize("source_kind", ["job", "material", "web"])
 def test_explicit_reply_can_reconsider_a_retained_old_claim_after_source_update(
-    source_workspace, tmp_path, restriction
+    source_workspace, tmp_path, restriction, source_kind, monkeypatch
 ):
-    repo, store, _ = source_workspace
+    repo, store, other_jobs = source_workspace
     source = dict(
         title="合成版本岗位",
         company="合成公司",
         external_id="changed-source",
         data_kind="synthetic",
     )
-    job_id = import_jd(
-        repo,
-        RawArchive(tmp_path / "version-raw"),
-        ManualJD(
-            **source,
-            description="岗位职责：负责接口开发；与平台团队协作。",
-        ),
-    )["job_id"]
+    original_text = "岗位职责：负责接口开发；与平台团队协作。"
+    updated_text = "岗位职责：负责接口开发；与平台团队协作，上线须经平台团队批准。"
+    archive = PublicDocumentService(repo, tmp_path / "archive-raw")
+    response_text = original_text
+
+    async def fetch(url):
+        return 200, {"content-type": "text/plain"}, response_text.encode()
+
+    if source_kind == "job":
+        job_id = import_jd(
+            repo,
+            RawArchive(tmp_path / "version-raw"),
+            ManualJD(**source, description=original_text),
+        )["job_id"]
+        job_ids, selected = [job_id], None
+    else:
+        if source_kind == "material":
+            document = archive.archive_text("接口交接说明", original_text)["document"]
+        else:
+            monkeypatch.setattr("work_observer.connectors.public_documents.pinned_request", fetch)
+            document = asyncio.run(archive.read("https://example.com/interfaces"))["document"]
+        job_ids, selected = [], [document["id"]]
     service = ProjectService(store)
-    project = service.create("正文更新后纠正", "接口任务与权限", [job_id], max_calls=6)
+    project = service.create(
+        "正文更新后纠正",
+        "接口任务与权限",
+        job_ids,
+        public_document_ids=selected,
+        max_calls=6,
+    )
     memories = MemoryService(repo)
     background = memories.create(
         "preference", "接口工作研究", scope="project", project_id=project["id"]
@@ -205,19 +228,46 @@ def test_explicit_reply_can_reconsider_a_retained_old_claim_after_source_update(
     )
     first_step = project["steps"][0]
     original = deepcopy(store.get(first_step["run_id"])["result"])
-    import_jd(
-        repo,
-        RawArchive(tmp_path / "updated-raw"),
-        ManualJD(
-            **source,
-            description="岗位职责：负责接口开发；与平台团队协作，上线须经平台团队批准。",
-        ),
-    )
+    if source_kind == "job":
+        import_jd(
+            repo,
+            RawArchive(tmp_path / "updated-raw"),
+            ManualJD(
+                **source,
+                description=updated_text,
+            ),
+        )
+    else:
+        if source_kind == "material":
+            updated = archive.revise_text(document["id"], document["title"], updated_text)
+        else:
+            response_text = updated_text
+            updated = asyncio.run(archive.read("https://example.com/interfaces"))
+        project = service.revise(
+            project["id"],
+            revision=project["revision"],
+            goal=project["goal"],
+            job_ids=[],
+            public_document_ids=[updated["document"]["id"]],
+        )
     if restriction == "background_changed":
         memories.revise(background["id"], "新的用户目标")
     if restriction == "scope_removed":
         project = service.revise(
-            project["id"], revision=project["revision"], goal=project["goal"], job_ids=[]
+            project["id"],
+            revision=project["revision"],
+            goal=project["goal"],
+            job_ids=[],
+            public_document_ids=[],
+        )
+    if restriction == "unrelated_source":
+        unrelated = archive.archive_text("另一份接口说明", updated_text)["document"]["id"]
+        project = service.revise(
+            project["id"],
+            revision=project["revision"],
+            goal=project["goal"],
+            job_ids=other_jobs[:1] if source_kind == "job" else [],
+            public_document_ids=[unrelated],
         )
     project = service.add(
         project["id"],

@@ -50,6 +50,27 @@ def dependency_steps(record, identities):
     return result
 
 
+def historical_document_scope(repository, identities, selected):
+    """An explicit reply may compare a retained version of the same selected source."""
+    if selected is None or identities <= set(selected):
+        return True
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from work_observer.connectors.public_models import PublicDocument
+
+    with Session(repository.engine) as session:
+        documents = dict(
+            session.execute(
+                select(PublicDocument.id, PublicDocument.url).where(
+                    PublicDocument.id.in_(identities | set(selected))
+                )
+            ).all()
+        )
+    selected_urls = {documents[key] for key in selected if key in documents}
+    return all(key in documents and documents[key] in selected_urls for key in identities)
+
+
 class ProjectService:
     def __init__(self, store):
         self.store = store
@@ -827,9 +848,16 @@ class ProjectService:
             if excluded and not auditor.run(previous["run_id"])["eligible"]:
                 continue
             audit = audit_result(result, repository)
+            evidence_ids = {ev["id"] for ev in result.get("evidence", [])}
             if (
                 is_reply
-                and audit["changed_sources"]
+                and (
+                    audit["changed_sources"]
+                    or any(
+                        issue["reason"] == "source_changed" and issue["id"] in evidence_ids
+                        for issue in audit.get("dependency_issues", [])
+                    )
+                )
                 and all(
                     change["reason"] == "job_current_version_changed"
                     and change["retained_evidence_valid"]
@@ -843,14 +871,14 @@ class ProjectService:
                     for issue in audit.get("dependency_issues", [])
                 )
                 and {j["id"] for j in result.get("scope", {}).get("jobs", [])} <= allowed
-                and (
-                    step.get("public_document_ids") is None
-                    or {
+                and historical_document_scope(
+                    repository,
+                    {
                         ev["public_document_id"]
                         for ev in result.get("evidence", [])
                         if ev.get("public_document_id")
-                    }
-                    <= set(step["public_document_ids"])
+                    },
+                    step.get("public_document_ids"),
                 )
             ):
                 historical_reply = previous, result
