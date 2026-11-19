@@ -16,7 +16,6 @@ from work_observer.config import validate_url
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
 from work_observer.research import requirements as qualification
-from work_observer.research.requirements import preferred_markers, required_markers
 from work_observer.retrieval.catalog import Catalog, Filters
 
 LEGACY_RESEARCH_METHOD_VERSION = "research-method-v5-responsibility-boundaries"
@@ -419,7 +418,7 @@ def method_fingerprint(
     if approach not in {"standard", "source_first", "work_map"}:
         raise ProbeError("RESEARCH_APPROACH_INVALID")
     guard = requirement_guard or qualification.CURRENT_GUARD
-    if guard not in {qualification.CURRENT_GUARD, qualification.LEGACY_GUARD}:
+    if guard not in qualification.KNOWN_GUARDS:
         raise ProbeError("RESEARCH_VALIDATION_INVALID")
     version = (
         LEGACY_RESEARCH_METHOD_VERSION
@@ -441,8 +440,8 @@ def method_fingerprint(
                     PUBLIC_READ_TOOL,
                 ],
                 **(
-                    {"qualification_validation": qualification.guard_contract()}
-                    if guard == qualification.CURRENT_GUARD
+                    {"qualification_validation": qualification.contract_for(guard)}
+                    if guard != qualification.LEGACY_GUARD
                     else {}
                 ),
             },
@@ -840,8 +839,10 @@ async def _research(
     coverage_mode="all",
     _qualification_guard=qualification.CURRENT_GUARD,
 ):
-    if _qualification_guard not in {qualification.CURRENT_GUARD, qualification.LEGACY_GUARD}:
+    if _qualification_guard not in qualification.KNOWN_GUARDS:
         raise ProbeError("RESEARCH_VALIDATION_INVALID")
+    guard_api = qualification.implementation(_qualification_guard)
+    preferred_markers, required_markers = guard_api.preferred_markers, guard_api.required_markers
     if not question.strip() or len(question) > 4000:
         raise ProbeError("INVALID_QUESTION")
     if not 1 <= max_calls <= 12 or not 0 < timeout <= 300:
@@ -952,11 +953,7 @@ async def _research(
         archive_pairs = frozen.get("result", {}).get("scope", {}).get("archive_version_pairs", [])
     if archive_enabled:
         scope["archive_version_pairs"] = archive_pairs
-    validation = (
-        qualification.guard_contract()
-        if _qualification_guard == qualification.CURRENT_GUARD
-        else None
-    )
+    validation = qualification.contract_for(_qualification_guard)
     method_version = RESEARCH_METHOD_VERSION if validation else LEGACY_RESEARCH_METHOD_VERSION
     if review_feedback:
         from work_observer.quality.feedback import VERSION as feedback_version
@@ -1242,7 +1239,7 @@ async def _research(
     check_feedback()
 
     def check_validation():
-        if validation and qualification.guard_contract() != validation:
+        if validation and qualification.contract_for(_qualification_guard) != validation:
             raise ProbeError("RESEARCH_VALIDATION_CHANGED_NEW_ROUND_REQUIRED")
 
     check_validation()

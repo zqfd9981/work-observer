@@ -3,7 +3,9 @@
 import re
 
 LEGACY_GUARD = "qualification-guard-v1"
-CURRENT_GUARD = "qualification-guard-v2-local-negation"
+PREVIOUS_GUARD = "qualification-guard-v2-local-negation"
+CURRENT_GUARD = "qualification-guard-v3-merge-negation"
+KNOWN_GUARDS = {LEGACY_GUARD, PREVIOUS_GUARD, CURRENT_GUARD}
 
 
 def guard_contract():
@@ -18,6 +20,26 @@ def guard_contract():
             "\n".join(inspect.getsource(sys.modules[__name__]).splitlines()).encode()
         ).hexdigest(),
     }
+
+
+def implementation(version):
+    """The v2 file is an exact executable snapshot, including its original hash."""
+    import sys
+
+    from work_observer.connectors.mcp_probe import ProbeError
+    from work_observer.research import requirements_v2
+
+    if version in {LEGACY_GUARD, PREVIOUS_GUARD}:
+        return requirements_v2
+    if version == CURRENT_GUARD:
+        return sys.modules[__name__]
+    raise ProbeError("RESEARCH_VALIDATION_INVALID")
+
+
+def contract_for(version):
+    if version == LEGACY_GUARD:
+        return None
+    return implementation(version).guard_contract()
 
 
 def select_guard(store, identity, *, resume):
@@ -37,7 +59,12 @@ def select_guard(store, identity, *, resume):
     result_contract = (saved.get("result") or {}).get("qualification_validation")
     if recorded is None and result_contract is None:
         return None  # Historical input/result shape and checks remain untouched.
-    if recorded != result_contract or recorded != guard_contract():
+    if (
+        not isinstance(recorded, dict)
+        or recorded != result_contract
+        or recorded.get("version") not in KNOWN_GUARDS - {LEGACY_GUARD}
+        or recorded != contract_for(recorded["version"])
+    ):
         raise ProbeError("RESEARCH_VALIDATION_CHANGED_NEW_ROUND_REQUIRED")
     return recorded
 
@@ -58,7 +85,7 @@ NEGATED_SUFFIX = re.compile(
 FEEDBACK_NEGATED_REQUIRED_PREFIX = re.compile(
     r"(?:不(?:应|该|能)?|不可|不得)"
     r"(?:(?:将|把)[^，,。；;：:\n!?？！只仅]{1,16})?"
-    r"(?:归为|归类为|提升为|升级为|拆出)[\s“\"「『]*$"
+    r"(?:归为|归类为|提升为|升级为|拆出|并入)[\s“\"「『]*$"
 )
 
 

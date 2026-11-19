@@ -9,7 +9,7 @@ from test_review_feedback_repair import workspace as workspace
 
 from work_observer.config import Settings
 from work_observer.research.agent import research
-from work_observer.research.requirements import required_markers
+from work_observer.research.requirements import CURRENT_GUARD, required_markers
 
 
 @pytest.mark.parametrize(
@@ -92,7 +92,7 @@ def test_new_plain_standard_uses_fixed_guard_without_feedback(workspace):
         )
     )
     assert result["status"] == "completed" and result["model_calls"] == 3
-    assert result["qualification_validation"]["version"] == "qualification-guard-v2-local-negation"
+    assert result["qualification_validation"]["version"] == CURRENT_GUARD
 
 
 def test_feedback_engine_still_splits_a_real_positive_required_clause(workspace):
