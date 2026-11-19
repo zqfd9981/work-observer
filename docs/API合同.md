@@ -16,6 +16,15 @@
 
 # Work Observer HTTP API 合同
 
+2026-11-20认知延续增量（源码已实现，尚未进入当前8776进程）：
+
+- `GET /api/knowledge/research/{id}`读取已完成且来源有效的地图及其结构化保存状态；`POST`只接受地图条目索引、目标定义及可选前版ID，从原研究提取候选，不接受客户端重写结论或证据。
+- `GET /api/updates/reports/{id}`增加动态`research_impact`：直接引用旧版本的判断、通过知识/记忆/研究背景关联的下游研究、原项目及步骤定位。返回完整关联计数及最近50轮；这些是待复核关联，不是语义错误裁决。关联文本不另存副本，已遗忘研究不再展示。
+- `POST /api/updates/reports/{id}/followup`的`{note,run_id?}`：省略`run_id`仍保存待补查；指定报告中可继续的关联研究时，将问题保存回原项目，绑定原步骤、沿用方法/当前资料范围和累计预算，不启动模型。同一报告/原轮/说明的重试复用已存步骤。
+- 定义的文字/版本变更与来源有效性变化分别在`domain_definitions_changed`和`definition_validity_changed`中表示，避免将来源失效当成工作类型定义被修订。
+
+对应命令共用上述服务：`work-observer product research-knowledge get --id RUN_ID`；`product research-knowledge save --id RUN_ID --file INPUT.json`；`product updates report --id REPORT_ID`；`product updates followup --id REPORT_ID --file INPUT.json`。结构化文件字段与同名API相同，使用`--db`指定独立数据目录。
+
 2026 年 11 月 18 日。实现入口为 `api/web.py`、`api/product.py` 与 `api/operations.py`。以下接口复用 CLI 和业务服务，页面可以直接完成对应操作。接口不提供自由 SQL、任意本机文件读取、来源解锁、认证恢复、投递或消息发送。
 
 ## 请求与访问

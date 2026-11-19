@@ -702,6 +702,10 @@ def create_app(
                 "KNOWLEDGE_RESEARCH_SOURCE_STALE": "来源研究需要重新核对，请先处理来源问题。",
                 "KNOWLEDGE_MAP_ITEM_REQUIRED": "请选择地图中的一个工作类型或一条任务能力关系。",
                 "DOMAIN_RESEARCH_SOURCE_STALE": "这个工作类型的来源需要重新核对，暂时不能采纳。",
+                "UPDATE_LINKED_RESEARCH_UNAVAILABLE": "这条关联研究目前无法继续，请刷新变化报告。",
+                "UPDATE_PROJECT_BUDGET_EXHAUSTED": (
+                    "原研究预留额度已用完；旧问题和预算保留，请另建明确范围的研究。"
+                ),
                 "INVALID_MEMORY_EVIDENCE": (
                     "知识候选需要可核对的岗位原文引用。公开搜索摘要暂不支持采纳。"
                 ),

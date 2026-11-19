@@ -410,6 +410,11 @@ class DomainUpdateService:
             "memory_refs": list(memory_refs.values()),
             "source_run_ids": sorted(
                 {row["source_run_id"] for row in relations if row.get("source_run_id")}
+                | {
+                    row["source_context"]["run_id"]
+                    for row in definitions
+                    if (row.get("source_context") or {}).get("run_id")
+                }
             ),
             "note": (
                 "用户显式冻结的本地观察，不是新采集或市场趋势；未知分类/画像/关系不记为不存在。"
@@ -531,7 +536,19 @@ class DomainUpdateService:
                 classifications.append(
                     {"job_id": identity, "before": left["domain"], "after": right["domain"]}
                 )
-        definition_changed = digest(before["definitions"]) != digest(after["definitions"])
+
+        def versions(rows):
+            return [
+                {key: value for key, value in row.items() if key not in {"stale", "stale_reasons"}}
+                for row in rows
+            ]
+
+        definition_changed = digest(versions(before["definitions"])) != digest(
+            versions(after["definitions"])
+        )
+        definition_validity_changed = not definition_changed and digest(
+            before["definitions"]
+        ) != digest(after["definitions"])
 
         def relation_versions(panel):
             return [
@@ -585,6 +602,7 @@ class DomainUpdateService:
                 "classifications": classifications,
                 "literal_terms_changed": before["terms"] != after["terms"],
                 "domain_definitions_changed": definition_changed,
+                "definition_validity_changed": definition_validity_changed,
                 "reviewed_relations_changed": relation_changed,
                 "relation_validity_changed": relation_validity_changed,
                 "note": "分析或分类口径变化与原文变化分别列示。",
@@ -595,7 +613,9 @@ class DomainUpdateService:
                 "comparable": not (
                     scope_changed
                     or definition_changed
+                    or definition_validity_changed
                     or relation_changed
+                    or relation_validity_changed
                     or analysis
                     or classifications
                     or before["terms"] != after["terms"]
@@ -628,16 +648,73 @@ class DomainUpdateService:
         return self._write("domain_update_reports", report)
 
     def report(self, identity):
+        from work_observer.reports.research_impact import research_impact
+
         report = self._get("domain_update_reports", identity)
         report["current_memory_validity"] = [
             self.memory.validity(ref["id"]) for ref in report.get("memory_refs", [])
         ]
+        report["research_impact"] = research_impact(
+            self.repository,
+            self.store,
+            self._get("domain_update_captures", report["before_id"]),
+            self._get("domain_update_captures", report["after_id"]),
+            report,
+        )
         return report
 
-    def followup(self, identity, note):
+    def followup(self, identity, note, run_id=None):
+        from work_observer.storage.locks import exclusive
+
+        with exclusive(self.repository.engine.url.database):
+            return self._followup(identity, note, run_id)
+
+    def _followup(self, identity, note, run_id):
         report = self.report(identity)
         if not isinstance(note, str) or not note.strip() or len(note) > 2000:
             raise ProbeError("INVALID_UPDATE_FOLLOWUP")
+        if run_id:
+            from work_observer.research.projects import ProjectService
+
+            source = next(
+                (row for row in report["research_impact"]["runs"] if row["run_id"] == run_id), None
+            )
+            if not source or not source["can_followup"]:
+                raise ProbeError("UPDATE_LINKED_RESEARCH_UNAVAILABLE")
+            projects = ProjectService(self.store)
+            project = projects.get(source["project_id"])
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ProbeError("PROJECT_RUNNING")
+            key = "domain-update:" + identity + ":" + run_id + ":" + digest(note)
+            saved = next((step for step in project["steps"] if step.get("key") == key), None)
+            if not saved:
+                previous = next(s for s in project["steps"] if s["id"] == source["step_id"])
+                used, budget = projects.usage(project), project["budget"]
+                calls = min(6, budget["max_calls"] - used["reserved_calls"])
+                seconds = min(180, int(budget["max_seconds"] - used["reserved_seconds"]))
+                if calls < 1 or seconds < 1:
+                    raise ProbeError("UPDATE_PROJECT_BUDGET_EXHAUSTED")
+                project = projects.add(
+                    project["id"],
+                    note.strip(),
+                    revision=project["revision"],
+                    reply_to_step_id=source["step_id"],
+                    approach=previous.get("approach", "standard"),
+                    coverage_mode=previous.get("coverage_mode", "all"),
+                    max_calls=calls,
+                    timeout=seconds,
+                    key=key,
+                    completion="重读当前原文并比较已存版本，核对旧认识是否保留、修订或撤回；区分原文、样本与分析口径变化。",
+                )
+                saved = next(step for step in project["steps"] if step.get("key") == key)
+            return {
+                "project_id": project["id"],
+                "step_id": saved["id"],
+                "state": saved["state"],
+                "question": saved["question"],
+                "report_id": identity,
+                "note": "复核问题已保存回原研究，沿用原范围和累计预算；尚未启动模型。",
+            }
         item = InboxService(self.repository).create(
             "followup",
             "核对领域观察中的变化",

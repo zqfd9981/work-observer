@@ -27,6 +27,7 @@ class UpdateCompareInput(BaseModel):
 class UpdateFollowupInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     note: str = Field(min_length=1, max_length=2000)
+    run_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 def update_routes(*, repository, store, response, read_json, busy):
@@ -53,8 +54,19 @@ def update_routes(*, repository, store, response, read_json, busy):
 
     async def followup(request):
         data = UpdateFollowupInput.model_validate(await read_json(request))
+        if data.run_id and busy():
+            return response(
+                {
+                    "error_code": "RESEARCH_BUSY",
+                    "message": "请在当前调查结束或暂停后保存复核问题。",
+                },
+                409,
+            )
         return response(
-            await run_in_threadpool(service().followup, request.path_params["id"], data.note), 201
+            await run_in_threadpool(
+                service().followup, request.path_params["id"], **data.model_dump()
+            ),
+            201,
         )
 
     return [

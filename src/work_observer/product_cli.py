@@ -272,6 +272,17 @@ def register(app):
                             {**data, "terms": term or data.get("terms", [])}
                         ).model_dump()
                     )
+                elif area == "research-knowledge":
+                    from work_observer.api.knowledge import ResearchKnowledgeInput
+                    from work_observer.knowledge.research import ResearchKnowledgeService
+
+                    service = ResearchKnowledgeService(repo, store)
+                    if action == "get":
+                        result = service.preview(id)
+                    elif action == "save":
+                        result = service.save(
+                            id, **ResearchKnowledgeInput.model_validate(data).model_dump()
+                        )
                 elif area in {"domains", "relations", "domain-collection"}:
                     from work_observer.api.knowledge import (
                         DomainCollectionInput,
@@ -365,7 +376,11 @@ def register(app):
                             id, QualityReviewInput.model_validate(data).model_dump()
                         )
                 elif area == "updates":
-                    from work_observer.api.updates import UpdateCaptureInput, UpdateCompareInput
+                    from work_observer.api.updates import (
+                        UpdateCaptureInput,
+                        UpdateCompareInput,
+                        UpdateFollowupInput,
+                    )
                     from work_observer.reports.domain_updates import DomainUpdateService
 
                     service = DomainUpdateService(store, repo)
@@ -382,7 +397,10 @@ def register(app):
                     elif action == "report":
                         result = service.report(id)
                     elif action == "followup":
-                        result = service.followup(id, text or data.get("note", ""))
+                        value = UpdateFollowupInput.model_validate(
+                            {**data, **({"note": text} if text is not None else {})}
+                        )
+                        result = service.followup(id, **value.model_dump())
                 elif area == "profiles":
                     service = ProfileService(repo)
                     if action == "list":
