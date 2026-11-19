@@ -42,3 +42,11 @@ context.project.scope_version=2;
 assert.equal(vm.runInContext("projectUnderstanding(project).claims.length",context),0);
 assert.ok(vm.runInContext("renderProjectUnderstanding(project)",context).includes("研究范围已调整"));
 console.log("Reopened research: current understanding, revision, citations and reuse path passed.");
+
+context.timeEvidence={historical_cutoffs:["2026-11-17T23:59:59+00:00","2026-11-19T16:36:05+00:00"]};
+const historyNote=vm.runInContext("historicalEvidenceNote(timeEvidence)",context);
+assert.ok(historyNote.includes("历史原文读取截止")&&historyNote.includes("不是网站发布时间"));
+assert.ok(historyNote.includes("2026")&&historyNote.includes("；"));
+assert.equal(vm.runInContext("historicalEvidenceNote({})",context),"");
+context.timeEvidence.historical_cutoffs=["<script>unsafe</script>"];
+assert.ok(!vm.runInContext("historicalEvidenceNote(timeEvidence)",context).includes("<script>"));

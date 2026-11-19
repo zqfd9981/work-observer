@@ -216,6 +216,7 @@ class ProfileService:
         if row.result.get("research_method_sha256") != method_fingerprint(
             work_materials=bool(row.result.get("scope", {}).get("work_material_ids")),
             archived_sources=bool(row.result.get("archived_sources_version")),
+            historical_sources=bool(row.result.get("historical_sources_version")),
         ):
             stale.append("采用的研究方法或检查口径已变化")
         strategy = row.result.get("strategy")

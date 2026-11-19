@@ -347,7 +347,40 @@ def method_fingerprint(
     answer_delivery_policy=None,
     tool_budget_policy=None,
     archived_sources=False,
+    historical_sources=False,
 ):
+    if historical_sources:
+        from work_observer.research import historical_sources as historical
+
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "base": method_fingerprint(
+                        approach,
+                        review_feedback=review_feedback,
+                        requirement_guard=requirement_guard,
+                        coverage_mode=coverage_mode,
+                        public_only=public_only,
+                        work_materials=work_materials,
+                        dialogue_revisions=dialogue_revisions,
+                        archive_versions=archive_versions,
+                        archive_version=archive_version,
+                        application_actions=application_actions,
+                        answer_delivery_policy=answer_delivery_policy,
+                        tool_budget_policy=tool_budget_policy,
+                        archived_sources=archived_sources,
+                    ),
+                    "historical_sources": {
+                        "version": historical.VERSION,
+                        "policy": historical.POLICY,
+                        "tool": historical.TOOL,
+                        "proposals": historical.proposals(PROPOSAL_TOOLS),
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
     if archived_sources:
         from work_observer.research import archived_sources as archives
 
@@ -1038,6 +1071,7 @@ async def _research(
     from work_observer.research import applications
     from work_observer.research import archive_versions as archive_history
     from work_observer.research import archived_sources as archived_reads
+    from work_observer.research import historical_sources as historical_reads
 
     application_enabled = False
     archive_pairs = archive_history.pairs(repository, archived_public_ids)
@@ -1045,6 +1079,9 @@ async def _research(
     archive_contract_version = archive_history.VERSION
     archived_read_enabled = (
         approach in {"standard", "work_map"} and bool(archived_public_ids) and not offline
+    )
+    historical_read_enabled = (
+        approach in {"standard", "work_map"} and bool(scope["jobs"]) and not offline
     )
     has_work_materials = bool(work_material_ids)
     from work_observer.research.dialogue import VERSION as dialogue_version
@@ -1081,6 +1118,10 @@ async def _research(
         if frozen_reader and frozen_reader != archived_reads.VERSION:
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         archived_read_enabled = frozen_reader == archived_reads.VERSION
+        frozen_historical = frozen.get("result", {}).get("historical_sources_version")
+        if frozen_historical and frozen_historical != historical_reads.VERSION:
+            raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
+        historical_read_enabled = frozen_historical == historical_reads.VERSION
         if frozen_archive and frozen_archive not in archive_history.KNOWN_VERSIONS:
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         archive_enabled = frozen_archive in archive_history.KNOWN_VERSIONS
@@ -1120,6 +1161,8 @@ async def _research(
         method_version += "-" + archive_contract_version
     if archived_read_enabled:
         method_version += "-" + archived_reads.VERSION
+    if historical_read_enabled:
+        method_version += "-" + historical_reads.VERSION
     result = {
         "format_version": 1,
         "research_method_version": method_version,
@@ -1137,6 +1180,7 @@ async def _research(
             answer_delivery_policy=delivery_policy,
             tool_budget_policy=budget_policy,
             archived_sources=archived_read_enabled,
+            historical_sources=historical_read_enabled,
         ),
         "approach": approach,
         "coverage_mode": coverage_mode,
@@ -1190,6 +1234,8 @@ async def _research(
         result["archive_comparisons"] = []
     if archived_read_enabled:
         result["archived_sources_version"] = archived_reads.VERSION
+    if historical_read_enabled:
+        result["historical_sources_version"] = historical_reads.VERSION
     if validation:
         result["qualification_validation"] = validation
     if memory is None:
@@ -1264,6 +1310,7 @@ async def _research(
             answer_delivery_policy=delivery_policy,
             tool_budget_policy=budget_policy,
             archived_sources=archived_read_enabled,
+            historical_sources=historical_read_enabled,
         )
     result["continued_from"] = [
         item["run_id"] for item in (conversation_context or {}).get("previous_findings", [])
@@ -1365,6 +1412,8 @@ async def _research(
         system += archive_history.policy(archive_contract_version)
     if archived_read_enabled:
         system += archived_reads.POLICY
+    if historical_read_enabled:
+        system += historical_reads.POLICY
     if coverage_mode == "question":
         system += QUESTION_COVERAGE_POLICY
     if job_ids == []:
@@ -1476,6 +1525,7 @@ async def _research(
                 answer_delivery_policy=delivery_policy,
                 tool_budget_policy=budget_policy,
                 archived_sources=archived_read_enabled,
+                historical_sources=historical_read_enabled,
             )
         ):
             raise ProbeError("RESEARCH_FEEDBACK_CHANGED_NEW_RUN_REQUIRED")
@@ -1499,6 +1549,7 @@ async def _research(
             answer_delivery_policy=delivery_policy,
             tool_budget_policy=budget_policy,
             archived_sources=archived_read_enabled,
+            historical_sources=historical_read_enabled,
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
         if (
@@ -1518,6 +1569,7 @@ async def _research(
                 answer_delivery_policy=delivery_policy,
                 tool_budget_policy=budget_policy,
                 archived_sources=archived_read_enabled,
+                historical_sources=historical_read_enabled,
             )
         ):
             raise ProbeError("RESEARCH_METHOD_CHANGED_NEW_RUN_REQUIRED")
@@ -1606,6 +1658,7 @@ async def _research(
                     + EXTRA_TOOLS
                     + ([archive_history.TOOL] if archive_enabled else [])
                     + ([archived_reads.TOOL] if archived_read_enabled else [])
+                    + ([historical_reads.TOOL] if historical_read_enabled else [])
                     + ([PUBLIC_TOOL, PUBLIC_READ_TOOL] if allow_public else [])
                     + (
                         (
@@ -1620,6 +1673,8 @@ async def _research(
                 )
                 if application_enabled:
                     model.tools = applications.tools(model.tools)
+                if allow_proposals and historical_read_enabled:
+                    model.tools = historical_reads.proposals(model.tools)
             for _ in range(max_calls - result["model_calls"]):
                 if recall() != result["memory_used"]:
                     raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
@@ -1928,6 +1983,29 @@ async def _research(
                         arguments["job_id"], observed_before=result["created_at"]
                     )
                     entry["job_id"] = arguments["job_id"]
+                elif name == "read_historical_job" and set(arguments) == {
+                    "job_id",
+                    "as_of",
+                    "start",
+                }:
+                    if not historical_read_enabled:
+                        raise ProbeError("RESEARCH_TOOL_DENIED")
+                    data = historical_reads.read(
+                        repository,
+                        arguments["job_id"],
+                        arguments["as_of"],
+                        arguments["start"],
+                        candidates,
+                        result["created_at"],
+                    )
+                    entry.update(
+                        job_id=arguments["job_id"],
+                        as_of=data["as_of"],
+                        start=data["start"],
+                        end=data["end"],
+                        source_status=data["status"],
+                        local_only=True,
+                    )
                 elif name == "compare_archived_versions" and set(arguments) == {
                     "earlier_id",
                     "later_id",
@@ -2111,6 +2189,7 @@ async def _research(
                             "sample_statistics",
                             "compare_history",
                             *(["read_archived_document"] if archived_read_enabled else []),
+                            *(["read_historical_job"] if historical_read_enabled else []),
                         }
                         or not any(
                             entry.get("tool") == arguments["supporting_tool"]
@@ -2452,6 +2531,15 @@ async def _research(
                     raise ProbeError("RESEARCH_TOOL_DENIED")
                 if isinstance(data, dict):
                     for item in data.get("evidence", []):
+                        if item.get("historical_cutoffs"):
+                            item["historical_cutoffs"] = list(
+                                dict.fromkeys(
+                                    [
+                                        *evidence.get(item["id"], {}).get("historical_cutoffs", []),
+                                        *item["historical_cutoffs"],
+                                    ]
+                                )
+                            )
                         item["citation_key"] = evidence.get(item["id"], {}).get(
                             "citation_key", f"E{len(evidence) + 1}"
                         )

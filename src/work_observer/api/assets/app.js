@@ -20,6 +20,9 @@ const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究�
 let toastTimer, pollTimer;
 const conversation = {id:null, timer:null, reports:new Map(), notes:[], knowledge:[], notesFor:null, renderedId:null};
 Object.assign(reasonLabels,{
+  RESEARCH_HISTORY_TIME_OUT_OF_SCOPE:"历史读取时点必须明确，且不能晚于本轮研究开始。",
+  INVALID_HISTORICAL_JOB_WINDOW:"历史正文读取位置无效，本次没有取得新证据。",
+  EVIDENCE_DOCUMENT_INTEGRITY_FAILED:"该版本原始文档已缺失或改变，不能用现文替代历史依据。",
   MEMORY_VERSION_NOT_CURRENT:"这条记录已有更新，当前输入保留。请载入已保存的新版后再修改。",
   WORK_MATERIAL_CLOCK_CONFLICT:"本机保存时间未晚于上一版，请稍后重试并核对系统时间。",
   WORK_MATERIAL_REQUIRED:"只能修订自己保存的粘贴工作资料；网页归档保留原样。",
@@ -681,7 +684,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
     <div class="gaps"><strong>资料缺口与研究范围</strong><ul>${result.gaps.map(gap=>`<li>${e(gap)}</li>`).join("")}</ul>${!completed ? `<p>结束原因：${e(reasonLabels[result.stop_reason] || "本次未能完成研究，可核对范围后重试；已有资料仍可查看。")}</p>` : ""}</div>
     <details class="detail-section"><summary>本次候选与统计口径</summary><p class="form-note">统计在分页前计算。本次实际研究 ${result.scope.jobs.length} 个候选${result.scope.truncated ? "，候选较多，已截取前 20 个，请收窄范围" : ""}；未知条件不等于符合。</p>${result.scope.jobs.map(job=>`<div class="detail-history"><button class="job-link" data-job="${e(job.id)}">${e(job.title)} · ${e(job.company)}</button>${badge(job.has_detail ? "有正文" : "仅摘要","muted")} ${job.match_status === "unknown" ? badge("条件未知","amber") : ""}</div>`).join("")}</details>
     <div class="result-actions">${result.project_id?`<a class="secondary" href="#research/${e(result.project_id)}">返回这项持续研究 ↗</a>`:""}${reportId ? `${badge("已保存")}<a class="secondary" href="/api/reports/${e(reportId)}/download/md" download>下载 Markdown</a><a class="secondary" href="/api/reports/${e(reportId)}/download/json" download>下载 JSON</a>` : runId ? `<button class="primary" data-save-research="${e(runId)}">保存这次研究</button><small class="form-note">保存问题、范围、结果与原文依据。</small>` : ""}</div>
-    <section class="detail-section"><h3>原文依据 · ${evidence.size} 个片段</h3><p class="form-note">点击结论后的引用可定位片段；也可核对对应原始文档。引用有效不代表模型解释必然正确。</p>${[...evidence.values()].map(ev=>`<details class="evidence-item" data-evidence="${e(ev.id)}" data-evidence-start="${e(ev.start)}"><summary>${e(ev.label)} · ${e(ev.title)} · ${e(ev.company || (ev.source === "public_web" ? "公开资料" : ""))}</summary>${ev.source_note ? `<p class="form-note evidence-source-note">${e(ev.source_note)}</p>` : ""}<blockquote>${e(ev.quote)}</blockquote><div class="evidence-meta">${e(sourceLabel(ev))} · 取得 ${e(when(ev.observed_at))}<br>字符 ${ev.start}–${ev.end}${ev.full_text_length ? ` / 原文 ${ev.full_text_length} 字符` : ""} · 发布时间 ${e(ev.source_published_at ? when(ev.source_published_at) : "未知")}<br>${ev.document_id ? `<button data-source="${e(ev.document_id)}">核对来源文档与内容版本 ↗</button>` : ""}${ev.public_document_id ? `<button data-public-source="${e(ev.public_document_id)}">核对归档全文 ↗</button><br>` : ""}${safeURL(ev.url) ? `<a href="${e(safeURL(ev.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}</div></details>`).join("")}</section></article>`;
+    <section class="detail-section"><h3>原文依据 · ${evidence.size} 个片段</h3><p class="form-note">点击结论后的引用可定位片段；也可核对对应原始文档。引用有效不代表模型解释必然正确。</p>${[...evidence.values()].map(ev=>`<details class="evidence-item" data-evidence="${e(ev.id)}" data-evidence-start="${e(ev.start)}"><summary>${e(ev.label)} · ${e(ev.title)} · ${e(ev.company || (ev.source === "public_web" ? "公开资料" : ""))}</summary>${historicalEvidenceNote(ev)}${ev.source_note ? `<p class="form-note evidence-source-note">${e(ev.source_note)}</p>` : ""}<blockquote>${e(ev.quote)}</blockquote><div class="evidence-meta">${e(sourceLabel(ev))} · 取得 ${e(when(ev.observed_at))}<br>字符 ${ev.start}–${ev.end}${ev.full_text_length ? ` / 原文 ${ev.full_text_length} 字符` : ""} · 发布时间 ${e(ev.source_published_at ? when(ev.source_published_at) : "未知")}<br>${ev.document_id ? `<button data-source="${e(ev.document_id)}">核对来源文档与内容版本 ↗</button>` : ""}${ev.public_document_id ? `<button data-public-source="${e(ev.public_document_id)}">核对归档全文 ↗</button><br>` : ""}${safeURL(ev.url) ? `<a href="${e(safeURL(ev.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}</div></details>`).join("")}</section></article>`;
 }
 
 function setBusy(busy) {
@@ -1002,9 +1005,12 @@ function projectUnderstanding(project) {
   return {claims,changes:changes.reverse(),questions,excluded,maps};
 }
 
+function historicalEvidenceNote(ev) {
+  return ev.historical_cutoffs?.length ? `<p class="form-note">历史原文读取截止：${ev.historical_cutoffs.map(value=>e(when(value))).join("；")}。按当时已入库资料读取，截止不是网站发布时间。</p>` : "";
+}
 function renderUnderstandingEvidence(result,indices) {
   const refs=[...new Set(indices.flatMap(index=>result.claims[index]?.evidence_ids||[]))];
-  return `<details class="research-context"><summary>核对原判断与原文依据</summary>${indices.map(index=>{const claim=result.claims[index];return `<p>原判断 ${index+1} · ${e(claimBasisLabel(claim))} · ${e(requirementLabels[claim.requirement]||"性质待核")}：${e(claim.text)}</p>`;}).join("")}${refs.map(id=>{const ev=result.evidence.find(row=>row.id===id);if(!ev)return '<p>依据无法定位，请回看原研究。</p>';return `<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p><blockquote>${e(ev.quote||"")}</blockquote>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`;}).join("")}</details>`;
+  return `<details class="research-context"><summary>核对原判断与原文依据</summary>${indices.map(index=>{const claim=result.claims[index];return `<p>原判断 ${index+1} · ${e(claimBasisLabel(claim))} · ${e(requirementLabels[claim.requirement]||"性质待核")}：${e(claim.text)}</p>`;}).join("")}${refs.map(id=>{const ev=result.evidence.find(row=>row.id===id);if(!ev)return '<p>依据无法定位，请回看原研究。</p>';return `<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p>${historicalEvidenceNote(ev)}<blockquote>${e(ev.quote||"")}</blockquote>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`;}).join("")}</details>`;
 }
 function renderProjectMaps(view) {
   if(!view.maps.length)return "";

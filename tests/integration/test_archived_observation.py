@@ -10,6 +10,7 @@ from test_source_first_research import source_workspace as source_workspace
 from test_work_materials import MaterialModel
 
 from work_observer.api.web import create_app
+from work_observer.collection.contracts import now
 from work_observer.config import Settings
 from work_observer.connectors import public_documents
 from work_observer.connectors.public_documents import PublicDocumentService
@@ -20,9 +21,9 @@ from work_observer.research.agent import research
 from work_observer.research.projects import ProjectService
 
 
-@pytest.mark.parametrize("kind", ["manual", "web"])
+@pytest.mark.parametrize("kind,historical", [("manual", False), ("web", False), ("manual", True)])
 def test_archive_change_rechecks_original_claim_and_advances_only_same_selected_source(
-    source_workspace, tmp_path, monkeypatch, kind
+    source_workspace, tmp_path, monkeypatch, kind, historical
 ):
     repo, store, _ = source_workspace
     private = MemoryService(repo).create("preference", "合成私人研究关注点")
@@ -67,14 +68,14 @@ def test_archive_change_rechecks_original_claim_and_advances_only_same_selected_
     projects.finish(project["id"], step["id"], state="completed")
     original = deepcopy(store.get(step["run_id"]))
     updates = DomainUpdateService(store, repo)
-    before = updates.capture("旧归档观察", job_ids=[], include_archived=True)
+    before = updates.capture("旧归档观察", job_ids=[], include_archived=True, as_of=now() if historical else None)
     text = "checkpoint检查任务：先验证原文，再由负责人复核清单。"
     if kind == "manual":
         second = archive.revise_text(first["id"], first["title"], text)["document"]
     else:
         second = asyncio.run(archive.read("https://example.com/synthetic"))["document"]
     unrelated = archive.archive_text("合成其他来源", "无关材料，不应加入原研究。")["document"]
-    after = updates.capture("新归档观察", job_ids=[], include_archived=True)
+    after = updates.capture("新归档观察", job_ids=[], include_archived=True, as_of=now() if historical else None)
     report = updates.compare(before["id"], after["id"])
     assert report["content_changes"] == []  # No invented job/task change.
     assert report["archived_changes"]["after_count"] == 2
@@ -107,7 +108,7 @@ def test_archive_change_rechecks_original_claim_and_advances_only_same_selected_
         again = client.post(path + "/followup", headers=auth, json=body)
         assert again.json()["step_id"] == saved.json()["step_id"]
         current = projects.get(project["id"])
-        assert current["public_document_ids"] == [second["id"]]
+        assert set(current["public_document_ids"]) == ({first["id"], second["id"]} if historical else {second["id"]})
         assert current["scope_history"][-1]["public_document_ids"] == [first["id"]]
         assert len(current["steps"]) == 2 and current["steps"][-1]["state"] == "queued"
         assert current["steps"][-1]["reply_to_step_id"] == step["id"]

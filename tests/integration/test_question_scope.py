@@ -140,6 +140,7 @@ def test_partial_relevant_answer_is_deliverable_but_explicit_full_comparison_is_
     assert result["research_method_sha256"] == method_fingerprint(
         coverage_mode=mode, answer_delivery_policy=result.get("answer_delivery_policy"),
         tool_budget_policy=result.get("tool_budget_policy"),
+        historical_sources=True,
     )
     if mode == "question":
         assert result["model_calls"] == 3
@@ -372,6 +373,10 @@ def test_answer_guidance_is_frozen_with_the_original_progress(
     assert policy in saved["history"][0]["content"]
     if legacy:
         saved["result"].pop("answer_delivery_policy")
+        saved["result"].pop("historical_sources_version")
+        from work_observer.research.historical_sources import POLICY as historical_policy
+
+        saved["history"][0]["content"] = saved["history"][0]["content"].replace(historical_policy, "")
         budget_policy = saved["result"].pop("tool_budget_policy")
         saved["history"][0]["content"] = saved["history"][0]["content"].replace(policy, "")
         saved["history"][0]["content"] = saved["history"][0]["content"].replace(budget_policy, "")

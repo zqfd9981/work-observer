@@ -842,13 +842,16 @@ class DomainUpdateService:
             raise ProbeError("INVALID_UPDATE_FOLLOWUP")
         question = note.strip()
         times = report.get("observation_times", {})
-        if any(row.get("mode") == "historical_sources" for row in times.values()):
+        historical = any(row.get("mode") == "historical_sources" for row in times.values())
+        if historical:
             question += (
                 "\n对照的来源截止："
                 + times["before"]["source_cutoff"]
                 + " → "
                 + times["after"]["source_cutoff"]
                 + "。这是归档来源重建，不是当时的分析或偏好。"
+                "分别核对上述两个来源截止时点的岗位原文，读取不完整时继续查看后文；"
+                "归档工作资料须核对所选的两版原文。"
                 "当前补查须区分现在读取的材料与报告中的历史版本；未读到对应历史原文时保留未知，"
                 "不能把现在的内容代替过去。样本加入与资料补全不表示新招聘或新增职责。"
             )
@@ -884,21 +887,40 @@ class DomainUpdateService:
                         revision=project["revision"],
                         goal=project["goal"],
                         job_ids=project["job_ids"],
-                        public_document_ids=[
-                            replacements.get(key, key) for key in project["public_document_ids"]
-                        ],
+                        public_document_ids=(
+                            list(
+                                dict.fromkeys(
+                                    [*project["public_document_ids"], *replacements.values()]
+                                )
+                            )
+                            if historical
+                            else [
+                                replacements.get(key, key) for key in project["public_document_ids"]
+                            ]
+                        ),
                     )
                 project = projects.add(
                     project["id"],
                     question,
                     revision=project["revision"],
                     reply_to_step_id=source["step_id"],
-                    approach=previous.get("approach", "standard"),
+                    approach=(
+                        "standard"
+                        if historical and previous.get("approach") == "source_first"
+                        else previous.get("approach", "standard")
+                    ),
                     coverage_mode=previous.get("coverage_mode", "all"),
                     max_calls=calls,
                     timeout=seconds,
                     key=key,
-                    completion="重读当前原文并比较已存版本，核对旧认识是否保留、修订或撤回；区分原文、样本与分析口径变化。",
+                    completion=(
+                        "分别核对两个来源截止的历史原文，说明旧认识是否保留、修订或撤回；区分正文、补齐与样本变化。"
+                        if historical
+                        else (
+                            "重读当前原文并比较已存版本，核对旧认识是否保留、修订或撤回；"
+                            "区分原文、样本与分析口径变化。"
+                        )
+                    ),
                 )
                 saved = next(step for step in project["steps"] if step.get("key") == key)
             return {
