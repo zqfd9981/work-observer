@@ -21,6 +21,8 @@ from work_observer.retrieval.catalog import Catalog, Filters
 
 LEGACY_RESEARCH_METHOD_VERSION = "research-method-v5-responsibility-boundaries"
 RESEARCH_METHOD_VERSION = "research-method-v6-versioned-qualification-validation"
+JOB_SCOPE_NOTICE = "静态有限样本，不代表全市场；状态仅反映已保存的观察。"
+PUBLIC_SCOPE_NOTICE = "目前只依据本机归档的公开正文；文档示例不表示企业采用或实际执行通过。"
 PUBLIC_ONLY_POLICY = (
     "本轮仅研究已归档公开资料。fixed_scope已由程序冻结并展示，"
     "可直接search_archived_sources查正文，无须先用query_jobs查看空岗位范围。"
@@ -848,7 +850,7 @@ async def _research(
         "scope": scope,
         "evidence": [],
         "claims": [],
-        "gaps": ["静态有限样本，不代表全市场；状态仅反映已保存的观察。"],
+        "gaps": [PUBLIC_SCOPE_NOTICE if job_ids == [] else JOB_SCOPE_NOTICE],
         "trace": [],
         "model_calls": 0,
         "mode": "offline" if offline else "model",
@@ -1986,6 +1988,7 @@ def finalize(result):
     """固定复盘只检查可计算合同，不以结构合格声称语义正确。"""
     evidence = {ev["id"]: ev for ev in result["evidence"]}
     used = {key for claim in result["claims"] for key in claim["evidence_ids"]}
+    public_only = bool(result["scope"].get("source_note")) and not result["scope"]["jobs"]
     if result.get("coverage_mode") == "question":
         scoped = {j["id"] for j in result["scope"]["jobs"] if j["has_detail"]}
         read = {e.get("job_id") for e in evidence.values() if e.get("snapshot_id")}
@@ -2000,7 +2003,7 @@ def finalize(result):
             {
                 "name": "引用存在",
                 "passed": used.issubset(evidence),
-                "detail": f"{len(used)} 条引用，{len(evidence)} 条已读材料",
+                "detail": f"{len(used)} 条引用，{len(evidence)} 个已读片段",
             },
             {
                 "name": "完成状态",
@@ -2010,13 +2013,21 @@ def finalize(result):
             {
                 "name": "来源分开",
                 "passed": True,
-                "detail": "招聘原文、人工资料、公开搜索摘要及既往记忆各自标明；分析不是新增来源。",
+                "detail": "公开正文、搜索摘要与既往认识各自标明；研究推断不是独立来源。"
+                if public_only
+                else "招聘原文、人工资料、公开搜索摘要及既往记忆各自标明；分析不是新增来源。",
             },
         ],
-        "next_questions": list(dict.fromkeys(result["gaps"]))[-6:],
+        "next_questions": [
+            gap
+            for gap in dict.fromkeys(result["gaps"])
+            if gap not in {JOB_SCOPE_NOTICE, PUBLIC_SCOPE_NOTICE}
+        ][-6:],
         "limitations": [
             "程序只能校验引用与执行合同；语义是否由原文支持仍需人工核对。",
-            "既往观察不证明当前开放；不足的历史样本不能证明市场趋势。",
+            "归档内容仅反映取得时的版本；示例和技术说明不等于已执行结果。"
+            if public_only
+            else "既往观察不证明当前开放；不足的历史样本不能证明市场趋势。",
         ],
     }
     return result

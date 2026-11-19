@@ -206,6 +206,9 @@ def test_public_document_can_explain_tool_but_cannot_prove_job_responsibility(
         assert result["scope"]["public_document_titles"][0]["id"]
         assert all(ev.get("public_document_id") for ev in result["evidence"])
         assert result["trace"][0]["tool"] == "search_archived_sources"
+        assert "片段" in result["review"]["checks"][0]["detail"]
+        assert all("市场趋势" not in note for note in result["review"]["limitations"])
+        assert result["gaps"][0] not in result["review"]["next_questions"]
         assert result["research_method_sha256"] == method_fingerprint(
             coverage_mode=coverage,
             public_only=True,
