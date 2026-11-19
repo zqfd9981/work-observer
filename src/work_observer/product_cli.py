@@ -522,6 +522,23 @@ def register(app):
         except Exception as exc:
             collection_error(exc)
 
+    @app.command("research-history")
+    def research_history(
+        q: str = "",
+        limit: int = typer.Option(20, min=1, max=50),
+        offset: int = typer.Option(0, min=0),
+        db: Path | None = None,
+        env_file: Path = Path(".env"),
+    ):
+        """按问题、判断、缺口和资料标题查找保留的研究；不调用模型。"""
+        from work_observer.research.run_history import search_history
+
+        try:
+            with session(db, env_file) as (_, _, store):
+                echo(search_history(store, q=q, limit=limit, offset=offset))
+        except Exception as exc:
+            collection_error(exc)
+
     @app.command("research-runs")
     def research_runs(db: Path | None = None, env_file: Path = Path(".env")):
         """列出跨重启保留的研究，不调用模型。"""

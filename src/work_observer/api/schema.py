@@ -63,6 +63,7 @@ def openapi(routes):
     from work_observer.api.web import JobQuery, MemoryInput, MemoryRevision, ResearchInput
     from work_observer.api.workflows import WorkflowInput, WorkflowRunInput, WorkflowScopeInput
     from work_observer.connectors.manual import ManualJD
+    from work_observer.research.run_history import HistoryQuery
 
     models = {
         ("/api/workflows", "POST"): WorkflowInput,
@@ -195,6 +196,11 @@ def openapi(routes):
                 parameters.extend(
                     {"in": "query", "name": key, "required": False, "schema": schema}
                     for key, schema in JobQuery.model_json_schema()["properties"].items()
+                )
+            if route.path == "/api/research-history" and method == "GET":
+                parameters.extend(
+                    {"in": "query", "name": key, "required": False, "schema": schema}
+                    for key, schema in HistoryQuery.model_json_schema()["properties"].items()
                 )
             if route.path == "/api/public-documents" and method == "GET":
                 parameters.extend(

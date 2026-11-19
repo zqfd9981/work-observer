@@ -457,6 +457,12 @@ def create_app(
             ]
         )
 
+    async def search_research_history(request):
+        from work_observer.research.run_history import HistoryQuery, search_history
+
+        data = HistoryQuery.model_validate(dict(request.query_params))
+        return response(search_history(store, **data.model_dump()))
+
     async def get_research(request):
         run = get_run(request.path_params["id"])
         data = {
@@ -728,6 +734,7 @@ def create_app(
         Route("/api/import", manual, methods=["POST"]),
         Route("/api/research", start_research, methods=["POST"]),
         Route("/api/research", list_research),
+        Route("/api/research-history", search_research_history),
         Route("/api/research/{id}/resume", resume_research, methods=["POST"]),
         Route("/api/research/{id}/cancel", cancel_research, methods=["POST"]),
         Route("/api/memories", list_memories),

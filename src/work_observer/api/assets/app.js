@@ -609,12 +609,35 @@ function renderResearchContext(result) {
 
 const runLabels = {running:"正在研究",finished:"已结束",interrupted:"已中断，可查看进度",failed:"执行失败",invalidated:"相关记忆已忘记，结果已清除"};
 
-async function loadResearchHistory() {
-  const root = $("#research-history-list");
+const researchHistory={query:"",offset:0,limit:20,request:0};
+
+function resetResearchHistory() {
+  researchHistory.request++;researchHistory.query="";researchHistory.offset=0;
+  const input=$("#research-history-query");if(input)input.value="";
+  $("#research-history-list").replaceChildren();
+  $("#research-history-count").textContent="";
+  $("#research-history-prev").disabled=true;$("#research-history-next").disabled=true;
+}
+window.resetResearchHistory=resetResearchHistory;
+
+async function loadResearchHistory(offset=0) {
+  const root=$("#research-history-list"),query=$("#research-history-query")?.value.trim()||"";
+  const supported=Boolean(state.serviceContract?.paths?.["/api/research-history"]);
+  const request=++researchHistory.request;
+  if(query!==researchHistory.query)offset=0;
+  $("#research-history-prev").disabled=true;$("#research-history-next").disabled=true;
   try {
-    const runs = await api("research");
-    root.innerHTML = runs.length ? runs.map(run=>`<div class="panel report-row"><div><h3>${e(run.question)}</h3><p>${e(when(run.created_at))} · ${e(runLabels[run.state] || run.state)}${run.status ? " · " + e(statusLabels[run.status] || run.status) : ""}</p></div><button class="secondary small" data-open-run="${e(run.id)}">${run.state === "running" ? "查看进度" : "打开研究"} ↗</button></div>`).join("") : empty("还没有研究记录","提交问题后，过程会自动留在这里。");
-  } catch (error) { root.innerHTML = errorBox(error); }
+    const data=await api(supported?"research-history?"+new URLSearchParams({q:query,offset,limit:20}):"research");
+    if(request!==researchHistory.request)return;
+    const runs=supported?data.items:data;
+    researchHistory.query=query;researchHistory.offset=supported?data.offset:0;researchHistory.limit=supported?data.limit:100;
+    $("#research-history-query").disabled=!supported;
+    $("#research-history-count").textContent=supported?`共 ${data.total} 条研究${data.total?" · 显示 "+(data.offset+1)+"～"+Math.min(data.offset+data.limit,data.total):""}`:"当前服务仅能列出最近的研究，尚不支持历史搜索。";
+    $("#research-history-prev").disabled=!supported||data.offset===0;
+    $("#research-history-next").disabled=!supported||data.offset+data.limit>=data.total;
+    const fields={question:"问题",claim:"回答判断",gap:"资料缺口",read_source:"已读片段的资料标题",scope_source:"研究范围内的资料标题（不表示已读）"};
+    root.innerHTML=runs.length?runs.map(run=>`<div class="panel report-row"><div><h3>${e(run.question.slice(0,160))}${run.question.length>160?"…":""}</h3><p>${e(when(run.created_at))} · ${e(runLabels[run.state]||run.state)}${run.status?" · "+e(statusLabels[run.status]||run.status):""}</p>${run.match?`<p class="form-note">匹配${e(fields[run.match.field]||"历史内容")}：${e(run.match.excerpt)}</p>`:""}</div><button class="secondary small" data-open-run="${e(run.id)}">${run.state==="running"?"查看进度":"打开研究"} ↗</button></div>`).join(""):empty(query?"没有找到匹配的研究":"还没有研究记录",query?"可以换个词，或清空条件查看全部保留记录。":"提交问题后，过程会自动留在这里。");
+  }catch(error){if(request===researchHistory.request){root.innerHTML=errorBox(error);$("#research-history-count").textContent="";}}
 }
 
 function renderProgress(run) {
@@ -1772,7 +1795,11 @@ $("#research-filtered").addEventListener("click",()=>{state.researchIds=null;$("
 $("#company-form").addEventListener("submit",event=>{event.preventDefault();loadCompanies();});
 $("#research-form").addEventListener("submit",startResearch);
 $("#research-approach").addEventListener("change",updateResearchApproach);
-$("#refresh-research-history").addEventListener("click",loadResearchHistory);
+$("#refresh-research-history").addEventListener("click",()=>loadResearchHistory());
+$("#research-history-search").addEventListener("submit",event=>{event.preventDefault();loadResearchHistory();});
+$("#research-history-clear").addEventListener("click",()=>{$("#research-history-query").value="";loadResearchHistory();});
+$("#research-history-prev").addEventListener("click",()=>loadResearchHistory(Math.max(0,researchHistory.offset-researchHistory.limit)));
+$("#research-history-next").addEventListener("click",()=>loadResearchHistory(researchHistory.offset+researchHistory.limit));
 $("#add-memory").addEventListener("click",()=>showMemory());
 $("#memory-history").addEventListener("change",loadMemories);
 $("#memory-form").addEventListener("submit",saveMemory);
@@ -1908,6 +1935,7 @@ document.addEventListener("click",async event=>{
     element.disabled=true;
     try {
       const forgotten=await api("memories/"+encodeURIComponent(element.dataset.forgetMemory),{method:"DELETE"});
+      resetResearchHistory();
       if ((forgotten.affected_run_ids || []).includes(state.lastRun)) {
         state.lastResult=null;state.lastRun=null;
         $("#research-output").innerHTML=empty("相关个人记忆已忘记","受影响的研究结果已清除，可按当前记录重新研究。");
