@@ -14,6 +14,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import URL, create_engine, event, inspect
 
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.text_match import match_text
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -28,6 +29,7 @@ def engine_for(path: Path):
 
     @event.listens_for(engine, "connect")
     def configure(dbapi, _):
+        dbapi.create_function("wo_match_text", 1, match_text, deterministic=True)
         previous = dbapi.autocommit
         dbapi.autocommit = True
         try:

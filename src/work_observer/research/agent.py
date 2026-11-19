@@ -17,6 +17,7 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
 from work_observer.research import requirements as qualification
 from work_observer.retrieval.catalog import Catalog, Filters
+from work_observer.text_match import match_text
 
 LEGACY_RESEARCH_METHOD_VERSION = "research-method-v5-responsibility-boundaries"
 RESEARCH_METHOD_VERSION = "research-method-v6-versioned-qualification-validation"
@@ -1646,17 +1647,18 @@ async def _research(
                         ev
                         for values in pool.values()
                         for ev in values
-                        if any(t.casefold() in ev["quote"].casefold() for t in terms)
+                        if any(match_text(t) in match_text(ev["quote"]) for t in terms)
                     ]
                     hits.sort(
                         key=lambda ev: (
-                            -sum(ev["quote"].casefold().count(t.casefold()) for t in terms)
+                            -sum(match_text(ev["quote"]).count(match_text(t)) for t in terms)
                         )
                     )
                     data = {
                         "matching_jobs": len({ev["job_id"] for ev in hits}),
                         "evidence": hits[:10],
                         "expanded_terms": terms,
+                        "match_note": "检索比较统一大小写和同形部首，片段与字符位置保持原文。",
                     }
                     entry["terms"] = arguments["terms"]
                 elif name == "read_job" and set(arguments) == {"job_id"}:

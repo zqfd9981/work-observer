@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 
+from work_observer import text_match
 from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.retrieval.enhanced import RetrievalService
@@ -43,8 +44,11 @@ def digest(value):
 
 
 def retrieval_method_digest():
-    with Path(inspect.getfile(RetrievalService)).open("rb") as source:
-        return hashlib.file_digest(source, "sha256").hexdigest()
+    implementation = hashlib.sha256()
+    for dependency in (RetrievalService, text_match):
+        with Path(inspect.getfile(dependency)).open("rb") as source:
+            implementation.update(hashlib.file_digest(source, "sha256").digest())
+    return implementation.hexdigest()
 
 
 def read_json(path):

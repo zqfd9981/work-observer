@@ -16,6 +16,7 @@ from work_observer.storage.models import (
     Watchset,
 )
 from work_observer.storage.projection import project_job_v1
+from work_observer.text_match import match_text
 
 DEFAULT_ALIASES = {
     "Agent": ["智能体"],
@@ -68,10 +69,10 @@ def classify(record, source, filters):
                 else "excluded"
             )
     if filters.keyword:
-        needle = filters.keyword.casefold()
+        needle = match_text(filters.keyword)
         values = [record.get("title"), record.get("description_text")]
         values.extend(record.get("source_skills") or [])
-        hit = any(needle in str(value or "").casefold() for value in values)
+        hit = any(needle in match_text(str(value or "")) for value in values)
         states.append(
             "matched" if hit else "unknown" if not record.get("description_text") else "excluded"
         )
@@ -112,7 +113,7 @@ class RetrievalService:
         expanded = list(terms)
         for key, values in groups.items():
             group = [key, *values]
-            if {term.casefold() for term in terms} & {term.casefold() for term in group}:
+            if {match_text(term) for term in terms} & {match_text(term) for term in group}:
                 expanded.extend(group)
         return list(dict.fromkeys(expanded))[:40]
 
@@ -250,7 +251,7 @@ class RetrievalService:
             label_hits = [
                 label
                 for label in labels
-                if any(term.casefold() in str(label).casefold() for term in expanded)
+                if any(match_text(term) in match_text(str(label)) for term in expanded)
             ]
             if label_hits and not text:
                 tag_only.append(
@@ -261,8 +262,9 @@ class RetrievalService:
                 # 百字符重叠覆盖最长检索词跨片段边界的情况，原文位置保持不变。
                 for start in range(0, len(text), 600):
                     quote = text[start : start + 700]
-                    matches = [term for term in expanded if term.casefold() in quote.casefold()]
-                    score = sum(quote.casefold().count(term.casefold()) for term in matches)
+                    folded = match_text(quote)
+                    matches = [term for term in expanded if match_text(term) in folded]
+                    score = sum(folded.count(match_text(term)) for term in matches)
                     if matches or label_hits and start == 0:
                         chunks.append((score + bool(label_hits), start, matches))
             if chunks:
@@ -320,10 +322,11 @@ class RetrievalService:
             hits = [
                 item["job_id"]
                 for item in eligible
-                if term.casefold() in item["record"]["description_text"].casefold()
+                if match_text(term) in match_text(item["record"]["description_text"])
             ]
             uncertain = sum(
-                term.casefold() in item["record"]["description_text"].casefold() for item in unknown
+                match_text(term) in match_text(item["record"]["description_text"])
+                for item in unknown
             )
             result.append(
                 {
@@ -340,7 +343,8 @@ class RetrievalService:
             "statistics": result,
             "match_mode": "literal",
             "interpretation": (
-                "字面出现，非必备要求；不含同义推断，不代表全市场需求占比或时间趋势。"
+                "字面出现（统一大小写和同形部首），非必备要求；"
+                "不含同义推断，不代表全市场需求占比或时间趋势。"
             ),
             "evidence": [],
         }

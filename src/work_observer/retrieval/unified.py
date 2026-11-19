@@ -13,6 +13,7 @@ from work_observer.memory.service import MemoryService
 from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.enhanced import RetrievalService, normalized_time, validated_terms
 from work_observer.storage.models import Job
+from work_observer.text_match import match_text
 
 
 def intact(document):
@@ -91,10 +92,11 @@ class UnifiedRetrieval:
                 chunks = []
                 for start in range(0, len(row.text), 600):
                     quote = row.text[start : start + 700]
-                    hits = [term for term in expanded if term.casefold() in quote.casefold()]
+                    folded = match_text(quote)
+                    hits = [term for term in expanded if match_text(term) in folded]
                     if hits:
                         chunks.append(
-                            (sum(quote.casefold().count(t.casefold()) for t in hits), start)
+                            (sum(folded.count(match_text(t)) for t in hits), start)
                         )
                 if chunks:
                     public_matches.add(row.id)
@@ -189,5 +191,6 @@ class UnifiedRetrieval:
             "rules": (
                 "岗位分母独立于公开资料和派生知识；来源计数先于分页。"
                 "知识只回链原文，不是新增独立证据。"
+                "检索比较统一大小写和同形部首，引用仍保留原文。"
             ),
         }

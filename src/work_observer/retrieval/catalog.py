@@ -19,6 +19,7 @@ from work_observer.storage.models import (
     SourceDocument,
     Watchset,
 )
+from work_observer.text_match import match_text
 
 
 class Filters(BaseModel):
@@ -60,12 +61,12 @@ def classifications(filters):
         tags = func.json_each(Job.source_skills).table_valued("value")
         match = or_(
             *[
-                func.instr(func.lower(func.coalesce(col, "")), filters.keyword.lower()) > 0
+                func.instr(func.wo_match_text(col), match_text(filters.keyword)) > 0
                 for col in (Job.title, Job.description_text)
             ],
             select(1)
             .select_from(tags)
-            .where(func.instr(func.lower(tags.c.value), filters.keyword.lower()) > 0)
+            .where(func.instr(func.wo_match_text(tags.c.value), match_text(filters.keyword)) > 0)
             .exists(),
         )
         unknown = and_(not_(match), Job.description_text.is_(None))
@@ -223,7 +224,7 @@ class Catalog:
             chunks = []
             for start in range(0, len(text), 700):
                 quote = text[start : start + 700]
-                score = sum(quote.casefold().count(term.casefold()) for term in terms if term)
+                score = sum(match_text(quote).count(match_text(term)) for term in terms if term)
                 if terms and not score:
                     continue
                 chunks.append((score, start, quote))
@@ -263,7 +264,12 @@ class Catalog:
             raise ProbeError("INVALID_SEARCH_TERMS")
         # SQL 先限定候选和全文命中；不将片段数量当岗位总数。
         status = classifications(filters or Filters())
-        hit = or_(*[func.instr(func.lower(Job.description_text), t.lower()) > 0 for t in terms])
+        hit = or_(
+            *[
+                func.instr(func.wo_match_text(Job.description_text), match_text(t)) > 0
+                for t in terms
+            ]
+        )
         statement = select(Job.id).where(status != "excluded", hit)
         if job_ids is not None:
             statement = statement.where(Job.id.in_(job_ids))

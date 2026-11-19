@@ -11,9 +11,11 @@ from typer.testing import CliRunner
 from work_observer.cli import app
 from work_observer.config import Settings
 from work_observer.connectors import public_documents
+from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.connectors.public_documents import PublicDocumentService
 from work_observer.research.agent import method_fingerprint, research
+from work_observer.storage.archive import RawArchive
 
 
 class SubsetModel:
@@ -394,3 +396,70 @@ def test_answer_guidance_is_frozen_with_the_original_progress(
     assert result["research_method_sha256"] == original_hash
     assert result.get("answer_delivery_policy") == (None if legacy else policy)
     assert store.load_checkpoint(run["id"])["max_calls"] == 5
+
+
+def test_agent_searches_same_glyph_radicals_in_its_frozen_source_pool(source_workspace, tmp_path):
+    repo, _, _ = source_workspace
+    text = "合成岗位职责：处理上下⽂溢出和长⽂档问答。"
+    job = import_jd(
+        repo,
+        RawArchive(tmp_path / "radical-raw"),
+        ManualJD(
+            title="合成检索岗位",
+            company="合成公司",
+            external_id="radical-search",
+            description=text,
+            data_kind="synthetic",
+        ),
+    )["job_id"]
+
+    class SearchModel:
+        async def turn(self, history):
+            outputs = [
+                json.loads(row["output"])
+                for row in history
+                if row.get("type") == "function_call_output"
+            ]
+            if not outputs:
+                name, args = "search_evidence", {"terms": ["上下文溢出"]}
+            else:
+                evidence = outputs[0]["evidence"]
+                assert evidence and evidence[0]["quote"] == text
+                name, args = (
+                    "finish_research",
+                    {
+                        "claims": [
+                            {
+                                "category": "task",
+                                "basis": "direct",
+                                "requirement": "unspecified",
+                                "text": "合成原文描述处理上下文溢出的任务。",
+                                "evidence_ids": [evidence[0]["id"]],
+                            }
+                        ],
+                        "gaps": [],
+                    },
+                )
+            call = dict(
+                type="function_call",
+                name=name,
+                arguments=json.dumps(args),
+                call_id=str(len(history)),
+            )
+            return [call], call
+
+    result = asyncio.run(
+        research(
+            repo,
+            "处理上下文溢出是什么任务",
+            Settings(),
+            job_ids=[job],
+            public_document_ids=[],
+            coverage_mode="question",
+            allow_proposals=False,
+            max_calls=2,
+            model=SearchModel(),
+        )
+    )
+    assert result["status"] == "completed" and result["model_calls"] == 2
+    assert result["evidence"][0]["quote"] == text

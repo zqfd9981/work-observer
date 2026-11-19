@@ -23,6 +23,7 @@ from work_observer.reports.results import audit_result
 from work_observer.research.agent import research
 from work_observer.research.store import ResearchStore
 from work_observer.retrieval.catalog import Catalog, Filters
+from work_observer.retrieval.enhanced import RetrievalService
 from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.storage.archive import RawArchive
 from work_observer.storage.database import upgrade
@@ -81,6 +82,41 @@ def corpus(tmp_path):
 
     yield repository, add_job, add_public
     repository.close()
+
+
+def test_same_glyph_radicals_match_without_rewriting_citations(corpus):
+    repository, add_job, add_public = corpus
+    text = "合成资料：处理上下⽂溢出、长⽂档问答和⼯具调用；编号①号。"
+    job = add_job("radicals", text)
+    document, _ = add_public(text=text)
+    found = UnifiedRetrieval(repository).search(
+        ["上下文溢出"],
+        job_ids=[job],
+        public_document_ids=[document],
+        aliases=False,
+        include_knowledge=False,
+    )
+    assert found["matching_jobs"] == found["matching_public_documents"] == 1
+    assert len(found["evidence"]) == 2
+    for evidence in found["evidence"]:
+        assert evidence["quote"] == text[evidence["start"] : evidence["end"]]
+        assert "上下⽂溢出" in evidence["quote"]
+        if evidence.get("public_document_id"):
+            assert evidence["content_sha256"] == hashlib.sha256(text.encode()).hexdigest()
+    assert repository.job(job)["current"]["description_text"] == text
+    catalog = Catalog(repository)
+    assert catalog.search(["长文档问答"], job_ids=[job])["matching_jobs"] == 1
+    assert catalog.evidence(job, terms=["工具调用"])
+    assert catalog.query(Filters(keyword="长文档问答"), job_ids=[job])["counts"]["matched"] == 1
+    stats = RetrievalService(repository).stats(["长文档问答"], job_ids=[job])
+    assert stats["statistics"][0]["literal_jobs"] == 1
+    assert not UnifiedRetrieval(repository).search(
+        ["1号"],
+        job_ids=[job],
+        public_document_ids=[document],
+        aliases=False,
+        include_knowledge=False,
+    )["evidence"]  # No broad compatibility folding of unrelated characters.
 
 
 def active_domain(repository, key="business_application"):
