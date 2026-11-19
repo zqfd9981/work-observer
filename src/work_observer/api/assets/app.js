@@ -688,7 +688,11 @@ async function startResearchConversation(question) {
   try {
     const publicOnly=$("#research-source-mode")?.value === "public";
     const scope = publicOnly ? [] : state.researchIds?.length ? state.researchIds : (await api("jobs?"+new URLSearchParams({...state.filters,limit:20}))).jobs.map(job=>job.id);
-    if (!scope.length && !publicOnly) throw new Error("当前范围没有资料，请先选择或补充岗位资料。");
+    if(!scope.length){
+      const hasArchived=selectedResearchDocuments.size>0||(await api("public-documents?limit=1")).total>0;
+      if(!hasArchived)throw new Error("当前范围还没有原文，请先粘贴工作资料、归档网页或补充岗位原文。");
+      if(!publicOnly){$("#research-source-mode").value="public";updateResearchScope();updateResearchApproach();}
+    }
     const project = await api("projects",{method:"POST",body:JSON.stringify({title:question.slice(0,100),goal:question,job_ids:scope,...(selectedResearchDocuments.size?{public_document_ids:[...selectedResearchDocuments.keys()]}:{}),max_calls:24,max_seconds:720,max_rounds:6,max_public:$("#allow-public").checked?4:0})});
     conversation.id=project.id;sessionStorage.setItem("wo-conversation",project.id);
     conversation.replyToStepId=null;

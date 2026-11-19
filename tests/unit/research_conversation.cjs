@@ -82,7 +82,7 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
 
  node("#research-source-mode").value="public";
  const queriesBefore=context.calls.filter(c=>c.path.startsWith("jobs?")).length;
- vm.runInContext('state.researchIds=["unrelated-job"];state.serviceContract.components.schemas.StepInput.properties.coverage_mode={enum:["all","question"]};api=async(path,options)=>{calls.push({path,options});if(path.startsWith("jobs?"))throw Error("Public-only research must not query jobs");return options?{id:"public-project"}:{id:"public-project",revision:1,job_ids:[],steps:[],worker_running:false};}',context);
+ vm.runInContext('state.researchIds=["unrelated-job"];state.serviceContract.components.schemas.StepInput.properties.coverage_mode={enum:["all","question"]};api=async(path,options)=>{calls.push({path,options});if(path.startsWith("public-documents?"))return {documents:[],total:1};if(path.startsWith("jobs?"))throw Error("Public-only research must not query jobs");return options?{id:"public-project"}:{id:"public-project",revision:1,job_ids:[],steps:[],worker_running:false};}',context);
  await vm.runInContext('startResearchConversation("只研究公开文档")',context);
  const publicProject=JSON.parse(context.calls.filter(c=>c.path==="projects").at(-1).options.body);
  assert.deepEqual(publicProject.job_ids,[]);
@@ -191,5 +191,28 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(refreshed.includes("已加入本研究，可在下一轮查阅"));
  assert.ok(refreshed.includes('id="conversation-material-panel" class="detail-section" open'));
 
+ const projectsBeforePastedOnly=context.calls.filter(c=>c.path==="projects").length;
+ node("#research-source-mode").value="jobs";
+ vm.runInContext('selectedResearchDocuments.clear();selectResearchDocument("f".repeat(32),"已有工作资料");state.researchIds=null;globalThis.messages=[];notify=message=>messages.push(message);openResearchConversation=async id=>opened.push(id);api=async(path,options)=>{calls.push({path,options});if(path.startsWith("jobs?"))return {jobs:[]};if(path.startsWith("public-documents?"))return {documents:[],total:0};return {id:"pasted-only",revision:1,job_ids:[],steps:[],ready_step_ids:[],budget:{max_calls:24,max_seconds:720,max_rounds:6,max_public:0},usage:{calls:0,reserved_calls:0,reserved_seconds:0,public:0},worker_running:false};}',context);
+ await vm.runInContext('startResearchConversation("解释我保存的SOP")',context);
+ assert.equal(context.calls.filter(c=>c.path==="projects").length,projectsBeforePastedOnly+1);
+ const pastedOnly=JSON.parse(context.calls.filter(c=>c.path==="projects").at(-1).options.body);
+ assert.deepEqual(pastedOnly.job_ids,[]);assert.deepEqual(pastedOnly.public_document_ids,["f".repeat(32)]);
+ assert.equal(node("#research-source-mode").value,"public");
+ const startsAfterSelection=context.calls.filter(c=>c.path==="projects").length;
+ vm.runInContext('selectedResearchDocuments.clear();api=async(path,options)=>{calls.push({path,options});if(path.startsWith("jobs?"))return {jobs:[]};if(path.startsWith("public-documents?"))return {documents:[],total:1};return {id:"archive-only",revision:1,job_ids:[],steps:[],ready_step_ids:[],budget:{max_calls:24,max_seconds:720,max_rounds:6,max_public:0},usage:{calls:0,reserved_calls:0,reserved_seconds:0,public:0},worker_running:false};}',context);
+ node("#research-source-mode").value="jobs";
+ await vm.runInContext('startResearchConversation("解释库中已有工作资料")',context);
+ assert.equal(context.calls.filter(c=>c.path==="projects").length,startsAfterSelection+1);
+ const startsBeforeEmpty=context.calls.filter(c=>c.path==="projects").length;
+ const runsBeforeEmpty=context.calls.filter(c=>c.path.endsWith("/run")).length;
+ vm.runInContext('api=async(path,options)=>{calls.push({path,options});return path.startsWith("jobs?")?{jobs:[]}:{documents:[],total:0};}',context);
+ for(const mode of ["jobs","public"]){
+   node("#research-source-mode").value=mode;
+   await vm.runInContext('startResearchConversation("没有原文时先补资料")',context);
+ }
+ assert.equal(context.calls.filter(c=>c.path==="projects").length,startsBeforeEmpty);
+ assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBeforeEmpty);
+ assert.ok(context.messages.at(-1).includes("粘贴工作资料"));
 
 })().catch(error=>{console.error(error);process.exitCode=1;});
