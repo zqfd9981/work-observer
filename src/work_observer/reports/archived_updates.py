@@ -8,7 +8,7 @@ from work_observer.connectors.public_documents import PublicDocumentService
 from work_observer.connectors.public_models import PublicDocument
 
 
-def capture_archived(repository, enabled, identities=None):
+def capture_archived(repository, enabled, identities=None, *, as_of=None):
     if not enabled:
         return {"enabled": False, "requested_ids": identities, "documents": []}
     from work_observer.research.document_scope import validate
@@ -20,6 +20,8 @@ def capture_archived(repository, enabled, identities=None):
         )
         if identities is not None:
             query = query.where(PublicDocument.id.in_(identities))
+        if as_of:
+            query = query.where(PublicDocument.observed_at <= as_of)
         selected = {}
         for row in session.scalars(query):
             if row.url not in selected:

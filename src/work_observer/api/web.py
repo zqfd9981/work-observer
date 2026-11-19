@@ -704,6 +704,11 @@ def create_app(
                 "DOMAIN_RESEARCH_SOURCE_STALE": "这个工作类型的来源需要重新核对，暂时不能采纳。",
                 "UPDATE_LINKED_RESEARCH_UNAVAILABLE": "这条关联研究目前无法继续，请刷新变化报告。",
                 "UPDATE_ARCHIVE_SCOPE_LIMIT_2000": "归档来源超过2000个，请限定要观察的资料。",
+                "UPDATE_CUTOFF_IN_FUTURE": "历史截止不能晚于现在，请选择已有观察的时间。",
+                "UPDATE_HISTORICAL_DOMAIN_UNAVAILABLE": (
+                    "历史来源面板不使用现在的领域归类缩小范围；"
+                    "请选择全部领域，并按岗位或来源筛选。"
+                ),
                 "UPDATE_PROJECT_BUDGET_EXHAUSTED": (
                     "原研究预留额度已用完；旧问题和预算保留，请另建明确范围的研究。"
                 ),

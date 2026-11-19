@@ -5,8 +5,58 @@ import re
 from starlette.testclient import TestClient
 
 from work_observer.api.web import create_app
+from work_observer.collection.contracts import now
 from work_observer.config import Settings
 from work_observer.storage.database import upgrade
+
+
+def test_historical_capture_input_and_missing_analysis_are_exposed_without_model_calls(tmp_path):
+    database = tmp_path / "historical.db"
+    upgrade(database)
+    settings = Settings(database_path=database, raw_directory=tmp_path / "raw")
+    with TestClient(
+        create_app(settings, reports_dir=tmp_path / "reports"), base_url="http://127.0.0.1"
+    ) as client:
+        token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
+        headers = {"X-WO-Token": token}
+        assert 'id="update-as-of"' in client.get("/").text
+        imported = client.post(
+            "/api/import",
+            headers=headers,
+            json=dict(
+                title="合成历史岗位",
+                company="合成公司",
+                description="Python接口任务",
+                data_kind="synthetic",
+            ),
+        )
+        assert imported.status_code == 201
+        cutoff = now()
+        result = client.post(
+            "/api/updates/captures",
+            headers=headers,
+            json=dict(title="历史来源", as_of=cutoff, terms=["Python"]),
+        )
+        assert result.status_code == 201, result.text
+        data = result.json()
+        assert data["as_of"] == cutoff and data["analysis_observed"] is False
+        assert data["sample"]["eligible_detail_denominator"] == 1
+        assert data["sample"]["missing_profiles"] is None
+        assert data["source_run_ids"] == []
+        assert (
+            "as_of"
+            in client.get("/api/openapi.json").json()["components"]["schemas"][
+                "UpdateCaptureInput"
+            ]["properties"]
+        )
+        future = client.post(
+            "/api/updates/captures",
+            headers=headers,
+            json=dict(title="未来", as_of="2099-01-01T00:00:00+00:00"),
+        )
+        assert future.json()["error_code"] == "UPDATE_CUTOFF_IN_FUTURE"
+        assert "不能晚于现在" in future.json()["message"]
+        assert len(client.get("/api/updates").json()["captures"]) == 1
 
 
 def test_updates_http_roundtrip_project_retry_scope_conflict_and_restart(tmp_path):

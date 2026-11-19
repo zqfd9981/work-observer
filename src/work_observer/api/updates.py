@@ -18,6 +18,9 @@ class UpdateCaptureInput(BaseModel):
     include_personal: bool = False
     include_archived: bool = False
     public_document_ids: list[str] | None = Field(default=None, max_length=20)
+    as_of: str | None = Field(
+        default=None, max_length=64, description="历史来源截止，须含时区；空值冻结当前观察"
+    )
 
 
 class UpdateCompareInput(BaseModel):

@@ -17,7 +17,7 @@ from work_observer.quality.service import digest
 from work_observer.reports.inbox import InboxService
 from work_observer.research.history import HistoryService
 from work_observer.retrieval.catalog import Catalog, Filters
-from work_observer.retrieval.enhanced import RetrievalService, validated_terms
+from work_observer.retrieval.enhanced import RetrievalService, normalized_time, validated_terms
 from work_observer.storage.models import JobAnalysis
 from work_observer.text_match import match_text
 
@@ -117,6 +117,8 @@ class DomainUpdateService:
                             "id",
                             "title",
                             "created_at",
+                            "as_of",
+                            "analysis_observed",
                             "state",
                             "sample",
                             "before_id",
@@ -254,35 +256,52 @@ class DomainUpdateService:
         include_personal=False,
         include_archived=False,
         public_document_ids=None,
+        as_of=None,
     ):
         if not isinstance(title, str) or not title.strip() or len(title) > 150:
             raise ProbeError("INVALID_UPDATE_TITLE")
         terms = validated_terms(terms) if terms else []
+        created_at = now()
+        cutoff = normalized_time(as_of)
+        if cutoff and cutoff > created_at:
+            raise ProbeError("UPDATE_CUTOFF_IN_FUTURE")
+        if cutoff and domain_id:
+            raise ProbeError("UPDATE_HISTORICAL_DOMAIN_UNAVAILABLE")
         from work_observer.reports.archived_updates import capture_archived
 
         archived = capture_archived(
             self.repository,
             include_archived or public_document_ids is not None,
             public_document_ids,
+            as_of=cutoff,
         )
         archived_ids = {row["id"] for row in archived["documents"]}
         filters = Filters.model_validate(filters or {})
         records, actual_filters, cutoff = RetrievalService(self.repository)._records(
-            filters, job_ids, None
+            filters, job_ids, cutoff
         )
         if len(records) > 2000:
             raise ProbeError("UPDATE_SCOPE_LIMIT_2000_NARROW_SCOPE")
-        knowledge = DomainKnowledgeService(self.repository)
         domain_rows = []
-        offset = 0
-        while True:
-            page = knowledge.collection(
-                domain_id, filters=filters, job_ids=job_ids, limit=200, offset=offset
-            )
-            domain_rows.extend(page["jobs"])
-            if not page["truncated"]:
-                break
-            offset += 200
+        page = {
+            "counts": {
+                "scope_total": sum(item["state"] != "excluded" for item in records),
+                "matched": 0,
+                "unknown": sum(item["state"] != "excluded" for item in records),
+                "excluded": 0,
+            }
+        }
+        if not cutoff:
+            knowledge = DomainKnowledgeService(self.repository)
+            offset = 0
+            while True:
+                page = knowledge.collection(
+                    domain_id, filters=filters, job_ids=job_ids, limit=200, offset=offset
+                )
+                domain_rows.extend(page["jobs"])
+                if not page["truncated"]:
+                    break
+                offset += 200
         assignments = {row["job_id"]: row for row in domain_rows}
         scope_ids = [item["job_id"] for item in records if item["state"] != "excluded"]
         personal = (
@@ -291,28 +310,36 @@ class DomainUpdateService:
             else {"structured": None, "notes": [], "memory_refs": []}
         )
         memory_refs = {row["id"]: row for row in personal["memory_refs"]}
-        memory_rows = {row["id"]: row for row in self.memory.list(include_history=True)}
+        memory_rows = (
+            {row["id"]: row for row in self.memory.list(include_history=True)} if not cutoff else {}
+        )
         for row in domain_rows:
             if row.get("correction_id"):
                 value = memory_rows[row["correction_id"]]
                 memory_refs[value["id"]] = {"id": value["id"], "version": value["version"]}
-        relations = _knowledge_rows(
-            [
-                row
-                for row in knowledge.list_relations(include_history=True)
-                if (not domain_id or row["domain_id"] == domain_id)
-                and (
-                    set(row["scope"].get("job_ids", [])) & set(scope_ids)
-                    or set(row["scope"].get("public_document_ids", [])) & archived_ids
-                )
-            ]
+        relations = (
+            _knowledge_rows(
+                [
+                    row
+                    for row in knowledge.list_relations(include_history=True)
+                    if (not domain_id or row["domain_id"] == domain_id)
+                    and (
+                        set(row["scope"].get("job_ids", [])) & set(scope_ids)
+                        or set(row["scope"].get("public_document_ids", [])) & archived_ids
+                    )
+                ]
+            )
+            if not cutoff
+            else []
         )
-        definitions = _knowledge_rows(knowledge.list_domains(include_history=True))
+        definitions = (
+            _knowledge_rows(knowledge.list_domains(include_history=True)) if not cutoff else []
+        )
         profiles = {}
         with Session(self.repository.engine) as session:
             for row in session.scalars(
                 select(JobAnalysis)
-                .where(JobAnalysis.job_id.in_(scope_ids))
+                .where(JobAnalysis.job_id.in_(scope_ids), not bool(cutoff))
                 .order_by(JobAnalysis.created_at, JobAnalysis.id)
             ):
                 profiles[row.job_id] = {
@@ -434,7 +461,10 @@ class DomainUpdateService:
             "id": uuid4().hex,
             "state": "captured",
             "title": title.strip(),
-            "created_at": now(),
+            "created_at": created_at,
+            "as_of": cutoff,
+            "analysis_observed": not bool(cutoff),
+            "personal_basis": "current_explicit_conditions",
             "domain_id": domain_id,
             "filters": actual_filters.model_dump(mode="json"),
             "requested_job_ids": job_ids,
@@ -447,7 +477,7 @@ class DomainUpdateService:
                     if item["state"] != "excluded"
                 ),
                 "filter_unknown": sum(item["state"] == "unknown" for item in records),
-                "missing_profiles": sum(job["profile"] is None for job in jobs),
+                "missing_profiles": None if cutoff else sum(job["profile"] is None for job in jobs),
                 "invalid_sources": sum(
                     job["source"] is not None and job["source"]["integrity"] != "verified"
                     for job in jobs
@@ -479,6 +509,12 @@ class DomainUpdateService:
             ),
             "note": (
                 "用户显式冻结的本地观察，不是新采集或市场趋势；未知分类/画像/关系不记为不存在。"
+                + (
+                    "历史面板只重建截止时已观察且入库的来源，不还原当时分类、审核或个人偏好；"
+                    "完整性按本次读取的本地归档核对，个人条件若启用则使用本次已明确条件。"
+                    if cutoff
+                    else ""
+                )
             ),
         }
         return self._write("domain_update_captures", _json(payload))
@@ -496,8 +532,13 @@ class DomainUpdateService:
             }
             for panel in (before, after)
         ]
-        if before["created_at"] > after["created_at"]:
+        if (before.get("as_of") or before["created_at"]) > (
+            after.get("as_of") or after["created_at"]
+        ):
             raise ProbeError("UPDATE_CAPTURE_ORDER_INVALID")
+        analysis_comparable = before.get("analysis_observed", True) and after.get(
+            "analysis_observed", True
+        )
 
         def included(row, panel):
             return row["filter_state"] != "excluded" and (
@@ -595,15 +636,17 @@ class DomainUpdateService:
                         ],
                     }
                 )
-            if profile_method(left["profile"]) != profile_method(right["profile"]):
+            if analysis_comparable and profile_method(left["profile"]) != profile_method(
+                right["profile"]
+            ):
                 analysis.append(
                     {"job_id": identity, "before": left["profile"], "after": right["profile"]}
                 )
-            elif left["profile"] != right["profile"]:
+            elif analysis_comparable and left["profile"] != right["profile"]:
                 profile_validity.append(
                     {"job_id": identity, "before": left["profile"], "after": right["profile"]}
                 )
-            if assignment(left["domain"]) != assignment(right["domain"]):
+            if analysis_comparable and assignment(left["domain"]) != assignment(right["domain"]):
                 classifications.append(
                     {"job_id": identity, "before": left["domain"], "after": right["domain"]}
                 )
@@ -631,6 +674,9 @@ class DomainUpdateService:
         relation_validity_changed = not relation_changed and digest(before["relations"]) != digest(
             after["relations"]
         )
+        if not analysis_comparable:
+            definition_changed = definition_validity_changed = None
+            relation_changed = relation_validity_changed = None
         scope_changed = any(
             before.get(key) != after.get(key)
             for key in ("filters", "domain_id", "requested_job_ids")
@@ -666,9 +712,15 @@ class DomainUpdateService:
             gaps.append("字面词项匹配方式发生变化；不同算法的计数差异不能解释为需求变化。")
         if after["sample"]["eligible_detail_denominator"] == 0:
             gaps.append("没有明确符合范围且可核验的正文分母，词项命中保持未知，不能认定没有需求。")
-        if any(row["profile"] is None for row in after["jobs"]):
+        if not analysis_comparable:
+            gaps.append(
+                "至少一侧是历史来源重建，不能据此判断当时画像、分类、定义或审核状态如何变化。"
+            )
+        elif any(row["profile"] is None for row in after["jobs"]):
             gaps.append("部分岗位没有画像，不能据空画像认定没有任务/能力要求。")
-        if not any(row["status"] == "active" and not row["stale"] for row in after["relations"]):
+        if analysis_comparable and not any(
+            row["status"] == "active" and not row["stale"] for row in after["relations"]
+        ):
             gaps.append("没有有效审核关系可支撑领域能力演化，关系变化保持未知。")
         identity = digest({"before": before_id, "after": after_id, "version": "domain-updates-v1"})[
             :32
@@ -681,6 +733,14 @@ class DomainUpdateService:
             "before_id": before_id,
             "after_id": after_id,
             "sample": {"before": before["sample"], "after": after["sample"]},
+            "observation_times": {
+                side: {
+                    "source_cutoff": panel.get("as_of") or panel["created_at"],
+                    "captured_at": panel["created_at"],
+                    "mode": "historical_sources" if panel.get("as_of") else "current",
+                }
+                for side, panel in (("before", before), ("after", after))
+            },
             "content_changes": content,
             "metadata_changes": metadata,
             "archived_changes": compare_archived(self.repository, before, after),
@@ -693,6 +753,7 @@ class DomainUpdateService:
                 "note": "样本加入/离开只描述观察面板，不推断新招聘/岗位关闭。",
             },
             "method_changes": {
+                "analysis_comparable": analysis_comparable,
                 "profiles": analysis,
                 "profile_validity_changed": profile_validity,
                 "classifications": classifications,
@@ -734,7 +795,10 @@ class DomainUpdateService:
                     }
                     for key, row in b.items()
                 ],
-                "note": "只解释明确条件与原文/披露字段；不推测个人履历、能力或适配分数。",
+                "note": (
+                    "只解释本次冻结时的明确条件与所选时点原文/披露字段，不还原当时个人偏好；"
+                    "不推测个人履历、能力或适配分数。"
+                ),
             },
             "job_ids": sorted(b),
             "public_document_ids": [
@@ -776,6 +840,18 @@ class DomainUpdateService:
         report = self.report(identity)
         if not isinstance(note, str) or not note.strip() or len(note) > 2000:
             raise ProbeError("INVALID_UPDATE_FOLLOWUP")
+        question = note.strip()
+        times = report.get("observation_times", {})
+        if any(row.get("mode") == "historical_sources" for row in times.values()):
+            question += (
+                "\n对照的来源截止："
+                + times["before"]["source_cutoff"]
+                + " → "
+                + times["after"]["source_cutoff"]
+                + "。这是归档来源重建，不是当时的分析或偏好。"
+                "当前补查须区分现在读取的材料与报告中的历史版本；未读到对应历史原文时保留未知，"
+                "不能把现在的内容代替过去。样本加入与资料补全不表示新招聘或新增职责。"
+            )
         if run_id:
             from work_observer.research.projects import ProjectService
 
@@ -814,7 +890,7 @@ class DomainUpdateService:
                     )
                 project = projects.add(
                     project["id"],
-                    note.strip(),
+                    question,
                     revision=project["revision"],
                     reply_to_step_id=source["step_id"],
                     approach=previous.get("approach", "standard"),
@@ -836,13 +912,13 @@ class DomainUpdateService:
         item = InboxService(self.repository).create(
             "followup",
             "核对领域观察中的变化",
-            note.strip(),
+            question,
             related_id=identity,
             dedupe_key="domain-update:" + identity + ":" + digest(note),
         )
         return {
             "notification": item,
-            "question": note.strip(),
+            "question": question,
             "job_ids": report["job_ids"],
             "report_id": identity,
             "note": "待调查，不自动花费模型额度；可将问题与明确范围带入研究项目。",
