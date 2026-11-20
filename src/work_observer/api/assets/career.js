@@ -334,6 +334,7 @@
     return `<details id="career-library" class="panel career-evidence-library" ${draft.open?"open":""}><summary>证据书架 · 找回资料与自己的认识</summary><form id="career-library-form"><div class="career-library-query"><label>关键词<input name="q" required maxlength="200" value="${e(draft.q||"")}" placeholder="例如：重复写入 或 接口 测试"></label><label>查找范围<select name="scope"><option value="goal">当前求职目标</option><option value="all" ${draft.scope==="all"?"selected":""}>全部保存的资料与求职目标</option></select></label><button class="secondary">查找已有记录</button></div><p class="form-note">本地关键词检索，不调用模型。原文命中与历史理解分开展示；没有命中不代表不存在。</p></form>${materialShelf(data)}${results}</details>`;
   }
   function focusCareerRecord(kind,id){
+    if(kind==="tab"&&Object.hasOwn(sectionKinds,id)){captureDrafts();career.tab=id;renderDetail();$(".career-tabs").scrollIntoView({block:"start",behavior:"smooth"});return;}
     if(!["story","task","insight","discussion","pitch","question"].includes(kind)||!/^[a-f0-9]{32}$/.test(id))return;
     const row=kind==="discussion"?career.data.results.find(item=>item.step_id===id):null;
     captureDrafts();career.tab=row?(row.section||Object.keys(sectionKinds).find(section=>sectionKinds[section].includes(row.kind))||"requirements"):kind==="story"?"stories":kind==="pitch"?"interview":kind==="question"?"requirements":"experiments";renderDetail();
@@ -350,7 +351,7 @@
     return `<section class="career-live-research panel" aria-live="polite"><div><span class="quiet-tag">${data.running?phase:pending?.state==="queued"?"等待开始":"本轮尚未完成"}</span><h3>${e(pending?.user_question?.slice(0,100)||labels[pending?.kind]||"当前研究")}</h3><p class="form-note">已发起 ${pending?.progress?.calls||0} 次调用 · 已读 ${pending?.progress?.read_fragments||0} 个原文片段，读到片段不代表核对了全文。</p>${pending&&typeof pending.allow_public==="boolean"?`<p class="form-note">本轮使用${pending.offline?"原文整理模式":pending.allow_public?"公开补查与已选资料":"已选的本地资料"}；续跑沿用此设置。</p>`:""}${!data.running&&reason?`<p class="form-note">${e(reason)}</p>`:""}${!data.running&&pending?.state==="queued"&&!pending.scope_current?'<p class="form-note">这轮仍使用调整前的资料，请撤销后重新提问。</p>':""}</div><div class="result-actions">${data.running?`<button type="button" class="secondary" data-career-control="pause" ${career.busy?"disabled":""}>暂停本轮</button>`:`${canContinue?`<button type="button" class="primary" data-career-control="continue" data-career-step="${e(pending.step_id)}" ${career.busy?"disabled":""}>${pending.state==="queued"?"开始这轮研究":"从已有进度继续"}</button>`:""}<button type="button" class="text-button" data-career-control="end" data-career-step="${e(pending.step_id)}" ${career.busy?"disabled":""}>${pending.run_id?"结束这轮，保留已有记录":"撤销未开始的请求"}</button>`}</div>${!data.running&&pending?.continuation?.available?`<p class="form-note">继续沿用本轮剩余的 ${pending.continuation.remaining_calls} 次调用和 ${pending.continuation.remaining_seconds} 秒，不新增一轮额度。</p>`:""}</section>`;
   }
   async function controlResearch(action,stepId){
-    if(career.busy)return;if(["role","map"].includes(kind)&&storyDraft().proof){notify("先保存或取消正在编辑的证据对照，再重新分析岗位。");return;}captureDrafts();career.busy=true;renderDetail();const id=career.id;let ended=null;
+    if(career.busy)return;captureDrafts();career.busy=true;renderDetail();const id=career.id;let ended=null;
     try{
       if(action==="pause")await api("projects/"+id+"/pause",{method:"POST",body:"{}"});
       else if(action==="end"){
@@ -392,7 +393,7 @@
   window.loadCareer=async()=>{
     clearTimeout(career.timer);$("#career-detail").hidden=true;await loadGoals();
     const id=location.hash.split("/")[1];$("#career-goal-switcher").open=!id;if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");
-    if(id&&/^[a-f0-9]{32}$/.test(id)){await openCareer(id);const parts=location.hash.split("/");focusCareerRecord(parts[2],parts[3]);}
+    if(id&&/^[a-f0-9]{32}$/.test(id)){await openCareer(id);const parts=location.hash.split("/");if(parts[2])focusCareerRecord(parts[2],parts[3]);else{captureDrafts();career.tab="requirements";renderDetail();}}
     else{$("#career-onboarding").hidden=false;$("#career-detail").hidden=true;await findJobs();}
   };
 
@@ -495,7 +496,7 @@
       if(target.dataset.careerCompareQuestion){captureDrafts();const draft=storyDraft();draft.inquiries={...draft.inquiries,requirements:{question:target.dataset.careerCompareQuestion,source_step_id:""}};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus();}
       if(target.dataset.careerSaveJd)await saveInlineJD(target);
       if(target.dataset.careerRemoveJob){career.selected.delete(target.dataset.careerRemoveJob);selectedJobs();await findJobs();}
-      if(target.dataset.careerTab){captureDrafts();career.tab=target.dataset.careerTab;renderDetail();}
+      if(target.dataset.careerTab){captureDrafts();career.tab=target.dataset.careerTab;history.pushState(null,"","#career/"+career.id+"/tab/"+career.tab);renderDetail();}
       if(target.dataset.careerAskResult){captureDrafts();const draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:{...draft.inquiries?.[career.tab],source_step_id:target.dataset.careerAskResult,material_id:"",insight_id:"",question_id:"",comparison_step_ids:[],...(target.dataset.careerMapQuestion?{question:target.dataset.careerMapQuestion}:{})}};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus();}
       if(target.dataset.careerFollowup)await research("followup","",0,null,target.dataset.careerFollowup);
       if(target.dataset.careerResearch)await research(target.dataset.careerResearch,"",0,target.dataset.careerTaskId||null);
