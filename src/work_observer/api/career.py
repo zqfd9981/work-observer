@@ -180,6 +180,14 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             lambda: service().prepare(request.path_params["id"], **data.model_dump()), 201
         )
 
+    async def end_step(request):
+        task = tasks.get("project:" + request.path_params["id"])
+        if task and not task.done():
+            return response({"message": "请先暂停正在进行的这轮研究。"}, 409)
+        return change(
+            lambda: service().end_step(request.path_params["id"], request.path_params["step_id"])
+        )
+
     async def resume(request):
         if busy():
             return response({"message": "请等本轮研究结束后再更新简历，输入仍保留。"}, 409)
@@ -287,6 +295,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/stories/{story_id}", edit_story, methods=["PATCH"]),
         Route("/api/career/{id}/stories/{story_id}", remove_story, methods=["DELETE"]),
         Route("/api/career/{id}/prepare", prepare, methods=["POST"]),
+        Route("/api/career/{id}/steps/{step_id}", end_step, methods=["DELETE"]),
         Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
         Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),

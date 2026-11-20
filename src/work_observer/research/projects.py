@@ -878,7 +878,10 @@ class ProjectService:
             settled = (
                 record.get("career")
                 and run["state"] == "finished"
-                and result.get("status") in {"completed", "evidence_only", "insufficient_evidence"}
+                and (
+                    result.get("status") in {"completed", "evidence_only", "insufficient_evidence"}
+                    or step["state"] == "abandoned"
+                )
             )
             if not step["offline"]:
                 used["reserved_calls"] += (

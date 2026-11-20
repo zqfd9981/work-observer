@@ -1,7 +1,9 @@
 """The job-seeker journey using synthetic sources and a local model substitute."""
 
+import asyncio
 import json
 import re
+import threading
 import time
 
 from starlette.testclient import TestClient
@@ -625,6 +627,11 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             f"/api/career/{identity}/prepare", json={"kind": "role"}, headers=auth
         )
         assert continued.status_code == 201, continued.text
+        discarded = client.delete(
+            f"/api/career/{identity}/steps/{continued.json()['step_id']}", headers=auth
+        )
+        assert discarded.status_code == 200, discarded.text
+        assert not any(row["state"] == "queued" for row in discarded.json()["results"])
         calls_before_material = len(model.contexts)
         added_material = client.post(
             f"/api/career/{other['id']}/materials",
@@ -687,4 +694,105 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
                 "done_count"
             ]
             == 2
+        )
+
+
+def test_career_pause_resume_and_end_keep_existing_material(tmp_path):
+    class PausingModel(CareerModel):
+        def __init__(self):
+            super().__init__()
+            self.pause_next = True
+            self.waiting = threading.Event()
+
+        async def turn(self, history):
+            if self.pause_next and any(
+                row.get("type") == "function_call_output" for row in history
+            ):
+                self.pause_next = False
+                self.waiting.set()
+                await asyncio.Event().wait()
+            return await super().turn(history)
+
+    database = tmp_path / "controls.db"
+    upgrade(database)
+    model = PausingModel()
+    settings = Settings(database_path=database, raw_directory=tmp_path / "raw")
+    with TestClient(
+        create_app(settings, model=model, reports_dir=tmp_path / "reports"),
+        base_url="http://127.0.0.1",
+    ) as client:
+        token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
+        auth = {"X-WO-Token": token}
+        job = client.post(
+            "/api/import",
+            json={
+                "title": "合成暂停岗位",
+                "company": "合成团队",
+                "description": "必须掌握Python接口开发与测试。负责失败样例验证。",
+                "data_kind": "synthetic",
+            },
+            headers=auth,
+        ).json()["job_id"]
+        identity = client.post(
+            "/api/career",
+            json={
+                "title": "合成进度控制",
+                "goal": "确认暂停后能继续使用已读资料",
+                "background": "合成本地练习",
+                "job_ids": [job],
+            },
+            headers=auth,
+        ).json()["id"]
+
+        def start():
+            step = client.post(
+                f"/api/career/{identity}/prepare", json={"kind": "role"}, headers=auth
+            ).json()["step_id"]
+            assert (
+                client.post(
+                    f"/api/projects/{identity}/run", json={"step_id": step}, headers=auth
+                ).status_code
+                == 202
+            )
+            assert model.waiting.wait(3)
+            return step
+
+        first = start()
+        running = client.get(f"/api/career/{identity}").json()["results"][0]
+        assert running["progress"]["read_fragments"] == 1
+        assert (
+            client.delete(f"/api/career/{identity}/steps/{first}", headers=auth).status_code == 409
+        )
+        assert client.post(f"/api/projects/{identity}/pause", headers=auth).status_code == 200
+        paused = client.get(f"/api/career/{identity}").json()["results"][0]
+        assert paused["state"] == "interrupted" and paused["continuation"]["available"]
+        assert paused["continuation"]["remaining_calls"] < 6
+        assert (
+            client.post(
+                f"/api/projects/{identity}/run", json={"step_id": first}, headers=auth
+            ).status_code
+            == 202
+        )
+        for _ in range(100):
+            data = client.get(f"/api/career/{identity}").json()
+            if not data["running"]:
+                break
+            time.sleep(0.01)
+        assert data["results"][0]["result"]["status"] == "completed"
+        assert data["results"][0]["run_id"] == paused["run_id"]
+        model.pause_next = True
+        model.waiting.clear()
+        second = start()
+        assert client.post(f"/api/projects/{identity}/pause", headers=auth).status_code == 200
+        ended = client.delete(f"/api/career/{identity}/steps/{second}", headers=auth)
+        assert ended.status_code == 200, ended.text
+        record = ended.json()["results"][0]
+        assert record["state"] == "abandoned" and not record["current"]
+        assert len(record["result"]["evidence"]) == 1
+        assert ended.json()["usage"]["reserved_calls"] == ended.json()["usage"]["calls"]
+        assert (
+            client.post(
+                f"/api/career/{identity}/prepare", json={"kind": "gaps"}, headers=auth
+            ).status_code
+            == 201
         )

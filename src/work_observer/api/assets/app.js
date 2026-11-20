@@ -1136,7 +1136,7 @@ function investigationDraft(proposal) {
 function proposalPlanningStatus(project,step,index) {
   const outcome=step?.proposal_outcomes?.find(row=>row.proposal_index===index);
   const planned=project?.steps?.find(row=>row.id===outcome?.step_id||row.key===step?.run_id+":proposal:"+index);
-  const labels={queued:"已安排，等待调查",running:"已安排，正在调查",waiting_review:"本轮回答已生成，待核对",waiting_material:"已调查，仍待资料",completed:"项目内已接受，不等于独立质量审核",failed:"已安排的调查未完成",interrupted:"已安排的调查已暂停",superseded:"原安排已由补查接替"};
+  const labels={queued:"已安排，等待调查",running:"已安排，正在调查",waiting_review:"本轮回答已生成，待核对",waiting_material:"已调查，仍待资料",completed:"项目内已接受，不等于独立质量审核",failed:"已安排的调查未完成",interrupted:"已安排的调查已暂停",superseded:"原安排已由补查接替",abandoned:"已结束，已有资料与草稿保留"};
   if(step&&project&&step.scope_version!==project.scope_version)return {state:"historical",label:"原范围建议；使用前须按当前资料重新核实"};
   if(planned)return {state:planned.state,label:planned.result?.business_review?.status==="rejected"?"后续调查的质量核对未通过，原记录保留":labels[planned.state]||"已有调查安排",step:planned};
   const reasons={round_limit:"项目轮数已用完，尚未安排",call_budget:"剩余调用额度不足，尚未安排",time_budget:"剩余调查时间不足，尚未安排",scope_changed:"研究范围已调整，尚未安排",PROJECT_CHANGED_REFRESH:"项目同时发生变化，建议尚未安排",PROJECT_ROUND_LIMIT:"项目轮数已用完，尚未安排"};

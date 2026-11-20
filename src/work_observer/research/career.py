@@ -1,6 +1,7 @@
 """A job seeker's evidence, experiments and interview practice in one research project."""
 
 import json
+from datetime import datetime
 from uuid import uuid4
 
 from work_observer.collection.contracts import now
@@ -11,7 +12,7 @@ from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.archived_sources import catalog as archive_catalog
-from work_observer.research.projects import ProjectService
+from work_observer.research.projects import ProjectService, step_continuation
 from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.text_match import match_text
 
@@ -361,8 +362,18 @@ class CareerService:
             result = (run or {}).get("result")
             available = bool(result and run["state"] != "invalidated")
             audit = audit_result(result, self.repository) if available else None
+            checkpoint = (
+                self.store.load_checkpoint(step["run_id"])
+                if (run and step["state"] in {"running", "interrupted", "failed"})
+                else None
+            )
+            progress = (checkpoint or {}).get("result") or result or {}
+            continuation = (
+                step_continuation(project, step, run, checkpoint, audit or {}) if run else None
+            )
             current = (
                 available
+                and step["state"] != "abandoned"
                 and step["scope_version"] == project["scope_version"]
                 and not (
                     audit["changed_sources"]
@@ -392,6 +403,15 @@ class CareerService:
                     **entry,
                     "state": step["state"],
                     "current": bool(current),
+                    "scope_current": step["scope_version"] == project["scope_version"],
+                    "continuation": continuation,
+                    "progress": {
+                        "calls": progress.get("model_calls", 0),
+                        "read_fragments": len(
+                            (checkpoint or {}).get("evidence") or progress.get("evidence", [])
+                        ),
+                        "last_tool": (progress.get("trace") or [{}])[-1].get("tool"),
+                    },
                     "run_id": step.get("run_id"),
                     "result": {
                         **result,
@@ -447,6 +467,60 @@ class CareerService:
             "budget": project["budget"],
             "running": any(step["state"] == "running" for step in project["steps"]),
         }
+
+    def end_step(self, identity, step_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            step = next((row for row in project["steps"] if row["id"] == step_id), None)
+            if not step:
+                return self.get(identity)
+            if step["state"] not in {"queued", "interrupted", "failed"}:
+                raise ValueError("这轮已经运行或结束，请先暂停正在进行的研究。")
+            if any(
+                row["id"] != step_id
+                and (step_id in row.get("depends_on", []) or row.get("reply_to_step_id") == step_id)
+                for row in project["steps"]
+            ):
+                raise ValueError("还有后续研究依赖这一轮，请先在完整研究记录中调整。")
+            if not step.get("run_id"):
+                project["steps"].remove(step)
+                project["turns"] = [row for row in project["turns"] if row["id"] != step_id]
+                project["career"]["runs"] = [
+                    row for row in project["career"]["runs"] if row["step_id"] != step_id
+                ]
+            else:
+                ended_at = now()
+                run = self.store.get(step["run_id"])
+                checkpoint = self.store.load_checkpoint(step["run_id"]) or {}
+                result = {**checkpoint.get("result", {}), **(run.get("result") or {})}
+                if result:
+                    result["model_calls"] = max(
+                        result.get("model_calls", 0),
+                        checkpoint.get("result", {}).get("model_calls", 0),
+                    )
+                    elapsed = max(result.get("elapsed_seconds", 0), checkpoint.get("elapsed", 0))
+                    if checkpoint.get("pending_since"):
+                        elapsed += min(
+                            55,
+                            max(
+                                0,
+                                (
+                                    datetime.fromisoformat(ended_at)
+                                    - datetime.fromisoformat(checkpoint["pending_since"])
+                                ).total_seconds(),
+                            ),
+                        )
+                    result.update(
+                        status="incomplete",
+                        stop_reason="user_ended",
+                        elapsed_seconds=round(elapsed, 3),
+                    )
+                    self.store.save(run["id"], state="finished", result=result)
+                else:
+                    self.store.save(run["id"], state="finished")
+                step.update(state="abandoned", stop_reason="user_ended", finished_at=ended_at)
+            self.projects._write(project)
+        return self.get(identity)
 
     def set_resume(self, identity, *, title, text):
         with self.store.lock, self.store.db:
