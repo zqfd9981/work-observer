@@ -13,6 +13,7 @@ def openapi(routes):
     from work_observer.api.career import (
         CareerInput,
         CareerResearchInput,
+        ResumeInput,
         StoryInput,
         TaskImport,
         TaskUpdate,
@@ -78,7 +79,9 @@ def openapi(routes):
     models = {
         ("/api/career", "POST"): CareerInput,
         ("/api/career/{id}/stories", "POST"): StoryInput,
+        ("/api/career/{id}/stories/{story_id}", "PATCH"): StoryInput,
         ("/api/career/{id}/prepare", "POST"): CareerResearchInput,
+        ("/api/career/{id}/resume", "PATCH"): ResumeInput,
         ("/api/career/{id}/tasks", "POST"): TaskImport,
         ("/api/career/{id}/tasks/{task_id}", "PATCH"): TaskUpdate,
         ("/api/workflows", "POST"): WorkflowInput,

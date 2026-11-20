@@ -81,6 +81,7 @@ def run_stage(client, identity, auth, kind, **extra):
     step = prepared.json()["step_id"]
     running = client.post(f"/api/projects/{identity}/run", json={"step_id": step}, headers=auth)
     assert running.status_code == 202, running.text
+    assert running.json()["max_steps"] == 1
     for _ in range(200):
         data = client.get(f"/api/career/{identity}").json()
         if not data["running"] and data["results"][0]["result"]:
@@ -119,6 +120,8 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
                 "goal": "理解接口工作并形成作品",
                 "background": "亲自做过合成接口练习",
                 "constraints": "本地合成数据",
+                "resume_title": "合成简历.txt",
+                "resume_text": "合成简历：参与Python接口练习。没有真实业务效果数据。",
                 "job_ids": [job],
             },
             headers=auth,
@@ -126,6 +129,16 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert created.status_code == 201, created.text
         identity = created.json()["id"]
         assert not model.contexts  # Saving a goal never starts a model request.
+        first_resume = created.json()["resume"]["document_id"]
+        resume_text = client.get("/api/public-documents/" + first_resume).json()["text"]
+        replacement = client.patch(
+            f"/api/career/{identity}/resume",
+            json={"title": "合成简历更正.txt", "text": "更正：仅完成本地接口练习，尚未验证去重。"},
+            headers=auth,
+        )
+        assert replacement.status_code == 200, replacement.text
+        assert replacement.json()["resume"]["document_id"] != first_resume
+        assert client.get("/api/public-documents/" + first_resume).json()["text"] == resume_text
         role = run_stage(client, identity, auth, "role")
         requirement = role["requirements"][0]
         assert requirement["requirement"] == "required" and requirement["evidence"][0]["quote"]
@@ -141,6 +154,24 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert saved["stories"][0]["action"] == story["action"]
         doc = client.get("/api/public-documents/" + saved["stories"][0]["document_id"]).json()
         assert "用户自述" in doc["text"] and story["limits"] in doc["text"]
+        original_document_id = saved["stories"][0]["document_id"]
+        story_id = saved["stories"][0]["id"]
+        story["result"] = "更正：只保存了本地失败记录，没有业务效果数据"
+        edited = client.patch(
+            f"/api/career/{identity}/stories/{story_id}", json=story, headers=auth
+        )
+        assert edited.status_code == 200, edited.text
+        saved_story = edited.json()["stories"][0]
+        assert saved_story["id"] == story_id and saved_story["document_id"] != original_document_id
+        assert (
+            client.get("/api/public-documents/" + original_document_id).json()["text"]
+            == doc["text"]
+        )
+        current_scope = client.get(f"/api/projects/{identity}").json()["public_document_ids"]
+        assert (
+            saved_story["document_id"] in current_scope
+            and original_document_id not in current_scope
+        )
         plan = run_stage(client, identity, auth, "plan")
         step = plan["results"][0]["step_id"]
         tasks = client.post(
@@ -170,6 +201,7 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert personal["experiments"][0]["reported_observation"].startswith("重试仍有")
         assert personal["experiments"][0]["prior_expectation"] == "重试会避免写入失败"
         assert personal["selected_experiment_id"] == task["id"]
+        assert personal["resume"]["document_id"] == replacement.json()["resume"]["document_id"]
         interview = run_stage(client, identity, auth, "interview")
         question = interview["results"][0]["result"]["gaps"][-1]
         feedback = run_stage(
@@ -183,6 +215,14 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert feedback["results"][0]["kind"] == "answer"
         assert question in model.contexts[-1]["question"]
         assert "未完成去重验证" in model.contexts[-1]["question"]
+        temporary = client.post(
+            f"/api/career/{identity}/stories",
+            json={**story, "title": "不再使用的合成补充"},
+            headers=auth,
+        ).json()["stories"][-1]
+        removed = client.delete(f"/api/career/{identity}/stories/{temporary['id']}", headers=auth)
+        assert removed.status_code == 200 and len(removed.json()["stories"]) == 1
+        assert client.get("/api/public-documents/" + temporary["document_id"]).status_code == 200
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         data = client.get(f"/api/career/{identity}").json()
         assert len(data["stories"]) == len(data["tasks"]) == 1

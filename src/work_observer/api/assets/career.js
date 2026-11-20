@@ -4,15 +4,54 @@
   const labels={reflect:"根据练习结果调整下一步",role:"看清岗位",gaps:"对照经历与差距",plan:"设计工作样本实验",interview:"准备模拟面试",answer:"反馈我的回答"};
   const taskStates={planned:"待开始",doing:"进行中",done:"已记录结果"};
   const storyDraft=()=>career.drafts.get(career.id)||{};
+  const storyFields=["title","situation","action","result","limits","requirement_key"];
+  function resetStoryEditor(){
+    const draft=storyDraft(),previous=draft.new_story_draft||{};
+    for(const field of storyFields)delete draft[field];
+    delete draft.story_id;delete draft.new_story_draft;Object.assign(draft,previous);
+    career.drafts.set(career.id,draft);
+  }
+  function editStory(story){
+    captureDrafts();const draft=storyDraft();
+    if(!draft.story_id)draft.new_story_draft=Object.fromEntries(storyFields.map(field=>[field,draft[field]||""]));
+    Object.assign(draft,Object.fromEntries(storyFields.map(field=>[field,story[field]||""])),{story_id:story.id});
+    career.drafts.set(career.id,draft);career.tab="stories";renderDetail();$("#career-story").scrollIntoView({block:"center",behavior:"smooth"});
+  }
   const button=(kind,text)=>`<button type="button" class="secondary" data-career-research="${kind}" ${career.data?.running||career.busy?"disabled":""}>${text||labels[kind]} ↗</button>`;
   const jobText=job=>{const row=job.current||job;return [row.title,row.company_name_raw||row.company||""].filter(Boolean).join(" · ");};
   const apiPath=()=>"career/"+encodeURIComponent(career.id);
+
+  async function importResume(input){
+    const file=input.files?.[0];if(!file)return;
+    const form=input.closest("form"),status=form.querySelector("[data-resume-status]"),submit=form.querySelector('button[type="submit"],button.primary');
+    input.disabled=true;if(submit)submit.disabled=true;status.textContent="正在本地读取简历正文…";
+    try{
+      if(!/\.(txt|md|markdown|docx|pdf)$/i.test(file.name))throw new Error("支持TXT、Markdown、DOCX和PDF；旧版DOC请先另存为DOCX。");
+      if(file.size>8*1024*1024)throw new Error("请选择8MB以内的简历文件。");
+      let text,notice="";
+      if(/\.(pdf|docx)$/i.test(file.name)){
+        const extracted=await api("imports/documents/extract?filename="+encodeURIComponent(file.name),{method:"POST",body:file,headers:{"Content-Type":"application/octet-stream"}});
+        text=extracted.text;notice=extracted.notice;
+      }else text=(await file.text()).replace(/^\uFEFF/,"");
+      if(!text.trim())throw new Error("简历文件没有可读取的文字。");
+      if(!form.isConnected)return;
+      form.elements.resume_title.value=file.name.slice(0,150);form.elements.resume_text.value=text;
+      status.textContent=`已读取 ${text.length} 字。${notice} ${text.length>20000?"请先精简到2万字以内再保存。":"请核对正文后保存；读取不调用模型。"}`;
+      if(career.id&&form.id==="career-resume-form")captureDrafts();
+    }catch(error){status.textContent=error.message;}finally{input.disabled=false;input.value="";if(submit)submit.disabled=form.id==="career-resume-form"&&Boolean(career.data?.running||career.busy);}
+  }
+
+  function resumePanel(data){
+    const draft=storyDraft();
+    return `<details class="panel career-resume-panel" ${draft.resume_open?"open":""}><summary>${data.resume?"已导入简历 · "+e(data.resume.title):"导入或粘贴我的简历"}</summary>${data.resume?`<button type="button" class="text-button" data-public-source="${e(data.resume.document_id)}">查看已保存的简历正文 ↗</button>`:""}<form id="career-resume-form"><label class="research-file-drop"><input type="file" data-career-resume-file accept=".txt,.md,.markdown,.docx,.pdf"><strong>${data.resume?"选择新的简历文件":"选择简历文件"}</strong><span>TXT / Markdown / Word / PDF，本地提取文字</span></label><label>简历标题<input name="resume_title" maxlength="150" required value="${e(draft.resume_title||data.resume?.title||"个人简历")}"></label><label>或直接粘贴简历原文<textarea name="resume_text" rows="5" maxlength="20000" required placeholder="保留真实经历、个人分工与结果。文件提取后请核对正文。">${e(draft.resume_text||"")}</textarea></label><p class="form-note" data-resume-status role="status"></p><button type="submit" class="primary" ${data.running?"disabled":""}>${data.resume?"更新这份简历":"保存简历到本目标"}</button><p class="form-note">保存不调用模型。后续分析会把简历视为用户自述，能力与效果仍需实际证据。</p></form></details>`;
+  }
 
   function captureDrafts(){
     if(!career.id)return;
     const data={...storyDraft()},story=$("#career-story"),answer=$("#career-answer");
     if(story)for(const field of ["title","situation","action","result","limits","requirement_key"])data[field]=story.elements[field].value;
     if(answer){data.answer=answer.value;data.question_index=$("#career-interview-answer").elements.question_index.value;}
+    const resume=$("#career-resume-form");if(resume){data.resume_title=resume.elements.resume_title.value;data.resume_text=resume.elements.resume_text.value;data.resume_open=resume.closest("details").open;}
     for(const form of $$("[data-career-task-form]"))data["task:"+form.dataset.careerTaskForm]=Object.fromEntries(new FormData(form));
     career.drafts.set(career.id,data);
   }
@@ -44,7 +83,7 @@
 
   function stories(data){
     const draft=storyDraft();
-    return `<div class="section-heading"><div><h2>我的经历证据库</h2><p class="form-note">写清亲自参与的部分、结果和边界，供研究与模拟面试使用。</p></div>${button("gaps")}</div><div class="career-story-layout"><form id="career-story" class="panel"><label>对应哪项岗位要求<select name="requirement_key"><option value="">作为通用项目经历</option>${data.requirements.map(row=>`<option value="${e(row.key)}" ${draft.requirement_key===row.key?"selected":""}>${e(row.text)}</option>`).join("")}</select></label><label>项目或工作名称<input name="title" required maxlength="150" value="${e(draft.title||"")}" placeholder="例如：客服知识库检索项目"></label><label>要解决的问题<textarea name="situation" required rows="2" maxlength="1500">${e(draft.situation||"")}</textarea></label><label>我亲自做了什么<textarea name="action" required rows="3" maxlength="2000" placeholder="写你的具体行动、关键取舍，区分团队成果与个人参与。">${e(draft.action||"")}</textarea></label><label>实际结果与可查看的证据<textarea name="result" required rows="2" maxlength="1500" placeholder="可以写产物、测试方法、观察，也可以说明暂时没有效果数据。">${e(draft.result||"")}</textarea></label><label>局限、失败或未参与的部分<textarea name="limits" rows="2" maxlength="1000">${e(draft.limits||"")}</textarea></label><button class="primary" ${data.running?"disabled":""}>保存这份经历</button></form><div>${data.stories.length?data.stories.map(story=>`<article class="panel career-story-card"><span class="quiet-tag">用户自述 · 待核对</span><h3>${e(story.title)}</h3><dl>${detailData("场景",story.situation)}${detailData("亲自负责",story.action)}${detailData("结果与证据",story.result)}${detailData("边界",story.limits||"未填写")}</dl><button type="button" class="text-button" data-public-source="${e(story.document_id)}">查看保存的经历原文 ↗</button></article>`).join(""):empty("真实经历比技能词更有用","从一件亲自做过的事开始，尚未成功的尝试也值得保存。")}</div></div>`;
+    return `<div class="section-heading"><div><h2>我的经历证据库</h2><p class="form-note">写清亲自参与的部分、结果和边界，供研究与模拟面试使用。</p></div>${button("gaps")}</div>${resumePanel(data)}<div class="career-story-layout"><form id="career-story" class="panel">${draft.story_id?'<p class="career-editing-note">正在修改已保存的经历</p>':""}<label>对应哪项岗位要求<select name="requirement_key"><option value="">作为通用项目经历</option>${data.requirements.map(row=>`<option value="${e(row.key)}" ${draft.requirement_key===row.key?"selected":""}>${e(row.text)}</option>`).join("")}</select></label><label>项目或工作名称<input name="title" required maxlength="150" value="${e(draft.title||"")}" placeholder="例如：客服知识库检索项目"></label><label>要解决的问题<textarea name="situation" required rows="2" maxlength="1500">${e(draft.situation||"")}</textarea></label><label>我亲自做了什么<textarea name="action" required rows="3" maxlength="2000" placeholder="写你的具体行动、关键取舍，区分团队成果与个人参与。">${e(draft.action||"")}</textarea></label><label>实际结果与可查看的证据<textarea name="result" required rows="2" maxlength="1500" placeholder="可以写产物、测试方法、观察，也可以说明暂时没有效果数据。">${e(draft.result||"")}</textarea></label><label>局限、失败或未参与的部分<textarea name="limits" rows="2" maxlength="1000">${e(draft.limits||"")}</textarea></label><button class="primary" ${data.running?"disabled":""}>${draft.story_id?"保存修改":"保存这份经历"}</button>${draft.story_id?'<button type="button" class="text-button" data-career-cancel-story>取消修改</button>':""}</form><div>${data.stories.length?data.stories.map(story=>`<article class="panel career-story-card"><span class="quiet-tag">用户自述 · 待核对</span><h3>${e(story.title)}</h3><dl>${detailData("场景",story.situation)}${detailData("亲自负责",story.action)}${detailData("结果与证据",story.result)}${detailData("边界",story.limits||"未填写")}</dl><button type="button" class="text-button" data-public-source="${e(story.document_id)}">查看保存的经历原文 ↗</button><div class="result-actions"><button type="button" class="secondary small" data-career-edit-story="${e(story.id)}" ${data.running?"disabled":""}>修改经历 / 关联要求</button><button type="button" class="text-button" data-career-remove-story="${e(story.id)}" ${data.running?"disabled":""}>移出本目标</button></div></article>`).join(""):empty("真实经历比技能词更有用","从一件亲自做过的事开始，尚未成功的尝试也值得保存。")}</div></div>`;
   }
 
   function experiments(data){
@@ -78,13 +117,15 @@
     const stories=data.stories.map(row=>`<article><h3>${e(row.title)}</h3><h4>场景与目标</h4>${paragraph(row.situation)}<h4>亲自参与</h4>${paragraph(row.action)}<h4>结果与证据</h4>${paragraph(row.result)}<h4>局限与未参与部分</h4>${paragraph(row.limits)}</article>`).join("");
     const experiments=data.tasks.map(row=>`<article><h3>${e(row.title)} · ${e(taskStates[row.state])}</h3><h4>要交付什么</h4>${paragraph(row.deliverable)}<h4>怎样检查</h4>${paragraph(row.completion_check)}<h4>原先的预期</h4>${paragraph(row.hypothesis)}<h4>实际观察</h4>${paragraph(row.outcome)}<h4>产物位置</h4>${paragraph(row.artifact)}</article>`).join("");
     const interviews=data.results.filter(row=>row.kind==="answer").reverse().map(row=>`<article><h3>${e(row.interview_question||"模拟面试回答")}</h3><h4>我的回答</h4>${paragraph(row.answer)}<h4>研究反馈</h4>${row.result?.status==="completed"?row.result.claims.map(claim=>paragraph(claim.text)).join(""):'<p>本轮反馈尚未完整形成。</p>'}</article>`).join("");
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(data.title)} · 求职准备包</title><style>body{font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;background:#f4f7f1;color:#25382c;line-height:1.9}main{max-width:940px;margin:30px auto;background:white;padding:40px;border-radius:16px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #dfe7da;padding-bottom:18px;font-size:12px;color:#55724d}button{border:0;background:#315c46;color:white;padding:10px 16px;border-radius:8px;cursor:pointer}h1{font-size:30px;line-height:1.5}h2{font-size:21px;margin-top:36px;border-top:1px solid #dfe7da;padding-top:22px}h3{font-size:16px}h4{font-size:12px;color:#71846b;margin:18px 0 3px}p{font-size:14px;margin:5px 0 14px;overflow-wrap:anywhere}article{padding:18px 22px;background:#f7f9f4;border-radius:10px;margin:14px 0}blockquote{white-space:pre-wrap;background:white;border-left:2px solid #8fa882;margin:10px 0;padding:12px;font-size:12px}.meta{font-size:12px;color:#74846c}summary{font-size:12px;cursor:pointer}@media(max-width:600px){main{margin:0;padding:23px;border-radius:0}h1{font-size:25px}}@media print{body{background:white}main{margin:0;padding:0}header button{display:none}h2,h3{break-after:avoid}article{break-inside:avoid}}</style></head><body><main><header><strong>WORK OBSERVER / 求职准备包</strong><button onclick="window.print()">打印 / 保存为 PDF</button></header><h1>${e(data.title)}</h1>${paragraph(data.goal)}<p class="meta">导出于 ${e(when(new Date().toISOString()))}。项目经历与实验观察由用户自述；研究结论、建议及个人能力仍需结合原文和实际产物核对。</p><h2>我的背景与投入</h2>${paragraph(data.profile?.background)}${paragraph(data.profile?.constraints)}<h2>目标岗位</h2>${data.jobs.map(job=>paragraph(jobText(job))).join("")}<h2>岗位要求与原文</h2>${requirements||'<p>尚未提炼岗位要求。</p>'}<h2>我的经历证据</h2>${stories||'<p>尚未保存经历。</p>'}<h2>工作样本：预期与观察</h2>${experiments||'<p>尚未保存练习。</p>'}<h2>模拟面试与反馈</h2>${interviews||'<p>尚未保存面试回答。</p>'}</main></body></html>`;
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(data.title)} · 求职准备包</title><style>body{font-family:system-ui,"Microsoft YaHei",sans-serif;margin:0;background:#f4f7f1;color:#25382c;line-height:1.9}main{max-width:940px;margin:30px auto;background:white;padding:40px;border-radius:16px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #dfe7da;padding-bottom:18px;font-size:12px;color:#55724d}button{border:0;background:#315c46;color:white;padding:10px 16px;border-radius:8px;cursor:pointer}h1{font-size:30px;line-height:1.5}h2{font-size:21px;margin-top:36px;border-top:1px solid #dfe7da;padding-top:22px}h3{font-size:16px}h4{font-size:12px;color:#71846b;margin:18px 0 3px}p{font-size:14px;margin:5px 0 14px;overflow-wrap:anywhere}article{padding:18px 22px;background:#f7f9f4;border-radius:10px;margin:14px 0}blockquote{white-space:pre-wrap;background:white;border-left:2px solid #8fa882;margin:10px 0;padding:12px;font-size:12px}.meta{font-size:12px;color:#74846c}summary{font-size:12px;cursor:pointer}@media(max-width:600px){main{margin:0;padding:23px;border-radius:0}h1{font-size:25px}}@media print{body{background:white}main{margin:0;padding:0}header button{display:none}h2,h3{break-after:avoid}article{break-inside:avoid}}</style></head><body><main><header><strong>WORK OBSERVER / 求职准备包</strong><button onclick="window.print()">打印 / 保存为 PDF</button></header><h1>${e(data.title)}</h1>${paragraph(data.goal)}<p class="meta">导出于 ${e(when(new Date().toISOString()))}。项目经历与实验观察由用户自述；研究结论、建议及个人能力仍需结合原文和实际产物核对。</p><h2>我的背景与投入</h2>${paragraph(data.profile?.background)}${paragraph(data.profile?.constraints)}<h2>目标岗位</h2>${data.jobs.map(job=>paragraph(jobText(job))).join("")}${data.resume_text?`<details open><summary>我提供的简历原文</summary><blockquote>${e(data.resume_text)}</blockquote></details>`:""}<h2>岗位要求与原文</h2>${requirements||'<p>尚未提炼岗位要求。</p>'}<h2>我的经历证据</h2>${stories||'<p>尚未保存经历。</p>'}<h2>工作样本：预期与观察</h2>${experiments||'<p>尚未保存练习。</p>'}<h2>模拟面试与反馈</h2>${interviews||'<p>尚未保存面试回答。</p>'}</main></body></html>`;
   }
 
   async function exportPreparation(button){
     button.disabled=true;
     try{
-      const data=await api(apiPath()),html=preparationPackage(data);
+      const data=await api(apiPath());
+      if(data.resume)data.resume_text=(await api("public-documents/"+encodeURIComponent(data.resume.document_id))).text;
+      const html=preparationPackage(data);
       const url=URL.createObjectURL(new Blob([html],{type:"text/html;charset=utf-8"}));
       const link=document.createElement("a");link.href=url;link.download="求职准备包-"+data.title.replace(/[<>:"/\\|?*\u0000-\u001f]/g,"_").slice(0,70)+".html";
       document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -136,32 +177,37 @@
     event.preventDefault();const form=event.target,submit=$("#career-create-submit");
     if(!career.selected.size){notify("先选择至少一份目标岗位JD。",true);return;}
     submit.disabled=true;
-    try{const data=Object.fromEntries(new FormData(form));data.job_ids=[...career.selected.keys()];const created=await api("career",{method:"POST",body:JSON.stringify(data)});form.reset();career.selected.clear();selectedJobs();career.tab="requirements";location.hash="career/"+created.id;}
+    try{const data=Object.fromEntries(new FormData(form));data.resume_title=data.resume_title?.trim()||"个人简历";if(data.resume_text?.length>20000)throw new Error("请把简历正文精简到2万字以内。");if(!data.background.trim()){if(data.resume_text?.trim())data.background="已导入个人简历。具体经历见本目标附加的简历原文，经历与效果为用户自述，尚未独立验证。";else throw new Error("请填写已有经历，或导入一份简历。");}data.job_ids=[...career.selected.keys()];const created=await api("career",{method:"POST",body:JSON.stringify(data)});form.reset();career.selected.clear();selectedJobs();career.tab="requirements";location.hash="career/"+created.id;}
     catch(error){notify(error.message,true);}finally{submit.disabled=false;}
   });
   document.addEventListener("change",event=>{
+    if(event.target.matches?.("[data-career-resume-file]"))importResume(event.target);
     const choice=event.target.closest("[data-career-job]");
     if(choice){if(choice.checked&&career.selected.size>=6){choice.checked=false;notify("最多选择6个目标岗位。",true);return;}if(choice.checked)career.selected.set(choice.dataset.careerJob,jobText(career.jobs.get(choice.dataset.careerJob)));else career.selected.delete(choice.dataset.careerJob);selectedJobs();}
     if(event.target.id==="career-offline")career.offline=event.target.checked;
   });
   document.addEventListener("click",async event=>{
-    const target=event.target.closest("[data-career-tab],[data-career-remove-job],[data-career-research],[data-career-link-story],[data-career-import-tasks],[data-career-task-story],#career-refresh,#career-export");if(!target)return;
+    const target=event.target.closest("[data-career-tab],[data-career-remove-job],[data-career-research],[data-career-link-story],[data-career-import-tasks],[data-career-task-story],[data-career-edit-story],[data-career-remove-story],[data-career-cancel-story],#career-refresh,#career-export");if(!target)return;
     try{
       if(target.dataset.careerRemoveJob){career.selected.delete(target.dataset.careerRemoveJob);selectedJobs();await findJobs();}
       if(target.dataset.careerTab){captureDrafts();career.tab=target.dataset.careerTab;renderDetail();}
       if(target.dataset.careerResearch)await research(target.dataset.careerResearch,"",0,target.dataset.careerTaskId||null);
       if(target.dataset.careerLinkStory){captureDrafts();career.drafts.set(career.id,{...storyDraft(),requirement_key:target.dataset.careerLinkStory});career.tab="stories";renderDetail();$("#career-story").scrollIntoView({block:"center",behavior:"smooth"});}
       if(target.dataset.careerImportTasks){captureDrafts();career.data=await api(apiPath()+"/tasks",{method:"POST",body:JSON.stringify({step_id:target.dataset.careerImportTasks})});renderDetail();await loadGoals();}
-      if(target.dataset.careerTaskStory){captureDrafts();const task=career.data.tasks.find(row=>row.id===target.dataset.careerTaskStory);career.drafts.set(career.id,{...storyDraft(),title:task.title,situation:task.task_or_ability,action:task.outcome,result:task.artifact||task.outcome,limits:"这是个人练习，实际业务环境和职责仍需验证。"});career.tab="stories";renderDetail();}
+      if(target.dataset.careerTaskStory){captureDrafts();const task=career.data.tasks.find(row=>row.id===target.dataset.careerTaskStory);delete storyDraft().story_id;career.drafts.set(career.id,{...storyDraft(),title:task.title,situation:task.task_or_ability,action:task.outcome,result:task.artifact||task.outcome,limits:"这是个人练习，实际业务环境和职责仍需验证。"});career.tab="stories";renderDetail();}
       if(target.id==="career-refresh")await openCareer(career.id);
       if(target.id==="career-export")await exportPreparation(target);
-    }catch(error){notify(error.message,true);}
+      if(target.dataset.careerEditStory){const story=career.data.stories.find(row=>row.id===target.dataset.careerEditStory);if(story)editStory(story);}
+      if(target.hasAttribute("data-career-cancel-story")){captureDrafts();resetStoryEditor();renderDetail();}
+      if(target.dataset.careerRemoveStory){captureDrafts();target.disabled=true;career.data=await api(apiPath()+"/stories/"+encodeURIComponent(target.dataset.careerRemoveStory),{method:"DELETE"});if(storyDraft().story_id===target.dataset.careerRemoveStory)resetStoryEditor();renderDetail();await loadGoals();notify("经历已移出本目标，归档原文和历史研究保留。");}
+    }catch(error){target.disabled=false;notify(error.message,true);}
   });
   document.addEventListener("submit",async event=>{
-    const form=event.target;if(!["career-story","career-interview-answer"].includes(form.id)&&!form.dataset.careerTaskForm)return;
+    const form=event.target;if(!["career-story","career-interview-answer","career-resume-form"].includes(form.id)&&!form.dataset.careerTaskForm)return;
     event.preventDefault();const submit=event.submitter||form.querySelector("button");submit.disabled=true;captureDrafts();
     try{
-      if(form.id==="career-story"){career.data=await api(apiPath()+"/stories",{method:"POST",body:JSON.stringify(Object.fromEntries(new FormData(form)))});const draft=storyDraft();for(const key of ["title","situation","action","result","limits","requirement_key"])delete draft[key];career.drafts.set(career.id,draft);renderDetail();await loadGoals();notify("经历已保存，后续分析和面试可引用。");}
+      if(form.id==="career-story"){const storyId=storyDraft().story_id;career.data=await api(apiPath()+"/stories"+(storyId?"/"+encodeURIComponent(storyId):""),{method:storyId?"PATCH":"POST",body:JSON.stringify(Object.fromEntries(new FormData(form)))});resetStoryEditor();renderDetail();await loadGoals();notify("经历已保存，后续分析和面试可引用。");}
+      else if(form.id==="career-resume-form"){if(form.elements.resume_text.value.length>20000)throw new Error("请把简历正文精简到2万字以内。");career.data=await api(apiPath()+"/resume",{method:"PATCH",body:JSON.stringify({title:form.elements.resume_title.value,text:form.elements.resume_text.value})});delete storyDraft().resume_text;delete storyDraft().resume_title;renderDetail();notify("简历已保存，后续研究将参考这份正文。");}
       else if(form.id==="career-interview-answer")await research("answer",form.elements.answer.value,Number(form.elements.question_index.value));
       else{career.data=await api(apiPath()+"/tasks/"+encodeURIComponent(form.dataset.careerTaskForm),{method:"PATCH",body:JSON.stringify(Object.fromEntries(new FormData(form)))});delete storyDraft()["task:"+form.dataset.careerTaskForm];renderDetail();await loadGoals();notify("练习进度与实际观察已保存。");}
     }catch(error){notify(error.message,true);}finally{submit.disabled=false;}

@@ -65,7 +65,17 @@ class CareerService:
             raise ValueError("这个求职目标已不可用，请重新选择。")
         return project
 
-    def create(self, *, title, goal, background, constraints, job_ids):
+    def create(
+        self,
+        *,
+        title,
+        goal,
+        background,
+        constraints,
+        job_ids,
+        resume_title="个人简历",
+        resume_text="",
+    ):
         for identity in job_ids:
             self.repository.job(identity)
         project = self.projects.create(
@@ -102,6 +112,8 @@ class CareerService:
                 "runs": [],
             }
             self.projects._write(project)
+        if resume_text.strip():
+            return self.set_resume(project["id"], title=resume_title, text=resume_text)
         return self.get(project["id"])
 
     def listing(self):
@@ -189,6 +201,9 @@ class CareerService:
             "title": project["title"],
             "goal": project["goal"],
             "profile": profile,
+            "resume": {"document_id": career["resume_document_id"], "title": career["resume_title"]}
+            if career.get("resume_document_id")
+            else None,
             "jobs": [self.repository.job(key) for key in project["job_ids"]],
             "stories": career["stories"],
             "tasks": career["tasks"],
@@ -199,12 +214,38 @@ class CareerService:
             "running": any(step["state"] == "running" for step in project["steps"]),
         }
 
-    def add_story(self, identity, data):
+    def set_resume(self, identity, *, title, text):
         with self.store.lock, self.store.db:
             project = self._project(identity)
-            if len(project["career"]["stories"]) >= 12:
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再更新简历，输入仍保留。")
+            previous = project["career"].get("resume_document_id")
+            if not previous and len(project.get("public_document_ids") or []) >= 20:
+                raise ValueError("本研究已选满20份资料，请先在研究工作台调整。")
+            document = PublicDocumentService(
+                self.repository, self.raw_directory / "public"
+            ).archive_text(
+                title,
+                "用户提供的简历文字，经历及效果尚未独立核实。\n" + text,
+                "用户导入的简历文字，可能由文件提取；图片与版式不作为研究证据，不是企业招聘要求。",
+            )["document"]
+            project["career"].update(resume_document_id=document["id"], resume_title=title)
+            project["public_document_ids"] = [
+                key for key in (project.get("public_document_ids") or []) if key != previous
+            ] + [document["id"]]
+            self.projects._write(project)
+        return self.get(identity)
+
+    def add_story(self, identity, data, story_id=None):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            stories = project["career"]["stories"]
+            previous = next((row for row in stories if row["id"] == story_id), None)
+            if story_id and previous is None:
+                raise ValueError("这份经历已经不在当前目标中，请刷新列表。")
+            if not previous and len(stories) >= 12:
                 raise ValueError("每个目标最多保存12份经历，请精简后再补充。")
-            if len(project.get("public_document_ids") or []) >= 20:
+            if not previous and len(project.get("public_document_ids") or []) >= 20:
                 raise ValueError("本研究已选满20份资料，请先在研究工作台调整。")
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等当前研究结束后再补充经历，输入仍保留。")
@@ -225,17 +266,43 @@ class CareerService:
                 text,
                 "用户自述项目经历；不是企业招聘要求或独立核验结果",
             )["document"]
-            project["career"]["stories"].append(
-                {
-                    "id": uuid4().hex,
-                    **data,
-                    "document_id": document["id"],
-                    "created_at": now(),
-                }
-            )
+            saved = {
+                "id": story_id or uuid4().hex,
+                **data,
+                "document_id": document["id"],
+                "created_at": previous["created_at"] if previous else now(),
+                "updated_at": now(),
+            }
+            if previous:
+                stories[stories.index(previous)] = saved
+            else:
+                stories.append(saved)
             project["public_document_ids"] = [
-                *(project.get("public_document_ids") or []),
+                *(
+                    key
+                    for key in (project.get("public_document_ids") or [])
+                    if not previous or key != previous["document_id"]
+                ),
                 document["id"],
+            ]
+            self.projects._write(project)
+        return self.get(identity)
+
+    def remove_story(self, identity, story_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等当前研究结束后再移出经历。")
+            story = next(
+                (row for row in project["career"]["stories"] if row["id"] == story_id), None
+            )
+            if not story:
+                raise ValueError("这份经历已经不在当前目标中。")
+            project["career"]["stories"].remove(story)
+            project["public_document_ids"] = [
+                key
+                for key in (project.get("public_document_ids") or [])
+                if key != story["document_id"]
             ]
             self.projects._write(project)
         return self.get(identity)

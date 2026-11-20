@@ -15,6 +15,8 @@ class CareerInput(BaseModel):
     background: str = Field(min_length=1, max_length=1500)
     constraints: str = Field(default="", max_length=500)
     job_ids: list[str] = Field(min_length=1, max_length=6)
+    resume_title: str = Field(default="个人简历", min_length=1, max_length=150)
+    resume_text: str = Field(default="", max_length=20_000)
 
 
 class StoryInput(BaseModel):
@@ -25,6 +27,12 @@ class StoryInput(BaseModel):
     result: str = Field(min_length=1, max_length=1500)
     limits: str = Field(default="", max_length=1000)
     requirement_key: str = Field(default="", max_length=100)
+
+
+class ResumeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=150)
+    text: str = Field(min_length=1, max_length=20_000)
 
 
 class CareerResearchInput(BaseModel):
@@ -91,6 +99,31 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             lambda: service().prepare(request.path_params["id"], **data.model_dump()), 201
         )
 
+    async def resume(request):
+        if busy():
+            return response({"message": "请等本轮研究结束后再更新简历，输入仍保留。"}, 409)
+        data = ResumeInput.model_validate(await read_json(request))
+        return change(lambda: service().set_resume(request.path_params["id"], **data.model_dump()))
+
+    async def edit_story(request):
+        if busy():
+            return response({"message": "请等当前研究结束后再修改经历，输入仍保留。"}, 409)
+        data = StoryInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().add_story(
+                request.path_params["id"], data.model_dump(), request.path_params["story_id"]
+            )
+        )
+
+    async def remove_story(request):
+        if busy():
+            return response({"message": "请等当前研究结束后再移出经历。"}, 409)
+        return change(
+            lambda: service().remove_story(
+                request.path_params["id"], request.path_params["story_id"]
+            )
+        )
+
     async def import_tasks(request):
         data = TaskImport.model_validate(await read_json(request))
         return change(lambda: service().import_tasks(request.path_params["id"], data.step_id))
@@ -107,7 +140,10 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", listing),
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
+        Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
         Route("/api/career/{id}/stories", story, methods=["POST"]),
+        Route("/api/career/{id}/stories/{story_id}", edit_story, methods=["PATCH"]),
+        Route("/api/career/{id}/stories/{story_id}", remove_story, methods=["DELETE"]),
         Route("/api/career/{id}/prepare", prepare, methods=["POST"]),
         Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),

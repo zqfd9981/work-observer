@@ -1472,6 +1472,13 @@ class ProjectService:
             if selected_task := step.get("career_task_id"):
                 observations = [row for row in observations if row["id"] == selected_task]
             context["career_evidence"] = {
+                "resume": {
+                    "document_id": career["resume_document_id"],
+                    "title": career["resume_title"],
+                    "notice": "用户提供的简历，经历未经独立核实；需要时读取归档全文。",
+                }
+                if career.get("resume_document_id")
+                else None,
                 "notice": "以下是用户自述和个人练习记录，不是招聘原文、独立评测或能力认证。"
                 "摘要仅供定位；项目经历全文可按document_id读取本轮归档。",
                 "selected_experiment_id": step.get("career_task_id"),

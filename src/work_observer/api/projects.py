@@ -429,6 +429,7 @@ def project_routes(
                 },
                 409,
             )
+        max_steps = 1 if project.get("career") else 3
         tasks["project:" + identity] = asyncio.create_task(
             execute_project(
                 service(),
@@ -436,11 +437,11 @@ def project_routes(
                 repository(),
                 settings,
                 model=model,
-                max_steps=3,
+                max_steps=max_steps,
                 preferred_step_id=data.step_id,
             )
         )
-        return response({"id": identity, "state": "running", "max_steps": 3}, 202)
+        return response({"id": identity, "state": "running", "max_steps": max_steps}, 202)
 
     async def repair_step(request):
         data = StepRepair.model_validate(await read_json(request))
