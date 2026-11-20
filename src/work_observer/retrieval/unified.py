@@ -51,13 +51,13 @@ class UnifiedRetrieval:
         include_knowledge=True,
         offset=None,
     ):
-        terms = validated_terms(terms)
         if type(limit) is not int or not 1 <= limit <= 20:
             raise ProbeError("INVALID_RETRIEVAL_LIMIT")
         if offset is not None and (type(offset) is not int or offset < 0):
             raise ProbeError("INVALID_RETRIEVAL_OFFSET")
         # The local library pages through originals; model retrieval keeps its short context.
         browsing = offset is not None
+        terms = validated_terms(terms, max_length=200 if browsing else 100)
         if browsing:
             include_knowledge = False
         if public_document_ids is not None and (
@@ -70,9 +70,10 @@ class UnifiedRetrieval:
         retrieval = RetrievalService(self.repository, alias_groups=self.alias_groups)
         jobs = retrieval.search(
             terms, filters=filters, job_ids=job_ids, as_of=cutoff,
-            limit=None if browsing else 20, aliases=aliases
+            limit=None if browsing else 20, aliases=aliases, include_titles=browsing,
         )
         expanded = jobs["expanded_terms"]
+        stride = 700 - max(100, max(map(len, expanded)))
         evidence, excluded_integrity = [], []
         catalog = Catalog(self.repository)
         for item in jobs["evidence"]:
@@ -100,16 +101,21 @@ class UnifiedRetrieval:
                     continue
                 scoped_public_ids.append(row.id)
                 chunks = []
-                for start in range(0, len(row.text), 600):
+                for start in range(0, len(row.text), stride):
                     quote = row.text[start : start + 700]
                     folded = match_text(quote)
                     hits = [term for term in expanded if match_text(term) in folded]
                     if hits:
-                        chunks.append((sum(folded.count(match_text(t)) for t in hits), start))
+                        chunks.append((sum(folded.count(match_text(t)) for t in hits), start, hits))
+                metadata = match_text((row.title or "") + "\n" + (row.publisher or ""))
+                if browsing and row.text and not chunks and any(
+                    match_text(term) in metadata for term in expanded
+                ):
+                    chunks.append((0, 0, []))
                 if chunks:
                     public_matches.add(row.id)
                 ranked_chunks = sorted(chunks, key=lambda item: (-item[0], item[1]))
-                for score, start in ranked_chunks if browsing else ranked_chunks[:20]:
+                for score, start, hits in ranked_chunks if browsing else ranked_chunks[:20]:
                     item = PublicDocumentService._evidence(row)[0]
                     end = min(start + 700, len(row.text))
                     item.update(
@@ -125,7 +131,11 @@ class UnifiedRetrieval:
                             "scope_note": item["source_note"]
                             if item["evidence_kind"] == "work_material"
                             else "公开材料描述发布者业务，不能据此认定某岗位具体职责。",
-                            "retrieval": {"score": score},
+                            "retrieval": {
+                                "score": score,
+                                **({"match_location": "body" if hits else "metadata",
+                                    "matched_terms": hits} if browsing else {}),
+                            },
                         }
                     )
         scoped_jobs = jobs["scope_job_ids"]

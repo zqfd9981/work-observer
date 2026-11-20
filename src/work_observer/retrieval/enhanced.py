@@ -40,11 +40,14 @@ def normalized_time(value):
         raise ProbeError("INVALID_RETRIEVAL_TIME") from exc
 
 
-def validated_terms(terms):
+def validated_terms(terms, *, max_length=100):
     if (
         not isinstance(terms, list)
         or not 1 <= len(terms) <= 10
-        or any(not isinstance(term, str) or not term.strip() or len(term) > 100 for term in terms)
+        or any(
+            not isinstance(term, str) or not term.strip() or len(term) > max_length
+            for term in terms
+        )
     ):
         raise ProbeError("INVALID_SEARCH_TERMS")
     return list(dict.fromkeys(term.strip() for term in terms))
@@ -235,11 +238,15 @@ class RetrievalService:
             },
         }
 
-    def search(self, terms, filters=None, job_ids=None, as_of=None, limit=10, aliases=True):
-        terms = validated_terms(terms)
+    def search(
+        self, terms, filters=None, job_ids=None, as_of=None, limit=10, aliases=True,
+        *, include_titles=False,
+    ):
+        terms = validated_terms(terms, max_length=200 if include_titles else 100)
         if limit is not None and (type(limit) is not int or not 1 <= limit <= 20):
             raise ProbeError("INVALID_RETRIEVAL_LIMIT")
         expanded = self._expand(terms, aliases)
+        stride = 700 - max(100, max(map(len, expanded)))
         records, filters, cutoff = self._records(filters, job_ids, as_of)
         ranked, tag_only, matching_jobs = [], [], set()
         for item in records:
@@ -259,25 +266,35 @@ class RetrievalService:
                 )
             chunks = []
             if text and item["row"]:
-                # 百字符重叠覆盖最长检索词跨片段边界的情况，原文位置保持不变。
-                for start in range(0, len(text), 600):
+                # 重叠覆盖最长检索词跨片段边界的情况，原文位置保持不变。
+                for start in range(0, len(text), stride):
                     quote = text[start : start + 700]
                     folded = match_text(quote)
                     matches = [term for term in expanded if match_text(term) in folded]
                     score = sum(folded.count(match_text(term)) for term in matches)
-                    if matches or label_hits and start == 0:
+                    if matches or not include_titles and label_hits and start == 0:
                         chunks.append((score + bool(label_hits), start, matches))
+                metadata = "\n".join(
+                    str(record.get(key) or "") for key in ("title", "company_name_raw")
+                )
+                if include_titles and not chunks and (
+                    label_hits or any(match_text(term) in match_text(metadata) for term in expanded)
+                ):
+                    chunks.append((0, 0, []))
             if chunks:
                 matching_jobs.add(item["job_id"])
                 chunks.sort(key=lambda chunk: (-chunk[0], chunk[1]))
                 for index, (score, start, matches) in enumerate(chunks):
+                    evidence = self._evidence(item, start, score, matches, label_hits)
+                    if include_titles:
+                        evidence["retrieval"]["match_location"] = "body" if matches else "metadata"
                     ranked.append(
                         (
                             index > 0,
                             -score,
                             item["job_id"],
                             start,
-                            self._evidence(item, start, score, matches, label_hits),
+                            evidence,
                         )
                     )
         ranked.sort(key=lambda row: row[:4])

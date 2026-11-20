@@ -2,10 +2,12 @@
 
 import re
 
+import pytest
 from starlette.testclient import TestClient
 
 from work_observer.api.web import create_app
 from work_observer.config import Settings
+from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.storage.database import upgrade
 from work_observer.storage.repository import Repository
@@ -119,5 +121,79 @@ def test_library_pages_records_jobs_and_long_originals_without_model_calls(tmp_p
         )
         assert len(bounded["evidence"]) <= 20
         assert bounded["context_characters"] <= 7000 and bounded["context_limit"] == 7000
+    finally:
+        repository.close()
+
+
+def test_library_recalls_names_sources_and_long_terms_with_truthful_previews(tmp_path):
+    database = tmp_path / "named-library.db"
+    upgrade(database)
+    settings = Settings(database_path=database, raw_directory=tmp_path / "raw")
+    filename = "synthetic-" + "reading-notes-" * 8 + ".md"
+    long_term = "长词开始" + "甲乙丙丁" * 42 + "长词结束"
+    text = "合成正文。" * 130 + long_term + "尾部正文关键词，不能证明实际生产能力。"
+    with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+        auth = {
+            "X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
+        }
+
+        def job(title, company):
+            response = client.post("/api/import", headers=auth, json={
+                "title": title, "company": company, "description": text, "data_kind": "synthetic",
+            })
+            assert response.status_code == 201, response.text
+            return response.json()["job_id"]
+
+        selected = job("合成岗位名称独有词", "合成公司来源独有词")
+        other = job("范围外名称独有词", "范围外公司")
+        identity = client.post("/api/career", headers=auth, json={
+            "title": "合成名称检索", "goal": "找回原文", "background": "本地虚构资料。",
+            "job_ids": [selected],
+        }).json()["id"]
+        base = f"/api/career/{identity}"
+        response = client.post(base + "/materials", headers=auth, json={
+            "title": filename, "text": text, "source_name": "合成资料来源独有词",
+        })
+        assert response.status_code == 201, response.text
+        document = response.json()["materials"][0]["id"]
+
+        def search(query, **params):
+            response = client.get(base + "/search", params={"q": query, **params})
+            assert response.status_code == 200, response.text
+            return response.json()["originals"]
+
+        for query in ("名称独有词", "公司来源独有词", filename, "资料来源独有词"):
+            found = search(query)
+            assert found["evidence_count"] == 1
+            row = found["evidence"][0]
+            assert row["retrieval"]["match_location"] == "metadata"
+            assert row["retrieval"]["matched_terms"] == []
+            assert row["quote"] == text[:700] and row["start"] == 0
+            assert query not in row["quote"]
+        assert not search("范围外名称独有词")["evidence"]
+        assert search("范围外名称独有词", scope="all")["evidence"][0]["job_id"] == other
+
+        for query in (long_term, "尾部正文关键词"):
+            found = search(query)
+            assert found["matching_jobs"] == found["matching_public_documents"] == 1
+            assert {row.get("job_id") or row.get("public_document_id")
+                    for row in found["evidence"]} == {selected, document}
+            for row in found["evidence"]:
+                assert row["quote"] == text[row["start"]:row["end"]]
+                assert query in row["quote"] and row["start"] > 0
+                assert row["retrieval"]["match_location"] == "body"
+                assert row["retrieval"]["matched_terms"] == [query]
+        assert client.get(base).json()["usage"]["calls"] == 0
+
+    repository = Repository(database)
+    try:
+        # A library name hit must not become a body citation in model retrieval.
+        service = UnifiedRetrieval(repository)
+        assert not service.search(
+            ["名称独有词"], job_ids=[selected], public_document_ids=[document],
+            include_knowledge=False,
+        )["evidence"]
+        with pytest.raises(ProbeError, match="INVALID_SEARCH_TERMS"):
+            service.search([filename], include_knowledge=False)
     finally:
         repository.close()
