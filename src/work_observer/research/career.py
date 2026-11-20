@@ -216,7 +216,9 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
-    def search(self, identity, *, q, scope="goal"):
+    def search(
+        self, identity, *, q, scope="goal", record_kind="all", records_offset=0, sources_offset=0
+    ):
         project = self._project(identity)
         terms = q.split()[:10]
         originals = UnifiedRetrieval(self.repository).search(
@@ -240,6 +242,7 @@ class CareerService:
             project_id=identity if scope == "goal" else None,
             include_knowledge=False,
             limit=12,
+            offset=sources_offset,
         )
         projects = (
             [project]
@@ -254,6 +257,8 @@ class CareerService:
         records = []
 
         def add(owner, kind, row, title, text, section, *, step_id=None):
+            if record_kind != "all" and record_kind != kind:
+                return
             folded = match_text(title + "\n" + text)
             if not all(term in folded for term in terms):
                 return
@@ -398,14 +403,22 @@ class CareerService:
                     section,
                     step_id=row["step_id"],
                 )
-        records.sort(key=lambda row: row["recorded_at"] or "", reverse=True)
+        records.sort(
+            key=lambda row: (row["recorded_at"] or "", row["project_id"], row["kind"], row["id"]),
+            reverse=True,
+        )
+        selected_records = records[records_offset : records_offset + 24]
+        next_records = records_offset + len(selected_records)
         return {
             "query": q,
             "scope": scope,
             "originals": originals,
-            "records": records[:24],
+            "record_kind": record_kind,
+            "records": selected_records,
             "record_count": len(records),
-            "records_truncated": len(records) > 24,
+            "records_offset": records_offset,
+            "next_records_offset": next_records if next_records < len(records) else None,
+            "records_truncated": next_records < len(records),
         }
 
     def get(self, identity):

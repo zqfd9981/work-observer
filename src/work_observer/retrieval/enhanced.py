@@ -237,7 +237,7 @@ class RetrievalService:
 
     def search(self, terms, filters=None, job_ids=None, as_of=None, limit=10, aliases=True):
         terms = validated_terms(terms)
-        if type(limit) is not int or not 1 <= limit <= 20:
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 20):
             raise ProbeError("INVALID_RETRIEVAL_LIMIT")
         expanded = self._expand(terms, aliases)
         records, filters, cutoff = self._records(filters, job_ids, as_of)
@@ -283,12 +283,12 @@ class RetrievalService:
         ranked.sort(key=lambda row: row[:4])
         evidence, seen, characters = [], set(), 0
         for *_, item in ranked:
-            if item["id"] in seen or characters + len(item["quote"]) > 7000:
+            if item["id"] in seen or limit is not None and characters + len(item["quote"]) > 7000:
                 continue
             seen.add(item["id"])
             evidence.append(item)
             characters += len(item["quote"])
-            if len(evidence) >= limit:
+            if limit is not None and len(evidence) >= limit:
                 break
         return {
             "terms": terms,
@@ -300,7 +300,7 @@ class RetrievalService:
             "evidence": evidence,
             "tag_only_hits": tag_only[:20],
             "context_characters": characters,
-            "context_limit": 7000,
+            "context_limit": 7000 if limit is not None else None,
             "limit": limit,
             "truncated": len(ranked) > len(evidence),
         }

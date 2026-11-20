@@ -27,6 +27,11 @@ class CareerSearchQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     q: str = Field(min_length=1, max_length=200)
     scope: Literal["goal", "all"] = "goal"
+    record_kind: Literal[
+        "all", "story", "task", "insight", "question", "pitch", "discussion"
+    ] = "all"
+    records_offset: int = Field(default=0, ge=0)
+    sources_offset: int = Field(default=0, ge=0)
 
 
 class StoryInput(BaseModel):

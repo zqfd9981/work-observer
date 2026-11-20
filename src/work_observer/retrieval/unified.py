@@ -49,10 +49,17 @@ class UnifiedRetrieval:
         limit=10,
         aliases=True,
         include_knowledge=True,
+        offset=None,
     ):
         terms = validated_terms(terms)
         if type(limit) is not int or not 1 <= limit <= 20:
             raise ProbeError("INVALID_RETRIEVAL_LIMIT")
+        if offset is not None and (type(offset) is not int or offset < 0):
+            raise ProbeError("INVALID_RETRIEVAL_OFFSET")
+        # The local library pages through originals; model retrieval keeps its short context.
+        browsing = offset is not None
+        if browsing:
+            include_knowledge = False
         if public_document_ids is not None and (
             not isinstance(public_document_ids, list)
             or len(public_document_ids) > 5000
@@ -62,7 +69,8 @@ class UnifiedRetrieval:
         cutoff = normalized_time(as_of)
         retrieval = RetrievalService(self.repository, alias_groups=self.alias_groups)
         jobs = retrieval.search(
-            terms, filters=filters, job_ids=job_ids, as_of=cutoff, limit=20, aliases=aliases
+            terms, filters=filters, job_ids=job_ids, as_of=cutoff,
+            limit=None if browsing else 20, aliases=aliases
         )
         expanded = jobs["expanded_terms"]
         evidence, excluded_integrity = [], []
@@ -100,7 +108,8 @@ class UnifiedRetrieval:
                         chunks.append((sum(folded.count(match_text(t)) for t in hits), start))
                 if chunks:
                     public_matches.add(row.id)
-                for score, start in sorted(chunks, key=lambda item: (-item[0], item[1]))[:20]:
+                ranked_chunks = sorted(chunks, key=lambda item: (-item[0], item[1]))
+                for score, start in ranked_chunks if browsing else ranked_chunks[:20]:
                     item = PublicDocumentService._evidence(row)[0]
                     end = min(start + 700, len(row.text))
                     item.update(
@@ -129,11 +138,15 @@ class UnifiedRetrieval:
             source_seen.add(source_id)
         evidence = [item for _, item in sorted(diversified, key=lambda row: row[0])]
         selected, characters = [], 0
-        for item in evidence:
-            if len(selected) >= limit or characters + len(item["quote"]) > 7000:
-                continue
-            selected.append(item)
-            characters += len(item["quote"])
+        if browsing:
+            selected = evidence[offset : offset + limit]
+            characters = sum(len(item["quote"]) for item in selected)
+        else:
+            for item in evidence:
+                if len(selected) >= limit or characters + len(item["quote"]) > 7000:
+                    continue
+                selected.append(item)
+                characters += len(item["quote"])
         knowledge, knowledge_omissions = [], []
         domain_knowledge = {
             "domains": [],
@@ -250,8 +263,13 @@ class UnifiedRetrieval:
             "domain_knowledge": domain_knowledge,
             "excluded_integrity_ids": sorted(set(excluded_integrity)),
             "context_characters": characters,
-            "context_limit": 7000,
-            "truncated": len(evidence) > len(selected),
+            "context_limit": None if browsing else 7000,
+            "truncated": offset + len(selected) < len(evidence)
+            if browsing else len(evidence) > len(selected),
+            "evidence_count": len(evidence),
+            "offset": offset or 0,
+            "next_offset": offset + len(selected)
+            if browsing and offset + len(selected) < len(evidence) else None,
             "scope": {
                 "job_ids": job_ids,
                 "effective_job_ids": scoped_jobs,
