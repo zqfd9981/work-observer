@@ -87,6 +87,7 @@ class CareerResearchInput(BaseModel):
         "followup",
         "ask",
         "challenge",
+        "pitch",
     ]
     answer: str = Field(default="", max_length=2500)
     offline: bool = False
@@ -99,6 +100,15 @@ class CareerResearchInput(BaseModel):
     hypothesis_a: str = Field(default="", max_length=700)
     hypothesis_b: str = Field(default="", max_length=700)
     material_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
+class PitchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=150)
+    text: str = Field(min_length=1, max_length=2500)
+    story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class TaskImport(BaseModel):
@@ -209,6 +219,15 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             )
         )
 
+    async def pitch(request):
+        data = PitchInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().save_pitch(
+                request.path_params["id"], data.model_dump(), request.path_params.get("pitch_id")
+            ),
+            200 if request.path_params.get("pitch_id") else 201,
+        )
+
     async def edit_story(request):
         if busy():
             return response({"message": "请等当前研究结束后再修改经历，输入仍保留。"}, 409)
@@ -292,6 +311,8 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
         Route("/api/career/{id}/insights", insight, methods=["POST"]),
         Route("/api/career/{id}/insights/{insight_id}", edit_insight, methods=["PATCH"]),
+        Route("/api/career/{id}/pitches", pitch, methods=["POST"]),
+        Route("/api/career/{id}/pitches/{pitch_id}", pitch, methods=["PATCH"]),
         Route("/api/career/{id}/stories", story, methods=["POST"]),
         Route("/api/career/{id}/stories/{story_id}", edit_story, methods=["PATCH"]),
         Route("/api/career/{id}/stories/{story_id}", remove_story, methods=["DELETE"]),

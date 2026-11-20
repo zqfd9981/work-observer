@@ -1484,7 +1484,27 @@ class ProjectService:
             observations = [row for row in career.get("tasks", []) if row.get("outcome")]
             if selected_task := step.get("career_task_id"):
                 observations = [row for row in observations if row["id"] == selected_task]
+            selected_story = next(
+                (row for row in stories if row["id"] == step.get("career_story_id")), None
+            )
             context["career_evidence"] = {
+                "selected_story": {
+                    "id": selected_story["id"],
+                    "title": selected_story["title"],
+                    "document_id": selected_story["document_id"],
+                    "notice": "用户选中的经历，需读取原文，不把不同项目混为同一个项目。",
+                }
+                if selected_story
+                else None,
+                "presentation_drafts": [
+                    {
+                        "title": row["title"],
+                        "text": row["text"],
+                        "story_id": row.get("story_id"),
+                        "notice": "用户自己的讲述稿，不是新增事实来源；事实仍需回查经历原文。",
+                    }
+                    for row in career.get("pitches", [])[-2:]
+                ],
                 "public_research_policy": (
                     "可按问题需要补查企业官方业务说明和技术资料，优先从所选JD与已有归档出发。"
                     "公开检索只针对业务、企业、产品或技术问题，不把个人简历、联系方式、面试回答"

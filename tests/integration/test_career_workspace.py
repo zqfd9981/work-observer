@@ -28,7 +28,7 @@ class CareerModel:
         career_context = (context.get("project_context") or {}).get("career_evidence", {})
         required_documents = [
             value
-            for key in ("selected_answer", "selected_material")
+            for key in ("selected_answer", "selected_material", "selected_story")
             if (value := career_context.get(key))
         ]
         if not required_documents:
@@ -165,6 +165,23 @@ class CareerModel:
                         "evidence_ids": [evidence, answer_evidence["id"]],
                     }
                 ]
+            if selected_story := career_context.get("selected_story"):
+                story_evidence = next(
+                    ev
+                    for output in outputs
+                    for ev in output.get("evidence", [])
+                    if ev.get("public_document_id") == selected_story["document_id"]
+                )
+                arguments["claims"] = [
+                    {
+                        "category": "responsibility",
+                        "basis": "synthesis",
+                        "requirement": "unspecified",
+                        "text": "我亲自编写了本地超时样例，尚未在生产环境运行。",
+                        "evidence_ids": [story_evidence["id"]],
+                    }
+                ]
+                arguments["gaps"] = ["尚需补充输入输出和记录位置，不编造业务指标。"]
             name = "finish_research"
         call = {
             "type": "function_call",
@@ -274,7 +291,54 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             saved_story["document_id"] in current_scope
             and original_document_id not in current_scope
         )
+        calls_before_pitch = len(model.contexts)
+        pitch_text = "我亲自编写超时样例，只保存本地失败记录，没有业务效果数据。"
+        created_pitch = client.post(
+            f"/api/career/{identity}/pitches",
+            json={
+                "title": "合成项目讲述",
+                "text": pitch_text,
+                "story_id": story_id,
+            },
+            headers=auth,
+        )
+        assert created_pitch.status_code == 201, created_pitch.text
+        pitch_id = created_pitch.json()["pitches"][0]["id"]
+        assert len(model.contexts) == calls_before_pitch
+        researched_pitch = run_stage(client, identity, auth, "pitch", story_id=story_id)
+        pitch_source = researched_pitch["results"][0]
+        assert pitch_source["story_id"] == story_id
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["selected_story"][
+                "document_id"
+            ]
+            == saved_story["document_id"]
+        )
+        assert any(
+            ev.get("public_document_id") == saved_story["document_id"]
+            for ev in pitch_source["result"]["evidence"]
+        )
+        pitch_text += " 我未在生产环境执行，相关边界仍需验证。"
+        edited_pitch = client.patch(
+            f"/api/career/{identity}/pitches/{pitch_id}",
+            json={
+                "title": "更正后的合成项目讲述",
+                "text": pitch_text,
+                "story_id": story_id,
+                "source_step_id": pitch_source["step_id"],
+            },
+            headers=auth,
+        )
+        assert edited_pitch.status_code == 200 and len(edited_pitch.json()["pitches"]) == 1
+        assert edited_pitch.json()["pitches"][0]["id"] == pitch_id
+        assert client.get(f"/api/career/{identity}").json()["stories"][0] == saved_story
         mapped = run_stage(client, identity, auth, "map")
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["presentation_drafts"][0][
+                "text"
+            ]
+            == pitch_text
+        )
         assert len(mapped["results"][0]["result"]["work_map"]["work_relations"]) == 2
         assert len(mapped["requirements"]) == 3
         assert (
@@ -689,6 +753,7 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert data["tasks"][0]["state"] == "done"
         assert data["insights"][0]["current_view"] == insight["current_view"]
         assert data["title"] == "调整后的合成求职目标"
+        assert data["pitches"][0]["text"] == pitch_text
         assert (
             next(row for row in client.get("/api/career").json() if row["id"] == identity)[
                 "done_count"

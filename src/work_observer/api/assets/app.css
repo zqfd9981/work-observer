@@ -68,3 +68,5 @@
 .career-material-shelf{margin:24px 0}.career-material-shelf>h3{font-size:14px}.career-material-card{padding:14px 0;border-top:1px solid #e1e8db}.career-material-card strong{font-size:14px;overflow-wrap:anywhere}.career-material-editor{padding:16px;border:1px dashed #cbd9c3;border-radius:9px;margin:14px 0}.career-material-editor>summary{cursor:pointer;font-size:13px;color:#426147}.career-material-editor[open]>summary{margin-bottom:16px}
 
 .career-live-research{padding:20px 24px;margin:18px 0;background:#f1f6eb;border:1px solid #d6e2cd}.career-live-research h3{font-size:16px;line-height:1.8;margin:9px 0;overflow-wrap:anywhere}.career-live-research>.result-actions{margin:14px 0 0}
+
+.career-pitch-section{margin:30px 0}.career-pitch-editor{padding:24px;margin:18px 0}.career-pitch-card{padding:20px 24px;margin:14px 0}.career-pitch-card>summary{cursor:pointer;font-size:15px;font-weight:600;color:#365b43}.career-pitch-text{white-space:pre-wrap;font-size:14px;line-height:2;overflow-wrap:anywhere}.career-pitch-editor .result-actions{margin:14px 0}.career-pitch-editor textarea{line-height:1.9}@media(max-width:680px){.career-pitch-editor,.career-pitch-card{padding:17px}}

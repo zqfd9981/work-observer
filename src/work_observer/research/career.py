@@ -17,6 +17,17 @@ from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.text_match import match_text
 
 QUESTIONS = {
+    "pitch": (
+        "为用户整理一份基于证据的项目面试讲述草稿。只围绕career_evidence.selected_story，"
+        "先读取其document_id对应的用户经历原文，再结合目标JD理解讲述重点。"
+        "在claims中按场景、亲自行动、关键取舍、实际结果、限制的顺序，写最多五条简短的"
+        "第一人称讲述素材，总计尽量控制在500字以内，每条引用用户经历或作品原文。"
+        "JD只支持岗位相关性，不能用JD证明用户做过什么；个人陈述不能冒充独立核验。"
+        "计划没有完成就保留未完成，不补造指标、业务收益、上线经验、决定权或参与范围。"
+        "不得把其他经历混成同一个项目。表达重组可为归纳，迁移判断应明确是推断，"
+        "任职资格强度不适用于个人稿件，使用unspecified。gaps列需要补充的事实和容易被追问的"
+        "地方，不编标准答案，不生成行动计划，不安排额外调查。"
+    ),
     "map": (
         "把岗位工作画成可探索的工作地图，帮助求职者解释这份工作如何产生结果。"
         "先读取所选JD，只解释有原文支撑的工作线，最多8条判断、4条工作关系。"
@@ -294,6 +305,16 @@ class CareerService:
                     "experiments",
                     step_id=row.get("source_step_id"),
                 )
+            for row in career.get("pitches", []):
+                add(
+                    owner,
+                    "pitch",
+                    row,
+                    row["title"],
+                    row["text"],
+                    "interview",
+                    step_id=row.get("source_step_id"),
+                )
             for row in career["runs"]:
                 step = next((item for item in owner["steps"] if item["id"] == row["step_id"]), None)
                 run = self.store.get(step["run_id"]) if step and step.get("run_id") else None
@@ -460,6 +481,7 @@ class CareerService:
             "stories": career["stories"],
             "tasks": career["tasks"],
             "insights": career.get("insights", []),
+            "pitches": career.get("pitches", []),
             "document_ids": project.get("public_document_ids", []),
             "materials": archive_catalog(
                 self.repository,
@@ -762,6 +784,37 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def save_pitch(self, identity, data, pitch_id=None):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            career = project["career"]
+            if data.get("story_id") and not any(
+                row["id"] == data["story_id"] for row in career["stories"]
+            ):
+                raise ValueError("这份经历已不在当前目标中，可改为不绑定具体经历后保存。")
+            if data.get("source_step_id") and not any(
+                row["step_id"] == data["source_step_id"] and row["kind"] == "pitch"
+                for row in career["runs"]
+            ):
+                raise ValueError("未找到这份讲述素材的研究记录。")
+            pitches = career.setdefault("pitches", [])
+            previous = next((row for row in pitches if row["id"] == pitch_id), None)
+            if pitch_id and not previous:
+                raise ValueError("未找到这张讲述卡，请刷新列表。")
+            saved = {
+                "id": pitch_id or uuid4().hex,
+                **data,
+                "origin": "user",
+                "created_at": previous["created_at"] if previous else now(),
+                "updated_at": now(),
+            }
+            if previous:
+                pitches[pitches.index(previous)] = saved
+            else:
+                pitches.append(saved)
+            self.projects._write(project)
+        return self.get(identity)
+
     def prepare(
         self,
         identity,
@@ -777,6 +830,7 @@ class CareerService:
         hypothesis_b="",
         material_id=None,
         allow_public=False,
+        story_id=None,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -795,6 +849,14 @@ class CareerService:
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
             user_question = question.strip() if kind == "ask" else ""
+            if kind == "pitch":
+                story = next(
+                    (row for row in project["career"]["stories"] if row["id"] == story_id), None
+                )
+                if not story:
+                    raise ValueError("请先选择一份已保存的真实经历，再整理讲述素材。")
+                if story["document_id"] not in (project.get("public_document_ids") or []):
+                    raise ValueError("这份经历原文已移出研究资料，请先重新加入原文。")
             answer_document_id, answer_record = None, None
             if material_id and material_id not in (project.get("public_document_ids") or []):
                 raise ValueError("这份资料已不在当前目标中，请重新选择或先加入资料。")
@@ -1065,6 +1127,7 @@ class CareerService:
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
+                    "story_id": story_id if kind == "pitch" else None,
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if kind in {"reflect", "challenge"} else None,
                     "created_at": now(),
@@ -1075,6 +1138,8 @@ class CareerService:
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
+            if kind == "pitch":
+                project["steps"][-1]["career_story_id"] = story_id
             self.projects._write(project)
             return {"project_id": identity, "step_id": project["steps"][-1]["id"]}
 
