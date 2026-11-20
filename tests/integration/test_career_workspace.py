@@ -65,6 +65,52 @@ class CareerModel:
                 ]
             if "根据这份用户回答继续追问" in question:
                 arguments["gaps"] = ["你提到未完成去重验证，如何区分请求重试和重复写入？"]
+            if "把岗位工作画成可探索的工作地图" in question:
+                arguments.pop("application_plan", None)
+                arguments["claims"].extend(
+                    [
+                        {
+                            "category": "task",
+                            "basis": "direct",
+                            "requirement": "unspecified",
+                            "text": "负责失败样例验证。",
+                            "evidence_ids": [evidence],
+                        },
+                        {
+                            "category": "tool",
+                            "basis": "direct",
+                            "requirement": "unspecified",
+                            "text": "岗位提到Python。",
+                            "evidence_ids": [evidence],
+                        },
+                    ]
+                )
+                arguments["work_map"] = {
+                    "version": "work-map-v3-work-relations",
+                    "scope_note": "仅用于合成岗位的功能演示，不代表真实岗位研究质量。",
+                    "work_types": [],
+                    "work_relations": [
+                        {
+                            "source_claim_index": 1,
+                            "target_claim_index": 0,
+                            "predicate": "requires",
+                            "basis": "inference",
+                            "rationale": "失败验证与接口测试能力相关，具体业务检查仍未知。",
+                            "transfer_limit": "只解释本地合成练习，不证明岗位胜任。",
+                        },
+                        {
+                            "source_claim_index": 2,
+                            "target_claim_index": 1,
+                            "predicate": "supports",
+                            "basis": "inference",
+                            "rationale": "Python可以用于构造接口失败样例。",
+                            "transfer_limit": "工具被提及不表示个人精通或拥有全部职责。",
+                        },
+                    ],
+                    "comparisons": [],
+                    "unknowns": ["具体交付物和业务验收方式未说明。"],
+                }
+                arguments["revisions"] = []
             name = "finish_research"
         call = {
             "type": "function_call",
@@ -173,6 +219,13 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert (
             saved_story["document_id"] in current_scope
             and original_document_id not in current_scope
+        )
+        mapped = run_stage(client, identity, auth, "map")
+        assert len(mapped["results"][0]["result"]["work_map"]["work_relations"]) == 2
+        assert len(mapped["requirements"]) == 3
+        assert (
+            mapped["results"][0]["result"]["work_map"]["work_relations"][0]["target_text"]
+            == mapped["requirements"][0]["text"]
         )
         plan = run_stage(client, identity, auth, "plan")
         step = plan["results"][0]["step_id"]

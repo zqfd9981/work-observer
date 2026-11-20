@@ -49,7 +49,9 @@ class InsightInput(BaseModel):
 
 class CareerResearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["role", "gaps", "plan", "reflect", "interview", "answer", "followup", "ask"]
+    kind: Literal[
+        "role", "map", "gaps", "plan", "reflect", "interview", "answer", "followup", "ask"
+    ]
     answer: str = Field(default="", max_length=2500)
     offline: bool = False
     question_index: int = Field(default=0, ge=0, le=20)

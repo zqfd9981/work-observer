@@ -13,6 +13,14 @@ from work_observer.research.applications import background as application_backgr
 from work_observer.research.projects import ProjectService
 
 QUESTIONS = {
+    "map": (
+        "把岗位工作画成可探索的工作地图，帮助求职者解释这份工作如何产生结果。"
+        "先读取所选JD，只解释有原文支撑的工作线，最多8条判断、4条工作关系。"
+        "保留任务、交付物、能力、工具和责任的区别；可连接任务产出什么、完成任务需要什么，"
+        "不能因处于同一份JD就任意连线。不强求凑齐六类，原文缺失的交付物和责任保持未知。"
+        "关系解释为什么相关、对求职准备意味着什么以及迁移边界；两份JD时只比较有两侧依据的内容。"
+        "不评价用户是否胜任，不生成行动计划，不安排后续调查。"
+    ),
     "reflect": (
         "结合project_context.career_evidence中用户记录的工作样本实际观察，反思下一步。"
         "先说明练习原先要检验什么、用户实际观察到什么，再判断哪些解释得到支持、哪些被挑战、"
@@ -225,7 +233,7 @@ class CareerService:
                 }
             )
             if (
-                entry["kind"] == "role"
+                entry["kind"] in {"role", "map"}
                 and current
                 and result["status"] == "completed"
                 and not role_selected
@@ -422,10 +430,11 @@ class CareerService:
                             )
                             + [claim["text"] for claim in previous["result"]["claims"]]
                             + previous["result"].get("gaps", [])
-                        )[:3000]
+                        )[:1000]
                     )
                     section = previous.get("section") or {
                         "role": "requirements",
+                        "map": "requirements",
                         "gaps": "stories",
                         "plan": "experiments",
                         "reflect": "experiments",
@@ -458,11 +467,11 @@ class CareerService:
                 feedback = "\n".join(
                     [claim["text"] for claim in previous["result"]["claims"]]
                     + previous["result"].get("gaps", [])
-                )[:3000]
+                )[:400]
                 question = (
                     "根据这份用户回答继续追问，而不是重新安排一套通用面试。\n"
                     "原问题："
-                    + previous["interview_question"]
+                    + previous["interview_question"][:500]
                     + "\n用户自述回答（未经独立核实）："
                     + previous["answer"]
                     + "\n上一轮研究反馈（仍需核对，不是企业事实）："
@@ -496,7 +505,7 @@ class CareerService:
                 ):
                     raise ValueError("请先选择一份已生成的面试问题。")
                 question = (
-                    "本次模拟面试问题：" + questions[question_index] + "\n"
+                    "本次模拟面试问题：" + questions[question_index][:1000] + "\n"
                     "这是用户的自述回答，不是招聘原文或已核验事实：\n"
                     + answer
                     + "\n请对照本次明确选中的面试问题、岗位原文和用户经历反馈：回答覆盖了什么，"
@@ -517,6 +526,7 @@ class CareerService:
                 offline=offline,
                 allow_public=False,
                 coverage_mode="question",
+                approach="work_map" if kind == "map" else "standard",
                 reply_to_step_id=reply,
                 completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
             )
