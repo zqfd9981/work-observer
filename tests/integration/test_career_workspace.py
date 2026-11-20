@@ -42,6 +42,9 @@ class CareerModel:
                 for row in career_context.get("experiments", [])
                 if row.get("artifact_document")
             )
+        previous = career_context.get("previous_experiment")
+        if previous and previous.get("artifact_document"):
+            required_documents.append(previous["artifact_document"])
         required_documents = list({row["document_id"]: row for row in required_documents}.values())
         if not required_documents:
             required_documents = [

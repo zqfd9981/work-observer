@@ -1504,6 +1504,45 @@ class ProjectService:
                 (row for row in notes if row["id"] == step.get("career_insight_id")), None
             )
 
+            def experiment_record(row, full=False):
+                return {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "task_or_ability": row["task_or_ability"],
+                    "planned_deliverable": row["deliverable"],
+                    "proposed_check": row["completion_check"],
+                    "origin": row.get("origin", "research"),
+                    "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
+                    "state": row["state"],
+                    "reported_observation": row["outcome"] if full else row["outcome"][:500],
+                    "prior_expectation": row.get("hypothesis", "")
+                    if full
+                    else row.get("hypothesis", "")[:400],
+                    "previous_task_id": row.get("previous_task_id"),
+                    "design_change": row.get("design_change", ""),
+                    "artifact": row["artifact"][:200],
+                    "artifact_document": {
+                        "document_id": row["artifact_document_id"],
+                        "title": row["artifact_title"],
+                        "notice": "用户提供的练习产物或运行记录，"
+                        "未独立执行验证；可读取归档全文。",
+                    }
+                    if row.get("artifact_document_id")
+                    else None,
+                }
+
+            selected_experiment = next(
+                (row for row in career["tasks"] if row["id"] == selected_task), None
+            )
+            previous_experiment = next(
+                (
+                    row
+                    for row in career["tasks"]
+                    if row["id"] == (selected_experiment or {}).get("previous_task_id")
+                ),
+                None,
+            )
+
             def learning_note(row):
                 return {
                     "id": row["id"],
@@ -1543,6 +1582,8 @@ class ProjectService:
                             "completion_check",
                             "outcome",
                             "artifact_document_id",
+                            "previous_task_id",
+                            "design_change",
                         )
                     }
                     for row in linked_experiments[-3:]
@@ -1682,6 +1723,9 @@ class ProjectService:
                 "notice": "以下是用户自述和个人练习记录，不是招聘原文、独立评测或能力认证。"
                 "摘要仅供定位；项目经历全文可按document_id读取本轮归档。",
                 "selected_experiment_id": step.get("career_task_id"),
+                "previous_experiment": experiment_record(previous_experiment, full=True)
+                if previous_experiment
+                else None,
                 "learning_notes": [learning_note(row) for row in active_notes],
                 "stories": [
                     {
@@ -1695,29 +1739,7 @@ class ProjectService:
                     for row in stories[-3:]
                 ],
                 "experiments": [
-                    {
-                        "title": row["title"],
-                        "proposed_check": row["completion_check"],
-                        "origin": row.get("origin", "research"),
-                        "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
-                        "state": row["state"],
-                        "reported_observation": row["outcome"]
-                        if selected_task
-                        else row["outcome"][:500],
-                        "prior_expectation": row.get("hypothesis", "")
-                        if selected_task
-                        else row.get("hypothesis", "")[:400],
-                        "artifact": row["artifact"][:200],
-                        "artifact_document": {
-                            "document_id": row["artifact_document_id"],
-                            "title": row["artifact_title"],
-                            "notice": "用户提供的练习产物或运行记录，"
-                            "未独立执行验证；可读取归档全文。",
-                        }
-                        if row.get("artifact_document_id")
-                        else None,
-                    }
-                    for row in observations[-3:]
+                    experiment_record(row, full=bool(selected_task)) for row in observations[-3:]
                 ],
                 "omitted_stories": max(0, len(stories) - 3),
                 "omitted_experiments": max(0, len(observations) - 3),

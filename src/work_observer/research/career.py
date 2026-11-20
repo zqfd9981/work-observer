@@ -306,6 +306,7 @@ class CareerService:
                             "completion_check",
                             "hypothesis",
                             "outcome",
+                            "design_change",
                         )
                     ),
                     "experiments",
@@ -912,8 +913,7 @@ class CareerService:
                 )
                 self.projects._write(project)
                 return self.get(identity)
-            limit = 12 if kind == "story" else 24
-            if len(records) >= limit:
+            if kind == "story" and len(records) >= 12:
                 raise ValueError("当前目标已保存足够多的经历或练习，请先集中整理已有内容。")
             document_id = original.get("document_id" if kind == "story" else "artifact_document_id")
             documents = list(project.get("public_document_ids") or [])
@@ -938,6 +938,7 @@ class CareerService:
             else:
                 copied.update(origin="reused", source_key="user:" + copied["id"], evidence_ids=[])
                 copied["question_id"] = None
+                copied["previous_task_id"] = None
             records.append(copied)
             project["public_document_ids"] = documents
             self.projects._write(project)
@@ -1076,13 +1077,13 @@ class CareerService:
                 step["state"] in {"running", "queued", "interrupted"} for step in project["steps"]
             ):
                 raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
-            if kind in {"reflect", "challenge", "ask"} and task_id:
+            if kind in {"reflect", "challenge", "ask", "plan"} and task_id:
                 task = next(
                     (row for row in project["career"]["tasks"] if row["id"] == task_id), None
                 )
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
-                if kind in {"reflect", "ask"}:
+                if kind in {"reflect", "ask", "plan"}:
                     question_id = question_id or task.get("question_id")
             user_question = question.strip() if kind == "ask" else ""
             selected_requirement = None
@@ -1168,6 +1169,10 @@ class CareerService:
                 )
                 if not previous:
                     raise ValueError("请选择一份当前目标下已完成反馈的回答。")
+                task_id = task_id or previous.get("task_id")
+                if task_id:
+                    task = next(row for row in project["career"]["tasks"] if row["id"] == task_id)
+                    question_id = question_id or task.get("question_id")
                 answer_document_id = previous.get("answer_document_id")
                 answer_record = previous
                 feedback = "\n".join(
@@ -1402,6 +1407,19 @@ class CareerService:
                     "对照完整预期、实际观察和附带作品原文回答原问题；不能把done状态当成成功。"
                     "有artifact_document时先读取正文，说明哪些原先解释被支持或挑战、哪些仍未知。"
                 )
+            if kind == "plan" and task_id:
+                question += (
+                    "这次只基于selected_experiment_id对应实验的完整实际观察设计一个后续验证。"
+                    "有artifact_document时先读取正文，不能把原来的预期当成已发生的结果。"
+                    "明确本次改变或控制什么、什么观察能区分仍未解决的解释，"
+                    "最多给application_plan中的一个动作，不重复安排已经做过的检查。"
+                )
+            if kind in {"reflect", "ask", "challenge", "plan"} and task_id:
+                question += (
+                    "若career_evidence.previous_experiment存在，它是本次实验所接续的上次记录。"
+                    "对照两次设计、design_change与实际观察，有两份作品原文时都应读取。"
+                    "说明哪些条件改变或未说明，不能仅因后一结果不同就证明因果或能力提升。"
+                )
             if continued_requirement:
                 question += (
                     "本次沿着一项岗位要求的证据对照继续讨论，原先选定的材料在"
@@ -1496,7 +1514,7 @@ class CareerService:
                     step["career_omitted_documents"] = len(documents) - len(selected)
                 step["career_answer_document_id"] = answer_document_id
             has_task = task_id and (
-                kind in {"reflect", "challenge", "ask"} | interview_kinds or insight_id
+                kind in {"reflect", "challenge", "ask", "plan"} | interview_kinds or insight_id
             )
             project["career"]["runs"].append(
                 {
@@ -1586,14 +1604,14 @@ class CareerService:
                 key = f"{step['run_id']}:{index}"
                 if any(row["source_key"] == key for row in tasks):
                     continue
-                if len(tasks) >= 24:
-                    raise ValueError("这个目标已保存24项练习，请先集中完成已有练习。")
                 tasks.append(
                     {
                         "id": uuid4().hex,
                         "source_key": key,
                         "origin": "research",
                         "question_id": source.get("question_id"),
+                        "previous_task_id": source.get("task_id"),
+                        "design_change": "",
                         **action,
                         "state": "planned",
                         "outcome": "",
@@ -1613,8 +1631,14 @@ class CareerService:
             ):
                 raise ValueError("未找到这项练习要检验的调查问题，请重新选择。")
             tasks = project["career"]["tasks"]
-            if len(tasks) >= 24:
-                raise ValueError("这个目标已保存24项练习，请先集中完成已有练习。")
+            if previous_id := data.get("previous_task_id"):
+                previous = next((row for row in tasks if row["id"] == previous_id), None)
+                if not previous or not previous.get("outcome", "").strip():
+                    raise ValueError("请先记录上次实验的实际观察，再设计后续验证。")
+                data = {
+                    **data,
+                    "question_id": data.get("question_id") or previous.get("question_id"),
+                }
             task_id = uuid4().hex
             tasks.append(
                 {
@@ -1644,6 +1668,7 @@ class CareerService:
         hypothesis="",
         artifact_title="工作样本材料",
         artifact_text="",
+        design_change="",
     ):
         if state == "done" and not outcome.strip():
             raise ValueError("请先记录实际做了什么或观察到什么，再标记为已记录结果。")
@@ -1675,6 +1700,7 @@ class CareerService:
                 outcome=outcome,
                 artifact=artifact,
                 hypothesis=hypothesis,
+                design_change=design_change,
                 updated_at=now(),
             )
             self.projects._write(project)

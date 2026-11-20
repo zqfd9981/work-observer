@@ -125,6 +125,55 @@ def test_question_experiment_and_reported_outcome_form_one_journey(tmp_path):
         assert reflected["results"][0]["question_id"] == qid
         assert reflected["questions"][0]["state"] == "open"
         assert reflected["questions"][0]["conclusion"] == ""
+        # A new check keeps the previous negative observation and the original inquiry.
+        calls = len(model.contexts)
+        follow_on = client.post(
+            base + "/experiments",
+            headers=auth,
+            json={
+                **task_data,
+                "title": "合成控制并发后的验证",
+                "question_id": None,
+                "previous_task_id": task["id"],
+                "design_change": "固定请求标识，关闭并发；其余输入保持不变。",
+            },
+        )
+        assert follow_on.status_code == 201, follow_on.text
+        child = follow_on.json()["tasks"][-1]
+        assert child["previous_task_id"] == task["id"] and child["question_id"] == qid
+        assert child["outcome"] == "" and child["state"] == "planned"
+        assert len(model.contexts) == calls
+        assert follow_on.json()["tasks"][0] == saved
+        child_observation = "合成观察：关闭并发后仍重复写入；本次并未确认原因。"
+        child = client.patch(
+            base + "/tasks/" + child["id"],
+            headers=auth,
+            json={
+                "state": "done",
+                "outcome": child_observation,
+                "hypothesis": "固定请求标识可能改变重复写入，尚未证实。",
+                "design_change": child["design_change"],
+                "artifact_title": "合成控制条件后的记录",
+                "artifact_text": "合成记录：concurrency=1 request_id=fixed write=2，非线上评测。",
+            },
+        ).json()["tasks"][-1]
+        continued = run_stage(client, identity, auth, "reflect", task_id=child["id"])
+        context = model.contexts[-1]["project_context"]["career_evidence"]
+        assert context["previous_experiment"]["reported_observation"] == observation
+        assert context["previous_experiment"]["id"] == task["id"]
+        assert context["experiments"][0]["reported_observation"] == child_observation
+        assert context["experiments"][0]["design_change"] == child["design_change"]
+        assert {
+            saved["artifact_document_id"], child["artifact_document_id"]
+        } <= {
+            ev.get("public_document_id") for ev in continued["results"][0]["result"]["evidence"]
+        }
+        next_plan = run_stage(client, identity, auth, "plan", task_id=child["id"])
+        imported_next = client.post(
+            base + "/tasks", headers=auth, json={"step_id": next_plan["results"][0]["step_id"]}
+        ).json()["tasks"][-1]
+        assert imported_next["previous_task_id"] == child["id"]
+        assert imported_next["question_id"] == qid
         # Reuse carries the observation, but a question from another goal is not silently linked.
         other = create_goal("合成另一个目标")
         reused = client.post(
@@ -133,12 +182,13 @@ def test_question_experiment_and_reported_outcome_form_one_journey(tmp_path):
             json={
                 "source_project_id": identity,
                 "kind": "task",
-                "record_id": task["id"],
+                "record_id": child["id"],
             },
         )
         assert reused.status_code == 200, reused.text
-        assert reused.json()["tasks"][0]["outcome"] == observation
+        assert reused.json()["tasks"][0]["outcome"] == child_observation
         assert reused.json()["tasks"][0]["question_id"] is None
+        assert reused.json()["tasks"][0]["previous_task_id"] is None
         assert client.get(base).json()["tasks"][0] == saved
         invalid = client.post(
             base + "/experiments", headers=auth, json={**task_data, "question_id": "a" * 32}
@@ -146,6 +196,6 @@ def test_question_experiment_and_reported_outcome_form_one_journey(tmp_path):
         assert invalid.status_code == 422
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         data = client.get(base).json()
-        assert len(data["tasks"]) == 2 and data["tasks"][0]["question_id"] == qid
+        assert len(data["tasks"]) == 4 and data["tasks"][0]["question_id"] == qid
         assert data["tasks"][0]["outcome"] == observation
-        assert len([row for row in data["results"] if row.get("question_id") == qid]) == 3
+        assert len([row for row in data["results"] if row.get("question_id") == qid]) == 5

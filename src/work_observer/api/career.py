@@ -162,6 +162,8 @@ class ExperimentInput(BaseModel):
     completion_check: str = Field(min_length=1, max_length=700)
     hypothesis: str = Field(default="", max_length=1500)
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    previous_task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    design_change: str = Field(default="", max_length=1500)
 
 
 class TaskUpdate(BaseModel):
@@ -172,6 +174,7 @@ class TaskUpdate(BaseModel):
     hypothesis: str = Field(default="", max_length=1500)
     artifact_title: str = Field(default="工作样本材料", max_length=150)
     artifact_text: str = Field(default="", max_length=20_000)
+    design_change: str = Field(default="", max_length=1500)
 
 
 def career_routes(*, repository, store, settings, response, read_json, busy, tasks):

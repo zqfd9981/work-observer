@@ -137,7 +137,7 @@ def test_interview_retains_chosen_material_and_full_observations(tmp_path, focus
         followup = check(
             run_stage(client, identity, auth, "followup", source_step_id=answer["step_id"])
         )
-        check(
+        final_answer = check(
             run_stage(
                 client,
                 identity,
@@ -147,7 +147,16 @@ def test_interview_retains_chosen_material_and_full_observations(tmp_path, focus
                 answer="我没有生产指标；需要控制并发和请求标识才可能区分原因。",
             )
         )
+        if focus == "task":
+            plan = run_stage(
+                client, identity, auth, "plan", source_step_id=final_answer["step_id"]
+            )["results"][0]
+            assert plan["task_id"] == record["id"]
+            imported = client.post(
+                base + "/tasks", headers=auth, json={"step_id": plan["step_id"]}
+            ).json()["tasks"][-1]
+            assert imported["previous_task_id"] == record["id"]
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         results = client.get(base).json()["results"]
-        assert len(results) == 4
+        assert len(results) == (5 if focus == "task" else 4)
         assert all(row[key] == record["id"] for row in results)

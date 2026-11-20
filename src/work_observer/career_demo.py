@@ -71,6 +71,9 @@ class DemoModel:
             for row in career.get("experiments", [])
             if row.get("artifact_document")
         )
+        previous = career.get("previous_experiment")
+        if previous and previous.get("artifact_document"):
+            documents.append(previous["artifact_document"]["document_id"])
         if action in {"gaps", "interview", "plan", "pitch"} and career.get("stories"):
             documents.append(career["stories"][-1]["document_id"])
         for document in dict.fromkeys(documents):
