@@ -130,3 +130,9 @@
 .career-demo-banner{padding:20px 24px;background:#eaf1e3;border:1px solid #cbd9c1;border-radius:12px;margin:0 0 24px;color:#35543e}
 .career-demo-banner>strong{font-size:16px}.career-demo-banner p{font-size:13px;line-height:1.8;margin:10px 0}
 .career-demo-banner nav{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px}.career-demo-banner a{padding:7px 12px;background:white;border:1px solid #cbd9c1;border-radius:8px;font-size:13px;color:#31563e;text-decoration:none}
+
+.work-graph-panel{min-width:0}.work-graph-scroll{min-width:0}.work-graph-scroll svg{margin:0 auto}
+.work-graph-controls{display:grid;grid-template-columns:minmax(0,1fr) 130px;gap:14px;align-items:end}.work-graph-controls label{display:block;min-width:0}.work-graph-controls select{width:100%}
+@media(max-width:680px){.work-graph-controls{grid-template-columns:minmax(0,1fr) 110px;gap:10px}}
+
+.work-graph-scroll svg{width:auto;height:auto;max-width:none}

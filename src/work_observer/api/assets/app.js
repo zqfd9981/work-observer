@@ -795,14 +795,16 @@ function renderWorkRelationGraph(result,refs,claims,basis) {
     return nodes.get(key);
   };
   relations.forEach(row=>{row.source=nodeFor(row.source_kind,row.source_text);row.target=nodeFor(row.target_kind,row.target_text);});
-  const columns=order.filter(kind=>groups.has(kind)),width=Math.max(460,columns.length*210+30),height=Math.max(...[...groups.values()].map(rows=>rows.length))*96+215;
-  columns.forEach((kind,column)=>groups.get(kind).forEach((node,index)=>{node.x=column*210+25;node.y=index*96+180;}));
+  const columns=order.filter(kind=>groups.has(kind)),width=Math.max(460,columns.length*210+30);
+  const crossing=relations.some(row=>Math.abs(columns.indexOf(row.source.kind)-columns.indexOf(row.target.kind))>1);
+  const top=crossing?112:64,height=top+Math.max(...[...groups.values()].map(rows=>rows.length))*96-6;
+  columns.forEach((kind,column)=>groups.get(kind).forEach((node,index)=>{node.x=column*210+25;node.y=index*96+top;}));
   const marker="work-arrow-"+(++workGraphSerial);
   const edges=relations.map((row,index)=>{
     const from=row.source,to=row.target,forward=to.x>from.x,same=to.x===from.x;
     const x1=from.x+(forward||same?170:0),y1=from.y+33,x2=to.x+(forward?0:170),y2=to.y+33;
     const bend=same?Math.max(x1,x2)+45:(x1+x2)/2;
-    const direction=forward?1:-1,lane=Math.min(y1,y2)-95-(index%4)*18;
+    const direction=forward?1:-1,lane=Math.min(y1,y2)-60-(index%4)*12;
     const path=same?`M${x1},${y1} C${bend},${y1-28} ${bend},${y2+28} ${x2},${y2}`:Math.abs(to.x-from.x)>210?`M${x1},${y1} C${x1+direction*25},${lane} ${x2-direction*25},${lane} ${x2},${y2}`:`M${x1},${y1} C${bend},${y1} ${bend},${y2} ${x2},${y2}`;
     return `<path class="work-graph-edge" data-graph-edge="${index}" data-graph-pick="${index}" role="button" tabindex="0" aria-label="查看关系 ${index+1}：${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}" d="${path}" marker-end="url(#${marker})"><title>${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</title></path>`;
   }).join("");
@@ -817,7 +819,7 @@ function renderWorkRelationGraph(result,refs,claims,basis) {
     return lines.length>3?[...lines.slice(0,2),lines[2].slice(0,-1)+"…"]:lines;
   };
   const boxes=[...nodes.values()].map(node=>`<g class="work-graph-node" data-graph-node="${node.id}" transform="translate(${node.x},${node.y})"><title>${e(workDimensionLabels[node.kind]||"维度未说明")}：${e(node.text)}</title><rect width="170" height="66" rx="9"/><text x="11" y="${wrap(node.text).length===1?38:22}">${wrap(node.text).map((line,index)=>`<tspan x="11" dy="${index?17:0}">${e(line)}</tspan>`).join("")}</text></g>`).join("");
-  return `<details class="work-graph-panel" open data-work-graph><summary>本轮工作关系图 <span>${nodes.size} 个内容节点 · ${relations.length} 条关系</span></summary><p class="form-note">选择一条关系或点击连线，查看解释、边界和原文依据。连线只表示本轮研究的解释，仍需核对。</p><label>查看哪条关系<select data-graph-choice><option value="">显示全部关系</option>${relations.map((row,index)=>`<option value="${index}">${index+1}. ${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</option>`).join("")}</select></label><div class="work-graph-scroll"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="min-width:${Math.min(width,900)}px" role="group" aria-label="本轮工作关系图"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#869d86"/></marker></defs>${columns.map((kind,column)=>`<text class="work-graph-column" x="${column*210+110}" y="30" text-anchor="middle">${e(workDimensionLabels[kind]||"维度未说明")}</text>`).join("")}${edges}${boxes}</svg></div><div class="work-graph-explanations">${relations.map((row,index)=>`<section data-graph-detail="${index}" data-graph-from="${row.source.id}" data-graph-to="${row.target.id}" hidden><h3>${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>适用与迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}${claims(row)}${mapInvestigationButton(result,row.kind,row.index,"继续查证这条关系")}</section>`).join("")}</div></details>`;
+  return `<details class="work-graph-panel" open data-work-graph><summary>本轮工作关系图 <span>${nodes.size} 个内容节点 · ${relations.length} 条关系</span></summary><p class="form-note">选择一条关系或点击连线，查看解释、边界和原文依据。连线只表示本轮研究的解释，仍需核对。</p><div class="work-graph-controls"><label>查看哪条关系<select data-graph-choice><option value="">显示全部关系</option>${relations.map((row,index)=>`<option value="${index}">${index+1}. ${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</option>`).join("")}</select></label><label>显示大小<select data-graph-zoom><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label></div><div class="work-graph-scroll"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" data-graph-size="${width}" width="${width}" height="${height}" role="group" aria-label="本轮工作关系图"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#869d86"/></marker></defs>${columns.map((kind,column)=>`<text class="work-graph-column" x="${column*210+110}" y="30" text-anchor="middle">${e(workDimensionLabels[kind]||"维度未说明")}</text>`).join("")}${edges}${boxes}</svg></div><div class="work-graph-explanations">${relations.map((row,index)=>`<section data-graph-detail="${index}" data-graph-from="${row.source.id}" data-graph-to="${row.target.id}" hidden><h3>${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>适用与迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}${claims(row)}${mapInvestigationButton(result,row.kind,row.index,"继续查证这条关系")}</section>`).join("")}</div></details>`;
 }
 function selectWorkGraphRelation(select) {
   const root=select.closest("[data-work-graph]"),value=select.value;
@@ -830,7 +832,11 @@ function selectWorkGraphRelation(select) {
   }
   for(const node of $$("[data-graph-node]",root))node.classList.toggle("is-dimmed",Boolean(selected)&&![selected.dataset.graphFrom,selected.dataset.graphTo].includes(node.dataset.graphNode));
 }
-document.addEventListener("change",event=>{if(event.target.matches?.("[data-graph-choice]"))selectWorkGraphRelation(event.target);});
+function selectWorkGraphZoom(select){
+  const svg=select.closest("[data-work-graph]")?.querySelector("[data-graph-size]");if(!svg)return;
+  const scale=Number(select.value);svg.setAttribute("width",String(svg.viewBox.baseVal.width*scale));svg.setAttribute("height",String(svg.viewBox.baseVal.height*scale));
+}
+document.addEventListener("change",event=>{if(event.target.matches?.("[data-graph-choice]"))selectWorkGraphRelation(event.target);if(event.target.matches?.("[data-graph-zoom]"))selectWorkGraphZoom(event.target);});
 function pickWorkGraphEdge(edge) {
   const root=edge.closest("[data-work-graph]"),select=root?.querySelector("[data-graph-choice]");
   if(select){select.value=edge.dataset.graphPick;selectWorkGraphRelation(select);}
@@ -3248,7 +3254,12 @@ document.addEventListener("click",async event=>{
   if (element.dataset.cite) {
     const root = element.closest(".result-card");
     const details = $$("[data-evidence]",root).find(item=>item.dataset.evidence === element.dataset.cite);
-    if (details) {highlightCitation(details,element.dataset.citeStart,element.dataset.citeEnd);details.open=true;details.scrollIntoView({behavior:"smooth",block:"center"});}
+    if (details) {
+      let parent=details.parentElement;
+      while(parent&&parent!==root){if(parent.tagName==="DETAILS")parent.open=true;parent=parent.parentElement;}
+      highlightCitation(details,element.dataset.citeStart,element.dataset.citeEnd);
+      details.open=true;details.scrollIntoView({behavior:"smooth",block:"center"});
+    }
   }
   if (element.dataset.saveResearch) {
     element.disabled=true;
