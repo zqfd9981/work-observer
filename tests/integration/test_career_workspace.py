@@ -273,6 +273,21 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             headers=auth,
         )
         assert invalid_followup.status_code == 422
+        asked = run_stage(
+            client,
+            identity,
+            auth,
+            "ask",
+            source_step_id=retried["results"][0]["step_id"],
+            question="为何接口测试不能证明重复写入已解决？",
+            section="requirements",
+        )
+        inquiry = asked["results"][0]
+        assert inquiry["user_question"] == "为何接口测试不能证明重复写入已解决？"
+        assert inquiry["section"] == "interview"
+        assert retried["results"][0]["answer"] in model.contexts[-1]["question"]
+        assert inquiry["user_question"] in model.contexts[-1]["question"]
+        assert model.contexts[-1]["project_context"]["previous_findings"] == []
         temporary = client.post(
             f"/api/career/{identity}/stories",
             json={**story, "title": "不再使用的合成补充"},

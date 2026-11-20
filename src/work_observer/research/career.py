@@ -374,8 +374,10 @@ class CareerService:
         question_index=0,
         task_id=None,
         source_step_id=None,
+        question="",
+        section="requirements",
     ):
-        if kind not in QUESTIONS and kind not in {"answer", "followup"}:
+        if kind not in QUESTIONS and kind not in {"answer", "followup", "ask"}:
             raise ValueError("请选择一种研究方式。")
         with self.store.lock, self.store.db:
             project = self._project(identity)
@@ -391,13 +393,58 @@ class CareerService:
                 )
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
-            if kind in {"answer", "followup"}:
+            user_question = question.strip() if kind == "ask" else ""
+            if kind in {"answer", "followup", "ask"}:
                 sources = [
                     row
                     for row in self.get(identity)["results"]
                     if row["current"] and row["result"]["status"] == "completed"
                 ]
-            if kind == "followup":
+            if kind == "ask":
+                if not user_question:
+                    raise ValueError("请先写下你想弄清楚的问题。")
+                previous = next((row for row in sources if row["step_id"] == source_step_id), None)
+                if source_step_id and not previous:
+                    raise ValueError("这份分析已不是当前目标下的结果，请重新选择或直接提问。")
+                previous_text = ""
+                if previous:
+                    previous_text = (
+                        "\n用户希望接着讨论的旧分析（不是新证据，请重新核对原文）：\n"
+                        + "\n".join(
+                            ([previous["user_question"]] if previous.get("user_question") else [])
+                            + (
+                                [
+                                    "当时的问题：" + previous["interview_question"],
+                                    "当时用户自述的回答：" + previous["answer"],
+                                ]
+                                if previous.get("answer")
+                                else []
+                            )
+                            + [claim["text"] for claim in previous["result"]["claims"]]
+                            + previous["result"].get("gaps", [])
+                        )[:3000]
+                    )
+                    section = previous.get("section") or {
+                        "role": "requirements",
+                        "gaps": "stories",
+                        "plan": "experiments",
+                        "reflect": "experiments",
+                        "interview": "interview",
+                        "answer": "interview",
+                        "followup": "interview",
+                    }.get(previous["kind"], section)
+                question = (
+                    "用户这次真正想弄清楚的问题：\n"
+                    + user_question
+                    + previous_text
+                    + "\n围绕用户的问题，结合当前岗位原文、个人背景、经历与练习记录给出具体回答。"
+                    "区分原文事实、用户自述和你的推断；旧分析不能充当新的原文证据。"
+                    "如果问题中的前提不成立，指出前提；缺信息就明确缺什么，不能凭空补全。"
+                    "优先解释工作为什么这样做、取舍是什么、对求职者下一步有什么具体影响。"
+                    "不泛讲学习路线，不给虚假匹配分，不安排额外调查；确有必要时最多建议一个验证动作。"
+                )
+                reply = previous["step_id"] if previous else None
+            elif kind == "followup":
                 previous = next(
                     (
                         row
@@ -479,7 +526,11 @@ class CareerService:
                     "step_id": project["steps"][-1]["id"],
                     "answer": answer,
                     "question_index": question_index if kind == "answer" else None,
-                    "source_step_id": source_step_id if kind in {"answer", "followup"} else None,
+                    "source_step_id": source_step_id
+                    if kind in {"answer", "followup", "ask"}
+                    else None,
+                    "user_question": user_question,
+                    "section": section if kind == "ask" else None,
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if kind == "reflect" else None,
                     "created_at": now(),
