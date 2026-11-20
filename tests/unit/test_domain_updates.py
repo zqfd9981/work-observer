@@ -255,6 +255,9 @@ def test_http_capture_compare_followup_and_no_file_or_budget_controls(updates):
         assert report.status_code == 201
         identity = report.json()["id"]
         assert client.get("/api/updates/reports/" + identity).json()["content_changes"] == []
+        common = client.get("/api/updates/reports/" + identity).json()["common_cohort"]
+        assert common["comparable"] and common["denominator"] == 1
+        assert common["statistics"][0]["before"] == common["statistics"][0]["after"] == 1
         assert client.post("/api/updates/compare", json=pair).json()["id"] == identity
         for _ in range(2):
             response = client.post(

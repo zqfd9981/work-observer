@@ -413,11 +413,18 @@ class DomainUpdateService:
             and by_id[item["job_id"]]["source"]
             and by_id[item["job_id"]]["source"]["integrity"] == "verified"
         ]
+        eligible_ids = {item["job_id"] for item in eligible}
+        for item in records:
+            hits = None
+            if item["job_id"] in eligible_ids:
+                folded = match_text(item["record"]["description_text"])
+                hits = [term for term in terms if match_text(term) in folded]
+            by_id[item["job_id"]]["literal_hits"] = hits
         stats = [
             {
                 "term": term,
                 "literal_jobs": sum(
-                    match_text(term) in match_text(item["record"]["description_text"])
+                    term in by_id[item["job_id"]]["literal_hits"]
                     for item in eligible
                 )
                 if eligible
@@ -426,7 +433,6 @@ class DomainUpdateService:
             }
             for term in terms
         ]
-        eligible_ids = {item["job_id"] for item in eligible}
         composition = {}
         for item in records:
             job = by_id[item["job_id"]]
@@ -521,6 +527,7 @@ class DomainUpdateService:
 
     def compare(self, before_id, after_id):
         from work_observer.reports.archived_updates import compare_archived
+        from work_observer.reports.literal_cohort import compare_literal_cohort
 
         before = self._get("domain_update_captures", before_id)
         after = self._get("domain_update_captures", after_id)
@@ -787,6 +794,7 @@ class DomainUpdateService:
                 and set(a) == set(b),
                 "interpretation": "完整明确符合且有正文的分母；只描述字面，不作市场趋势。",
             },
+            "common_cohort": compare_literal_cohort(before, after, a, b),
             "personal_impact": {
                 "goal_changed": digest(before["personal"]) != digest(after["personal"]),
                 "explicit_goals": after["personal"],

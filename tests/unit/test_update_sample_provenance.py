@@ -82,6 +82,11 @@ def test_same_jobs_and_body_with_changed_material_identity_are_not_a_demand_chan
     )
     assert not report["statistics"]["comparable"]
     assert report["statistics"]["before"] == report["statistics"]["after"]
+    common = report["common_cohort"]
+    assert common["job_ids"] == jobs[1:]
+    assert common["excluded"] == [
+        dict(job_id=jobs[0], reasons=["material_identity_changed"])
+    ]
 
 
 def test_provenance_counts_follow_filter_unknown_and_verified_denominator(updates):
@@ -116,6 +121,8 @@ def test_literal_counts_match_retrieval_and_old_matching_is_an_analysis_change(u
     second = service.capture("按统一口径再次冻结", terms=["上下文溢出", "长文档问答"])
     report = service.compare(legacy["id"], second["id"])
     assert report["method_changes"]["literal_matching_changed"]
+    assert not report["common_cohort"]["comparable"]
+    assert "matching_changed_or_unrecorded" in report["common_cohort"]["reasons"]
     assert not report["statistics"]["comparable"] and not report["content_changes"]
     assert report["statistics"]["before"][0]["literal_jobs"] == 0
     assert (
