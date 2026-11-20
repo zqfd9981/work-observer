@@ -1347,6 +1347,13 @@ class CareerService:
                 reply_to_step_id=reply,
                 completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
             )
+            if kind in {"role", "map"}:
+                personal = personal_documents(project["career"])
+                project["steps"][-1]["public_document_ids"] = [
+                    doc_id
+                    for doc_id in project["steps"][-1].get("public_document_ids", [])
+                    if doc_id not in personal
+                ]
             if answer_record and not answer_document_id:
                 document = PublicDocumentService(
                     self.repository, self.raw_directory / "public"

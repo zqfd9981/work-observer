@@ -1269,13 +1269,20 @@ async def _research(
         )
         if inherited["stale_memory"] or inherited.get("stale_dependencies"):
             raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
-        return memory.recall(
+        recalled = memory.recall(
             question,
             list(candidates),
             project_id=project_id,
             public_document_ids=public_document_ids,
             **({"excluded_runs": [review_feedback["run_id"]]} if review_feedback else {}),
         )
+        if (conversation_context or {}).get("career_action") in {"role", "map"}:
+            recalled = [
+                row
+                for row in recalled
+                if not row.get("content", "").startswith(applications.PREFIX)
+            ]
+        return recalled
 
     def check_knowledge():
         from work_observer.knowledge.service import DomainKnowledgeService

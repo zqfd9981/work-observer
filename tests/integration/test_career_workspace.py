@@ -200,6 +200,8 @@ class CareerModel:
                     }
                 ]
                 arguments["gaps"] = ["仍需了解业务验收口径与并发情境。"]
+            if not context.get("application_background"):
+                arguments.pop("application_plan", None)
             name = "finish_research"
         call = {
             "type": "function_call",
@@ -351,11 +353,8 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert edited_pitch.json()["pitches"][0]["id"] == pitch_id
         assert client.get(f"/api/career/{identity}").json()["stories"][0] == saved_story
         mapped = run_stage(client, identity, auth, "map")
-        assert (
-            model.contexts[-1]["project_context"]["career_evidence"]["presentation_drafts"][0][
-                "text"
-            ]
-            == pitch_text
+        assert not model.contexts[-1]["project_context"]["career_evidence"].get(
+            "presentation_drafts"
         )
         assert len(mapped["results"][0]["result"]["work_map"]["work_relations"]) == 2
         assert len(mapped["requirements"]) == 3
@@ -364,6 +363,12 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             == mapped["requirements"][0]["text"]
         )
         plan = run_stage(client, identity, auth, "plan")
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["presentation_drafts"][0][
+                "text"
+            ]
+            == pitch_text
+        )
         step = plan["results"][0]["step_id"]
         tasks = client.post(
             f"/api/career/{identity}/tasks", json={"step_id": step}, headers=auth

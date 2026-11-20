@@ -1467,6 +1467,7 @@ class ProjectService:
                     context["reply_to"]["application_plan_included"] = "application_plan" in item
         if career := record.get("career"):
             if step.get("career_action"):
+                context["career_action"] = step["career_action"]
                 # Coaching starts from current sources and the user's own records.
                 # It does not require a formal revision of earlier research sentences.
                 context["previous_findings"] = []
@@ -1714,6 +1715,12 @@ class ProjectService:
                 "omitted_stories": max(0, len(stories) - 3),
                 "omitted_experiments": max(0, len(observations) - 3),
             }
+            if step.get("career_action") in {"role", "map"}:
+                context["career_evidence"] = {
+                    "public_research_policy": context["career_evidence"]["public_research_policy"],
+                    "selected_material": None,
+                    "notice": "本轮只理解岗位工作。个人简历、经历、练习和认识不作为岗位要求依据。",
+                }
         return context
 
 
