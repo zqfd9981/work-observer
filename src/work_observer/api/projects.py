@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from starlette.routing import Route
 
 from work_observer.connectors.mcp_probe import ProbeError
@@ -166,6 +168,34 @@ def project_routes(
         svc = service()
         project = svc.get(identity)
         project["usage"] = svc.usage(project)
+        from work_observer.connectors.public_models import PublicDocument
+        from work_observer.storage.models import Job
+
+        with Session(repository().engine) as session:
+            project["scope_materials"] = {
+                "jobs": [
+                    {"id": key, "title": title, "company": company, "has_detail": has_detail}
+                    for key, title, company, has_detail in session.execute(
+                        select(
+                            Job.id,
+                            Job.title,
+                            Job.company_name_raw,
+                            Job.description_text.is_not(None) & (Job.description_text != ""),
+                        ).where(Job.id.in_(project["job_ids"]))
+                    )
+                ],
+                "documents": [
+                    {"id": key, "title": title, "publisher": publisher, "observed_at": observed_at}
+                    for key, title, publisher, observed_at in session.execute(
+                        select(
+                            PublicDocument.id,
+                            PublicDocument.title,
+                            PublicDocument.publisher,
+                            PublicDocument.observed_at,
+                        ).where(PublicDocument.id.in_(project.get("public_document_ids") or []))
+                    )
+                ],
+            }
         for step in project["steps"]:
             step["repair"] = repair_preview(svc, project, step, repository())
             if step.get("run_id"):
