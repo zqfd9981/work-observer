@@ -1484,7 +1484,7 @@ class ProjectService:
             stories = career.get("stories", [])
             observations = [row for row in career.get("tasks", []) if row.get("outcome")]
             if selected_task := step.get("career_task_id"):
-                observations = [row for row in observations if row["id"] == selected_task]
+                observations = [row for row in career["tasks"] if row["id"] == selected_task]
             selected_story = next(
                 (row for row in stories if row["id"] == step.get("career_story_id")), None
             )

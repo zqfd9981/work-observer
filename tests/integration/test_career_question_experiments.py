@@ -71,7 +71,7 @@ def test_question_experiment_and_reported_outcome_form_one_journey(tmp_path):
             base + "/prepare",
             headers=auth,
             json={
-                "kind": "ask",
+                "kind": "reflect",
                 "task_id": task["id"],
                 "question": question["question"],
             },

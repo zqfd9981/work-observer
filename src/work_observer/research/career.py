@@ -1098,6 +1098,7 @@ class CareerService:
         question_id=None,
         requirement_key="",
         comparison_step_ids=None,
+        inherit_focus=True,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -1109,13 +1110,49 @@ class CareerService:
                 step["state"] in {"running", "queued", "interrupted"} for step in project["steps"]
             ):
                 raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
+            sources = None
+            if kind == "ask" and source_step_id:
+                sources = [
+                    row for row in self.get(identity)["results"]
+                    if row["current"] and row["result"]["status"] == "completed"
+                ]
+                source = next((row for row in sources if row["step_id"] == source_step_id), None)
+                if not source:
+                    raise ValueError("这份分析已不是当前目标下的结果，请重新选择或直接提问。")
+                if inherit_focus and (not question_id or question_id == source.get("question_id")):
+                    question_ids = {row["id"] for row in project["career"].get("questions", [])}
+                    task_ids = {row["id"] for row in project["career"]["tasks"]}
+                    story_ids = {row["id"] for row in project["career"]["stories"]}
+                    insight_ids = {row["id"] for row in project["career"].get("insights", [])}
+                    question_id = question_id or (
+                        source.get("question_id")
+                        if source.get("question_id") in question_ids else None
+                    )
+                    task_id = task_id or (
+                        source.get("task_id") if source.get("task_id") in task_ids else None
+                    )
+                    story_id = story_id or (
+                        source.get("story_id") if source.get("story_id") in story_ids else None
+                    )
+                    insight_id = insight_id or (
+                        source.get("insight_id")
+                        if source.get("insight_id") in insight_ids else None
+                    )
+                    material_id = material_id or (
+                        source.get("material_id")
+                        if source.get("material_id") in project["public_document_ids"] else None
+                    )
+                    if question_id == source.get("question_id") and not comparison_step_ids:
+                        comparison_step_ids = source.get("comparison_step_ids", [])
             if kind in {"reflect", "challenge", "ask", "plan"} and task_id:
                 task = next(
                     (row for row in project["career"]["tasks"] if row["id"] == task_id), None
                 )
-                if not task or not task["outcome"].strip():
+                if not task:
+                    raise ValueError("未找到这项实验，请重新选择。")
+                if kind != "ask" and not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
-                if kind in {"reflect", "ask", "plan"}:
+                if kind == "reflect" or inherit_focus and kind in {"ask", "plan"}:
                     question_id = question_id or task.get("question_id")
             user_question = question.strip() if kind == "ask" else ""
             selected_requirement = None
@@ -1172,19 +1209,32 @@ class CareerService:
                 )
                 if not insight:
                     raise ValueError("未找到要核对的认识，请重新选择。")
-                task_id = task_id or insight.get("task_id")
-            if kind == "pitch":
+                if inherit_focus:
+                    observed_task = next(
+                        (
+                            row for row in project["career"]["tasks"]
+                            if row["id"] == insight.get("task_id")
+                            and (kind == "ask" or row.get("outcome"))
+                        ),
+                        None,
+                    )
+                    task_id = task_id or (observed_task["id"] if observed_task else None)
+                    if kind == "ask" and observed_task:
+                        question_id = question_id or observed_task.get("question_id")
+            if kind == "pitch" or kind == "ask" and story_id:
                 story = next(
                     (row for row in project["career"]["stories"] if row["id"] == story_id), None
                 )
                 if not story:
-                    raise ValueError("请先选择一份已保存的真实经历，再整理讲述素材。")
+                    raise ValueError("请选择当前目标中已保存的经历，再继续研究。")
                 if story["document_id"] not in (project.get("public_document_ids") or []):
                     raise ValueError("这份经历原文已移出研究资料，请先重新加入原文。")
             answer_document_id, answer_record = None, None
             if material_id and material_id not in (project.get("public_document_ids") or []):
                 raise ValueError("这份资料已不在当前目标中，请重新选择或先加入资料。")
-            if kind in {"answer", "followup", "ask"} or (kind == "plan" and source_step_id):
+            if sources is None and (
+                kind in {"answer", "followup", "ask"} or (kind == "plan" and source_step_id)
+            ):
                 sources = [
                     row
                     for row in self.get(identity)["results"]
@@ -1438,6 +1488,14 @@ class CareerService:
                     "用户本次带回的具体练习在career_evidence.selected_experiment_id对应记录，"
                     "对照完整预期、实际观察和附带作品原文回答原问题；不能把done状态当成成功。"
                     "有artifact_document时先读取正文，说明哪些原先解释被支持或挑战、哪些仍未知。"
+                    "如果还没有实际观察，只讨论已保存的实验设计，明确尚未执行或结果未知，"
+                    "不能补造执行结果。"
+                )
+            if kind == "ask" and story_id:
+                question += (
+                    "本次选中的具体经历在career_evidence.selected_story，先按document_id读取全文。"
+                    "保留个人行动、实际结果及末尾限制，不能把其他项目混入这份经历，"
+                    "也不能用岗位JD证明用户做过什么。经历依然是用户自述，不是独立核验。"
                 )
             if kind == "plan" and task_id:
                 question += (
@@ -1563,7 +1621,7 @@ class CareerService:
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
-                    "story_id": story_id if kind in {"pitch"} | interview_kinds else None,
+                    "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
@@ -1598,7 +1656,7 @@ class CareerService:
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
-            if story_id and kind in {"pitch"} | interview_kinds:
+            if story_id and kind in {"pitch", "ask"} | interview_kinds:
                 project["steps"][-1]["career_story_id"] = story_id
             self.projects._write(project)
             return {"project_id": identity, "step_id": project["steps"][-1]["id"]}

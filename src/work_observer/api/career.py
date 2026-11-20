@@ -133,6 +133,7 @@ class CareerResearchInput(BaseModel):
     question_index: int = Field(default=0, ge=0, le=20)
     task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    inherit_focus: bool = True
     question: str = Field(default="", max_length=1500)
     section: Literal["requirements", "stories", "experiments", "interview"] = "requirements"
     hypothesis_a: str = Field(default="", max_length=700)
