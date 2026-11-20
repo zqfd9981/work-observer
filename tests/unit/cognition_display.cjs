@@ -62,3 +62,10 @@ const retrieved=vm.runInContext('renderRetrievedKnowledge(retrieved,()=>"原文�
 assert.ok(retrieved.includes("RAG旧认识")&&retrieved.includes("后续研究需补充资料核对"));
 assert.ok(retrieved.includes('data-open-run="later-scoped"')&&retrieved.includes("展示长度限制未展开"));
 assert.ok(retrieved.includes("含后续修正提醒")&&retrieved.includes('href="#memory"'));
+
+context.historyNotices=[{run_id:"retained",decision:"retain",reason:"重读后保留原任务范围",previous_claim_index:0,previous_statement:"RAG任务",new_statements:["RAG任务"],notice:"此判断曾有疑问，后续重新保留；不以时间决定真假。",recorded_at:"2026-11-20T02:00:00+00:00"},{run_id:"challenged",decision:"unresolved",reason:"早期尚待核实权限",previous_claim_index:0,previous_statement:"RAG任务",new_statements:[]}];
+const historyNotices=vm.runInContext("renderMemoryRevisionNotices(historyNotices)",context);
+assert.ok(historyNotices.includes("后续重新保留（仍待核对）")&&historyNotices.includes("早期尚待核实权限"));
+assert.ok(historyNotices.includes("不以时间决定真假")&&historyNotices.includes("记录于"));
+assert.ok(historyNotices.includes('data-open-run="retained"')&&historyNotices.includes('data-open-run="challenged"'));
+assert.ok(!historyNotices.includes("人工核对通过"));

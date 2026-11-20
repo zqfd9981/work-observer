@@ -60,6 +60,42 @@ def test_notices_flow_to_recall_without_mutating_history_or_status(dependencies,
     assert memory.list()[0] == saved
 
 
+def test_later_retention_is_recalled_with_earlier_challenge_without_deciding_truth(dependencies):
+    repo, store, memory, jobs, _ = dependencies
+    original, saved, challenged = case(dependencies)
+    before = deepcopy(store.get(original["run_id"]))
+    retained = source(repo, store, jobs[:1], continued_from=[challenged["run_id"]])
+    retained["cognition_revisions"] = [
+        dict(
+            previous_run_id=original["run_id"],
+            previous_claim_index=0,
+            previous_statement=original["claims"][0]["text"],
+            decision="retain",
+            trigger="recheck",
+            new_claim_indices=[0],
+            new_statements=[retained["claims"][0]["text"]],
+            evidence_ids=retained["claims"][0]["evidence_ids"],
+            reason="后续重新核对任务范围，保留原任务判断；不推出个人上线权。",
+        )
+    ]
+    store.save(retained["run_id"], state="finished", result=retained)
+    recalled = memory.recall("RAG", jobs[:1])[0]
+    notices = recalled["revision_notices"]
+    assert [row["run_id"] for row in notices] == [retained["run_id"], challenged["run_id"]]
+    assert notices[0]["decision"] == "retain" and "曾有" in notices[0]["notice"]
+    retrieved = UnifiedRetrieval(repo).search(["RAG"], job_ids=jobs[:1], public_document_ids=[])
+    assert [row["run_id"] for row in retrieved["knowledge"][0]["revision_notices"]] == [
+        retained["run_id"],
+        challenged["run_id"],
+    ]
+    assert memory.validity(saved["id"])["eligible"]
+    assert memory.list()[0] == saved and store.get(original["run_id"]) == before
+    store.save(retained["run_id"], state="invalidated")
+    assert (
+        memory.recall("RAG", jobs[:1])[0]["revision_notices"][0]["run_id"] == challenged["run_id"]
+    )
+
+
 def test_exact_claim_time_and_excluded_run_boundaries(dependencies):
     _, store, memory, jobs, _ = dependencies
     _, saved, second = case(dependencies)

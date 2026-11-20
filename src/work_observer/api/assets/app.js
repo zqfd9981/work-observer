@@ -2350,8 +2350,8 @@ const memoryStatusLabels = {active:"已启用",candidate:"待核对采纳",confl
 const memoryValidityLabels = {outside_effective_time:"尚未生效或已过有效期",derived_dependency_stale:"上游研究采用的偏好、纠正或知识已变化",source_changed:"依据正文已变化",source_missing_or_invalid:"原文缺失或完整性异常"};
 
 function renderMemoryRevisionNotices(notices) {
-  const labels = {revise:"提出修订",withdraw:"建议撤回",unresolved:"尚未解决"};
-  return (notices || []).map(item=>`<div class="research-context">${badge(item.scope_limited?"后续研究需补充资料核对":"后续研究 · " + (labels[item.decision] || "待核对"),"amber")}${item.previous_statement?`<p><strong>涉及原判断 ${e(item.previous_claim_index+1)}：</strong>${e(item.previous_statement)}</p>`:""}<p>${e(item.reason)}</p>${renderRevisionAspects(item)}${(item.new_statements || []).map(text=>`<p>${e(text)}</p>`).join("")}<p class="form-note">后续判断待核对，已保存内容保留。请结合原文决定是否修订或撤回。</p><button class="text-button" data-open-run="${e(item.run_id)}">核对后续研究及原文 ↗</button></div>`).join("");
+  const labels = {retain:"后续重新保留（仍待核对）",revise:"提出修订",withdraw:"建议撤回",unresolved:"尚未解决"};
+  return (notices || []).map(item=>`<div class="research-context">${badge(item.scope_limited?"后续研究需补充资料核对":"后续研究 · " + (labels[item.decision] || "待核对"),"amber")}${item.previous_statement?`<p><strong>涉及原判断 ${e(item.previous_claim_index+1)}：</strong>${e(item.previous_statement)}</p>`:""}<p>${e(item.reason)}</p>${item.decision==="retain"&&item.notice?`<p class="form-note">${e(item.notice)}</p>`:""}${item.recorded_at?`<p class="form-note">记录于 ${e(when(item.recorded_at))}</p>`:""}${renderRevisionAspects(item)}${(item.new_statements || []).map(text=>`<p>${e(text)}</p>`).join("")}<p class="form-note">后续判断待核对，已保存内容保留。请结合原文决定是否修订或撤回。</p><button class="text-button" data-open-run="${e(item.run_id)}">核对后续研究及原文 ↗</button></div>`).join("");
 }
 
 function renderRetrievedKnowledge(result,evidenceCard) {

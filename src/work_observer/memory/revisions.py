@@ -57,7 +57,7 @@ def claim_revision_notices(
     indices = {i for i in claim_indices if type(i) is int and 0 <= i < len(claims)}
     if not indices or not auditor.path.is_file():
         return []
-    notices = []
+    notices, latest, challenged = [], {}, set()
     try:
         with sqlite3.connect(
             auditor.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2
@@ -91,7 +91,7 @@ def claim_revision_notices(
                     "project_id"
                 )
                 if (
-                    revision.get("decision") not in {"revise", "withdraw", "unresolved"}
+                    revision.get("decision") not in {"retain", "revise", "withdraw", "unresolved"}
                     or revision.get("previous_claim_index") not in indices
                     or revision.get("previous_statement")
                     != claims[revision["previous_claim_index"]]["text"]
@@ -116,37 +116,48 @@ def claim_revision_notices(
                         for ev in sources
                     )
                 )
-                notices.append(
-                    {
-                        "run_id": identity,
-                        "project_id": revision_project,
-                        "decision": revision["decision"],
-                        "previous_claim_index": revision["previous_claim_index"],
-                        "previous_statement": claims[revision["previous_claim_index"]]["text"],
-                        "reason": (
-                            "相关后续研究使用了本轮未选的资料；具体修正内容和依据未带入，"
-                            "使用旧认识前需补充适用资料并核对。"
-                            if scope_limited
-                            else revision["reason"]
-                        ),
-                        "new_statements": []
+                notice = {
+                    "run_id": identity,
+                    "project_id": revision_project,
+                    "decision": revision["decision"],
+                    "previous_claim_index": revision["previous_claim_index"],
+                    "previous_statement": claims[revision["previous_claim_index"]]["text"],
+                    "reason": (
+                        "相关后续研究使用了本轮未选的资料；具体修正内容和依据未带入，"
+                        "使用旧认识前需补充适用资料并核对。"
                         if scope_limited
-                        else revision.get("new_statements", []),
-                        "aspects": [] if scope_limited else revision.get("aspects", []),
-                        "comparison_notice": (
-                            "具体修正及逐项对照未带入当前范围；这不表示原知识已获重新确认。"
-                            if scope_limited
-                            else revision.get("comparison_notice")
-                        ),
-                        "evidence_ids": [] if scope_limited else revision.get("evidence_ids", []),
-                        **({"scope_limited": True} if scope_limited else {}),
-                        "recorded_at": record["updated_at"],
-                        "notice": "后续研究提出了不同判断，待核对；未自动改写已保存知识。"
-                        "使用前需打开后续研究并重读原文，不能把新旧判断直接当作事实。",
-                    }
-                )
-                if len(notices) == 3:
+                        else revision["reason"]
+                    ),
+                    "new_statements": [] if scope_limited else revision.get("new_statements", []),
+                    "aspects": [] if scope_limited else revision.get("aspects", []),
+                    "comparison_notice": (
+                        "具体修正及逐项对照未带入当前范围；这不表示原知识已获重新确认。"
+                        if scope_limited
+                        else revision.get("comparison_notice")
+                    ),
+                    "evidence_ids": [] if scope_limited else revision.get("evidence_ids", []),
+                    **({"scope_limited": True} if scope_limited else {}),
+                    "recorded_at": record["updated_at"],
+                    "notice": "后续研究提出了不同判断，待核对；未自动改写已保存知识。"
+                    "使用前需打开后续研究并重读原文，不能把新旧判断直接当作事实。",
+                }
+                index = revision["previous_claim_index"]
+                latest.setdefault(index, notice)
+                if revision["decision"] != "retain":
+                    challenged.add(index)
+                    notices.append(notice)
+                if len(notices) >= 3 and not any(
+                    row["decision"] == "retain" and key not in challenged
+                    for key, row in latest.items()
+                ):
                     break
+            for index in challenged:
+                if latest[index]["decision"] == "retain":
+                    latest[index]["notice"] = (
+                        "此判断曾有修订、撤回或疑问，后续研究又提出保留；"
+                        "两次意见及原文均须核对，不以记录时间决定真假，未自动修改知识采纳状态。"
+                    )
+                    notices.append(latest[index])
     except (sqlite3.Error, OSError, ValueError):
         return []
-    return notices
+    return sorted(notices, key=lambda row: (row["recorded_at"], row["run_id"]), reverse=True)[:3]
