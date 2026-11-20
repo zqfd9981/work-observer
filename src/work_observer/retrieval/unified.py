@@ -1,6 +1,7 @@
 """统一检索岗位原文、已归档公开材料与有效派生知识；不将摘要当独立证据。"""
 
 import hashlib
+import json
 from pathlib import Path
 
 from sqlalchemy import select
@@ -95,9 +96,7 @@ class UnifiedRetrieval:
                     folded = match_text(quote)
                     hits = [term for term in expanded if match_text(term) in folded]
                     if hits:
-                        chunks.append(
-                            (sum(folded.count(match_text(t)) for t in hits), start)
-                        )
+                        chunks.append((sum(folded.count(match_text(t)) for t in hits), start))
                 if chunks:
                     public_matches.add(row.id)
                 for score, start in sorted(chunks, key=lambda item: (-item[0], item[1]))[:20]:
@@ -136,29 +135,43 @@ class UnifiedRetrieval:
                 continue
             selected.append(item)
             characters += len(item["quote"])
-        knowledge = []
+        knowledge, knowledge_omissions = [], []
         if include_knowledge:
             recalled = MemoryService(self.repository).recall(
-                " ".join(terms), scoped_jobs, project_id=project_id, at=cutoff, kinds=["knowledge"]
+                " ".join(terms),
+                scoped_jobs,
+                project_id=project_id,
+                at=cutoff,
+                kinds=["knowledge"],
+                public_document_ids=public_document_ids,
             )
-            allowed_public = set(public_document_ids) if public_document_ids is not None else None
             for item in recalled:
                 if item["kind"] != "knowledge":
-                    continue
-                if allowed_public is not None and any(
-                    ev.get("public_document_id") not in allowed_public
-                    for ev in item["evidence"]
-                    if ev.get("public_document_id")
-                ):
                     continue
                 memory_size = len(item["content"]) + sum(
                     len(value.get("quote", "")) for value in item.get("evidence", [])
                 )
+                if item.get("revision_notices"):
+                    memory_size += len(json.dumps(item["revision_notices"], ensure_ascii=False))
                 if memory_size > 3000:
+                    knowledge_omissions.append(
+                        {
+                            "id": item["id"],
+                            "reason": "context_limit",
+                            "has_revision_notices": bool(item.get("revision_notices")),
+                        }
+                    )
                     continue
                 while characters + memory_size > 7000 and len(selected) > 1:
                     characters -= len(selected.pop()["quote"])
                 if characters + memory_size > 7000:
+                    knowledge_omissions.append(
+                        {
+                            "id": item["id"],
+                            "reason": "context_limit",
+                            "has_revision_notices": bool(item.get("revision_notices")),
+                        }
+                    )
                     continue
                 characters += memory_size
                 knowledge.append(
@@ -178,6 +191,7 @@ class UnifiedRetrieval:
             "matching_public_documents": len(public_matches),
             "evidence": selected,
             "knowledge": knowledge,
+            "knowledge_omissions": knowledge_omissions,
             "excluded_integrity_ids": sorted(set(excluded_integrity)),
             "context_characters": characters,
             "context_limit": 7000,
@@ -191,6 +205,8 @@ class UnifiedRetrieval:
             "rules": (
                 "岗位分母独立于公开资料和派生知识；来源计数先于分页。"
                 "知识只回链原文，不是新增独立证据。"
+                "后续修正提示也计入展示额度；knowledge_omissions仅指本次召回但放不下的认识，"
+                "可到已保存知识查看完整内容，不表示知识已经失效或没有后续修正。"
                 "检索比较统一大小写和同形部首，引用仍保留原文。"
             ),
         }

@@ -7,7 +7,15 @@ from work_observer.memory.dependencies import DependencyAudit
 
 
 def revision_notices(
-    repository, memory, *, at=None, project_id=None, scoped=False, excluded_runs=()
+    repository,
+    memory,
+    *,
+    at=None,
+    project_id=None,
+    scoped=False,
+    excluded_runs=(),
+    job_ids=None,
+    public_document_ids=None,
 ):
     if memory["kind"] not in {"knowledge", "hypothesis", "method"} or not memory.get(
         "source_run_id"
@@ -25,6 +33,8 @@ def revision_notices(
         project_id=project_id,
         scoped=scoped,
         excluded_runs=excluded_runs,
+        job_ids=job_ids,
+        public_document_ids=public_document_ids,
     )
 
 
@@ -91,8 +101,12 @@ def claim_revision_notices(
                     or not auditor.run(identity)["eligible"]
                 ):
                     continue
-                sources = result.get("evidence", [])
-                if (
+                reference_ids = set(revision.get("evidence_ids", []))
+                for index in revision.get("new_claim_indices", []):
+                    if type(index) is int and 0 <= index < len(result.get("claims", [])):
+                        reference_ids.update(result["claims"][index].get("evidence_ids", []))
+                sources = [ev for ev in result.get("evidence", []) if ev["id"] in reference_ids]
+                scope_limited = (
                     job_ids is not None
                     and any(ev.get("job_id") and ev["job_id"] not in job_ids for ev in sources)
                     or public_document_ids is not None
@@ -101,8 +115,7 @@ def claim_revision_notices(
                         and ev["public_document_id"] not in public_document_ids
                         for ev in sources
                     )
-                ):
-                    continue
+                )
                 notices.append(
                     {
                         "run_id": identity,
@@ -110,11 +123,23 @@ def claim_revision_notices(
                         "decision": revision["decision"],
                         "previous_claim_index": revision["previous_claim_index"],
                         "previous_statement": claims[revision["previous_claim_index"]]["text"],
-                        "reason": revision["reason"],
-                        "new_statements": revision.get("new_statements", []),
-                        "aspects": revision.get("aspects", []),
-                        "comparison_notice": revision.get("comparison_notice"),
-                        "evidence_ids": revision.get("evidence_ids", []),
+                        "reason": (
+                            "相关后续研究使用了本轮未选的资料；具体修正内容和依据未带入，"
+                            "使用旧认识前需补充适用资料并核对。"
+                            if scope_limited
+                            else revision["reason"]
+                        ),
+                        "new_statements": []
+                        if scope_limited
+                        else revision.get("new_statements", []),
+                        "aspects": [] if scope_limited else revision.get("aspects", []),
+                        "comparison_notice": (
+                            "具体修正及逐项对照未带入当前范围；这不表示原知识已获重新确认。"
+                            if scope_limited
+                            else revision.get("comparison_notice")
+                        ),
+                        "evidence_ids": [] if scope_limited else revision.get("evidence_ids", []),
+                        **({"scope_limited": True} if scope_limited else {}),
                         "recorded_at": record["updated_at"],
                         "notice": "后续研究提出了不同判断，待核对；未自动改写已保存知识。"
                         "使用前需打开后续研究并重读原文，不能把新旧判断直接当作事实。",

@@ -706,16 +706,9 @@ class MemoryService:
                 project_id=project_id,
                 scoped=True,
                 excluded_runs=excluded_runs,
+                job_ids=job_ids,
+                public_document_ids=public_document_ids,
             )
-            if public_document_ids is not None:
-                notices = [
-                    notice
-                    for notice in notices
-                    if all(
-                        not ref.startswith("publicdoc:") or ref.split(":")[1] in public_document_ids
-                        for ref in notice["evidence_ids"]
-                    )
-                ]
             if notices:
                 item["revision_notices"] = notices
         return recalled

@@ -56,3 +56,9 @@ assert.ok(supportHtml.includes("精通&lt;script&gt;平台系统")&&supportHtml.
 assert.ok(supportHtml.includes('data-source="original"')&&!supportHtml.includes("<script>"));
 context.retention.work_relations[0].supporting_claims=context.support;
 assert.ok(vm.runInContext("renderMapRetention(retention)",context).includes("原判断 5"));
+
+context.retrieved={knowledge:[{content:"RAG旧认识",evidence:[],revision_notices:[{run_id:"later-scoped",decision:"revise",scope_limited:true,previous_claim_index:0,previous_statement:"RAG旧认识",reason:"具体修正未带入当前范围，需补充资料。",new_statements:[],aspects:[],comparison_notice:"不是旧认识已获重新确认"}]}],knowledge_omissions:[{id:"large",has_revision_notices:true}]};
+const retrieved=vm.runInContext('renderRetrievedKnowledge(retrieved,()=>"原文依据")',context);
+assert.ok(retrieved.includes("RAG旧认识")&&retrieved.includes("后续研究需补充资料核对"));
+assert.ok(retrieved.includes('data-open-run="later-scoped"')&&retrieved.includes("展示长度限制未展开"));
+assert.ok(retrieved.includes("含后续修正提醒")&&retrieved.includes('href="#memory"'));

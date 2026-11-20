@@ -177,6 +177,8 @@ def test_notices_respect_project_and_selected_material_scope(dependencies):
     assert scoped["relations"][0]["revision_notices"][0]["run_id"] == later["run_id"]
     outside = make_revision(dependencies, original, all_jobs=True)
     generic = knowledge.browse_for_research(["RAG"], job_ids=jobs[:1], public_document_ids=[])
-    assert "revision_notices" not in generic["relations"][0]
+    notice = generic["relations"][0]["revision_notices"][0]
+    assert notice["run_id"] == outside["run_id"] and not notice.get("scope_limited")
+    # Reading a second job does not expand this particular correction's support scope.
     both = knowledge.browse_for_research(["RAG"], job_ids=jobs, public_document_ids=[])
     assert both["relations"][0]["revision_notices"][0]["run_id"] == outside["run_id"]
