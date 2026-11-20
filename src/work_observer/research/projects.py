@@ -1544,7 +1544,7 @@ class ProjectService:
             )
 
             def learning_note(row):
-                return {
+                note = {
                     "id": row["id"],
                     "previous_view": row["previous_view"],
                     "reported_observation": row["observation"],
@@ -1554,6 +1554,41 @@ class ProjectService:
                     "notice": "用户自己的理解与疑问，不是已验证的事实；保留原话中的限制。",
                     "recorded_at": row.get("updated_at") or row["created_at"],
                 }
+                if (index := row.get("source_claim_index")) is not None:
+                    source_step = next(
+                        (
+                            item for item in record["steps"]
+                            if item["id"] == row.get("source_step_id")
+                        ),
+                        None,
+                    )
+                    run = (
+                        self.store.get(source_step["run_id"])
+                        if source_step and source_step.get("run_id")
+                        else None
+                    )
+                    result = (run or {}).get("result") or {}
+                    claims = result.get("claims", [])
+                    if 0 <= index < len(claims):
+                        claim = claims[index]
+                        note["original_analysis"] = {
+                            key: claim[key] for key in ("text", "category", "basis", "requirement")
+                        }
+                        note["source_locators"] = [
+                            {
+                                key: evidence[key] for key in (
+                                    "job_id", "public_document_id", "snapshot_id",
+                                    "start", "end", "quote", "title", "evidence_kind"
+                                ) if key in evidence
+                            }
+                            for evidence in result.get("evidence", [])
+                            if evidence["id"] in claim["evidence_ids"]
+                        ]
+                        note["source_notice"] = (
+                            "这是形成用户认识时所选的旧分析与原文定位线索，不是当前事实或新证据。"
+                            "重查时应读取本轮可用原文，保留原分析的限定，不把旧引用编号用于新回答。"
+                        )
+                return note
 
             selected_inquiry = next(
                 (

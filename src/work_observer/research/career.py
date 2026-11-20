@@ -955,6 +955,25 @@ class CareerService:
                 row["step_id"] == data["source_step_id"] for row in project["career"]["runs"]
             ):
                 raise ValueError("未找到这次讨论，请重新选择来源。")
+            if (claim_index := data.get("source_claim_index")) is not None:
+                source_step = next(
+                    (
+                        row for row in project["steps"]
+                        if row["id"] == data.get("source_step_id")
+                    ),
+                    None,
+                )
+                run = (
+                    self.store.get(source_step["run_id"])
+                    if source_step and source_step.get("run_id")
+                    else None
+                )
+                result = (run or {}).get("result") or {}
+                if (
+                    result.get("status") != "completed"
+                    or not 0 <= claim_index < len(result.get("claims", []))
+                ):
+                    raise ValueError("请选择这次完整分析中的一条判断，或不关联具体判断。")
             replacement = next(
                 (row for row in notes if row["id"] == data.get("replaces_insight_id")), None
             )

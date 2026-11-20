@@ -72,6 +72,7 @@ class InsightInput(BaseModel):
     open_question: str = Field(default="", max_length=1000)
     task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_claim_index: int | None = Field(default=None, ge=0)
     replaces_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
