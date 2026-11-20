@@ -762,6 +762,112 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         )
 
 
+def test_career_learning_can_be_shelved_rechecked_and_replaced(tmp_path):
+    database = tmp_path / "learning.db"
+    upgrade(database)
+    settings = Settings(database_path=database, raw_directory=tmp_path / "raw")
+    model = CareerModel()
+    kwargs = {"model": model, "reports_dir": tmp_path / "reports"}
+    with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
+        token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
+        auth = {"X-WO-Token": token}
+        job = client.post(
+            "/api/import",
+            json={
+                "title": "合成认识复查岗位",
+                "company": "合成团队",
+                "description": "必须掌握Python接口开发与测试。负责失败样例验证。",
+                "data_kind": "synthetic",
+            },
+            headers=auth,
+        ).json()["job_id"]
+        identity = client.post(
+            "/api/career",
+            json={
+                "title": "合成认识变化",
+                "goal": "区分预期与实证",
+                "background": "合成本地练习",
+                "job_ids": [job],
+            },
+            headers=auth,
+        ).json()["id"]
+        base = f"/api/career/{identity}"
+        note_data = {
+            "previous_view": "日志更多就能定位问题。",
+            "observation": "合成观察。" * 150 + "末尾限定：未验证并发请求。",
+            "current_view": "合成理解。" * 120 + "末尾限定：不能证明线上有效。",
+            "open_question": "合成疑问。" * 70 + "最后要核对因果而非相关。",
+        }
+        note = client.post(base + "/insights", json=note_data, headers=auth).json()["insights"][0]
+        old_id = note["id"]
+        assert not model.contexts
+
+        def context():
+            return model.contexts[-1]["project_context"]["career_evidence"]
+
+        run_stage(client, identity, auth, "ask", question="当前观察可以支持什么？")
+        active = context()["learning_notes"][0]
+        assert active["current_user_view"] == note_data["current_view"]
+        assert active["reported_observation"] == note_data["observation"]
+        assert active["open_question"] == note_data["open_question"]
+        calls = len(model.contexts)
+        shelved = client.post(
+            base + f"/insights/{old_id}/use", json={"use_for_research": False}, headers=auth
+        )
+        assert shelved.status_code == 200, shelved.text
+        assert len(model.contexts) == calls
+        assert shelved.json()["insights"][0]["current_view"] == note_data["current_view"]
+        edited = client.patch(base + f"/insights/{old_id}", json=note_data, headers=auth)
+        assert edited.json()["insights"][0]["use_for_research"] is False
+        run_stage(client, identity, auth, "ask", question="从当前原文重新研究。")
+        assert context()["learning_notes"] == []
+        assert context()["selected_learning_note"] is None
+
+        checked = run_stage(
+            client, identity, auth, "ask", question="重查旧理解的反例。", insight_id=old_id
+        )
+        selected = context()["selected_learning_note"]
+        assert selected["current_user_view"] == note_data["current_view"]
+        assert selected["use_for_research"] is False
+        assert context()["learning_notes"] == []
+        assert checked["results"][0]["insight_id"] == old_id
+        assert checked["insights"][0]["use_for_research"] is False
+        next_note = {
+            **note_data,
+            "current_view": "更新理解：需增加并发反例才能区分原因。",
+            "replaces_insight_id": old_id,
+            "source_step_id": checked["results"][0]["step_id"],
+        }
+        saved = client.post(base + "/insights", json=next_note, headers=auth)
+        assert saved.status_code == 201, saved.text
+        old, new = saved.json()["insights"]
+        assert old["current_view"] == note_data["current_view"]
+        assert old["use_for_research"] is False and new["use_for_research"] is True
+        run_stage(client, identity, auth, "ask", question="下一步如何核对？")
+        assert [row["id"] for row in context()["learning_notes"]] == [new["id"]]
+        found = client.get(base + "/search", params={"q": "不能证明线上有效"}).json()
+        assert any(
+            row["id"] == old_id and row["use_for_research"] is False for row in found["records"]
+        )
+        calls = len(model.contexts)
+        restored = client.post(
+            base + f"/insights/{old_id}/use", json={"use_for_research": True}, headers=auth
+        )
+        assert restored.status_code == 200
+        assert len(model.contexts) == calls
+        assert (
+            client.post(
+                base + f"/insights/{old_id}/use", json={"use_for_research": "false"}, headers=auth
+            ).status_code
+            == 422
+        )
+    with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
+        reopened = client.get(base).json()["insights"]
+        assert len(reopened) == 2
+        assert all(row["use_for_research"] for row in reopened)
+        assert reopened[1]["replaces_insight_id"] == old_id
+
+
 def test_career_pause_resume_and_end_keep_existing_material(tmp_path):
     class PausingModel(CareerModel):
         def __init__(self):

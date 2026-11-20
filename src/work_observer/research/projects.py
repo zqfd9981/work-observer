@@ -1487,7 +1487,32 @@ class ProjectService:
             selected_story = next(
                 (row for row in stories if row["id"] == step.get("career_story_id")), None
             )
+            notes = career.get("insights", [])
+            active_notes = sorted(
+                (row for row in notes if row.get("use_for_research", True)),
+                key=lambda row: row.get("updated_at") or row["created_at"],
+            )[-3:]
+            selected_note = next(
+                (row for row in notes if row["id"] == step.get("career_insight_id")), None
+            )
+
+            def learning_note(row):
+                return {
+                    "id": row["id"],
+                    "previous_view": row["previous_view"],
+                    "reported_observation": row["observation"],
+                    "current_user_view": row["current_view"],
+                    "open_question": row["open_question"],
+                    "use_for_research": row.get("use_for_research", True),
+                    "notice": "用户自己的理解与疑问，不是已验证的事实；保留原话中的限制。",
+                    "recorded_at": row.get("updated_at") or row["created_at"],
+                }
+
             context["career_evidence"] = {
+                "selected_learning_note": learning_note(selected_note) if selected_note else None,
+                "learning_selection_notice": "learning_notes只含最近选用的三份个人认识；"
+                "selected_learning_note是用户本次明确要求重查的完整记录，可能已搁置。"
+                "重查不等于重新采用，不因新旧顺序判断真伪。",
                 "selected_story": {
                     "id": selected_story["id"],
                     "title": selected_story["title"],
@@ -1539,17 +1564,7 @@ class ProjectService:
                 "notice": "以下是用户自述和个人练习记录，不是招聘原文、独立评测或能力认证。"
                 "摘要仅供定位；项目经历全文可按document_id读取本轮归档。",
                 "selected_experiment_id": step.get("career_task_id"),
-                "learning_notes": [
-                    {
-                        "previous_view": row["previous_view"][:500],
-                        "reported_observation": row["observation"][:500],
-                        "current_user_view": row["current_view"][:500],
-                        "open_question": row["open_question"][:300],
-                        "notice": "这是用户记录的理解与疑问，不是企业事实或已验证的能力。",
-                        "recorded_at": row["created_at"],
-                    }
-                    for row in career.get("insights", [])[-3:]
-                ],
+                "learning_notes": [learning_note(row) for row in active_notes],
                 "stories": [
                     {
                         "title": row["title"],

@@ -72,6 +72,12 @@ class InsightInput(BaseModel):
     open_question: str = Field(default="", max_length=1000)
     task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    replaces_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
+class InsightUseInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    use_for_research: bool = Field(strict=True)
 
 
 class CareerResearchInput(BaseModel):
@@ -101,6 +107,7 @@ class CareerResearchInput(BaseModel):
     hypothesis_b: str = Field(default="", max_length=700)
     material_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class PitchInput(BaseModel):
@@ -219,6 +226,14 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             )
         )
 
+    async def insight_use(request):
+        data = InsightUseInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().use_insight(
+                request.path_params["id"], request.path_params["insight_id"], data.use_for_research
+            )
+        )
+
     async def pitch(request):
         data = PitchInput.model_validate(await read_json(request))
         return change(
@@ -311,6 +326,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
         Route("/api/career/{id}/insights", insight, methods=["POST"]),
         Route("/api/career/{id}/insights/{insight_id}", edit_insight, methods=["PATCH"]),
+        Route("/api/career/{id}/insights/{insight_id}/use", insight_use, methods=["POST"]),
         Route("/api/career/{id}/pitches", pitch, methods=["POST"]),
         Route("/api/career/{id}/pitches/{pitch_id}", pitch, methods=["PATCH"]),
         Route("/api/career/{id}/stories", story, methods=["POST"]),

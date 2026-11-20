@@ -257,6 +257,9 @@ class CareerService:
                     "project_title": owner["title"],
                     "section": section,
                     "step_id": step_id,
+                    "use_for_research": row.get("use_for_research", True)
+                    if kind == "insight"
+                    else None,
                     "recorded_at": row.get("updated_at") or row.get("created_at"),
                 }
             )
@@ -774,13 +777,43 @@ class CareerService:
                 row["step_id"] == data["source_step_id"] for row in project["career"]["runs"]
             ):
                 raise ValueError("未找到这次讨论，请重新选择来源。")
+            replacement = next(
+                (row for row in notes if row["id"] == data.get("replaces_insight_id")), None
+            )
+            if data.get("replaces_insight_id") and (
+                not replacement or replacement["id"] == insight_id
+            ):
+                raise ValueError("请选一份其他认识记录作为接替对象，或不选择接替。")
             if insight_id:
                 note = next((row for row in notes if row["id"] == insight_id), None)
                 if not note:
                     raise ValueError("未找到这份认识记录。")
                 note.update(**data, updated_at=now())
             else:
-                notes.append({"id": uuid4().hex, **data, "origin": "user", "created_at": now()})
+                notes.append(
+                    {
+                        "id": uuid4().hex,
+                        **data,
+                        "origin": "user",
+                        "created_at": now(),
+                        "use_for_research": True,
+                    }
+                )
+            if replacement:
+                replacement.update(use_for_research=False, updated_at=now())
+            self.projects._write(project)
+        return self.get(identity)
+
+    def use_insight(self, identity, insight_id, use_for_research):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            note = next(
+                (row for row in project["career"].get("insights", []) if row["id"] == insight_id),
+                None,
+            )
+            if not note:
+                raise ValueError("未找到这条认识记录，请刷新列表。")
+            note.update(use_for_research=use_for_research, updated_at=now())
             self.projects._write(project)
         return self.get(identity)
 
@@ -831,6 +864,7 @@ class CareerService:
         material_id=None,
         allow_public=False,
         story_id=None,
+        insight_id=None,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -849,6 +883,18 @@ class CareerService:
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
             user_question = question.strip() if kind == "ask" else ""
+            if insight_id:
+                insight = next(
+                    (
+                        row
+                        for row in project["career"].get("insights", [])
+                        if row["id"] == insight_id
+                    ),
+                    None,
+                )
+                if not insight:
+                    raise ValueError("未找到要核对的认识，请重新选择。")
+                task_id = task_id or insight.get("task_id")
             if kind == "pitch":
                 story = next(
                     (row for row in project["career"]["stories"] if row["id"] == story_id), None
@@ -1042,6 +1088,12 @@ class CareerService:
                     "请先按career_evidence.selected_answer.document_id读取本次所讨论的回答全文，"
                     "再作反馈或追问。回答是用户自述，不代表经历已核实或能力已经证明。"
                 )
+            if insight_id and kind in {"ask", "challenge"}:
+                question += (
+                    "用户明确选中的个人认识在career_evidence.selected_learning_note，"
+                    "请回查原文和观察，说明它还能支持什么、哪些需修正、哪些仍未知。"
+                    "它可能已经搁置，不因本次讨论而自动恢复；不因记录较新或较旧就判断真假。"
+                )
             used = self.projects.usage(project)
             allow_public = bool(allow_public and not offline)
             if allow_public:
@@ -1128,13 +1180,16 @@ class CareerService:
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
                     "story_id": story_id if kind == "pitch" else None,
+                    "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "interview_question": questions[question_index] if kind == "answer" else "",
-                    "task_id": task_id if kind in {"reflect", "challenge"} else None,
+                    "task_id": task_id if kind in {"reflect", "challenge"} or insight_id else None,
                     "created_at": now(),
                 }
             )
-            if kind in {"reflect", "challenge"} and task_id:
+            if (kind in {"reflect", "challenge"} or insight_id) and task_id:
                 project["steps"][-1]["career_task_id"] = task_id
+            if insight_id and kind in {"ask", "challenge"}:
+                project["steps"][-1]["career_insight_id"] = insight_id
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
