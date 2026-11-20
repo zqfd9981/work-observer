@@ -1690,7 +1690,7 @@ async def _research(
                         if allow_proposals
                         else []
                     )
-                    + ([INVESTIGATION_TOOL] if project_id else [])
+                    + ([INVESTIGATION_TOOL] if project_id and allow_proposals else [])
                 )
                 if application_enabled:
                     model.tools = applications.tools(model.tools)
@@ -1715,7 +1715,7 @@ async def _research(
                         )
                         + EXTRA_TOOLS
                         + (PROPOSAL_TOOLS if allow_proposals else [])
-                        + ([INVESTIGATION_TOOL] if project_id else [])
+                        + ([INVESTIGATION_TOOL] if project_id and allow_proposals else [])
                     )
                     tool_contract = {
                         "call": result["model_calls"] + 1,
@@ -2128,6 +2128,7 @@ async def _research(
                     proposals = result.setdefault("investigation_proposals", [])
                     if (
                         not project_id
+                        or not allow_proposals
                         or not queried
                         or len(proposals) >= 2
                         or arguments["kind"] not in {"investigate", "counterexample"}

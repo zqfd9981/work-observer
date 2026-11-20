@@ -246,6 +246,7 @@ def create_app(
     async def index(request):
         html = (ASSETS / "index.html").read_text(encoding="utf-8").replace("__WO_TOKEN__", token)
         for name in (
+            "career.html",
             "knowledge.html",
             "quality.html",
             "data-quality.html",
@@ -261,6 +262,7 @@ def create_app(
     async def asset(request):
         name = request.path_params["name"]
         if name not in {
+            "career.js",
             "app.js",
             "projects.js",
             "knowledge.js",
@@ -820,11 +822,24 @@ def create_app(
         )
     )
     routes.extend(schema_routes())
+    from work_observer.api.career import career_routes
     from work_observer.api.data_quality import data_quality_routes
     from work_observer.api.knowledge import knowledge_routes
     from work_observer.api.projects import project_routes
     from work_observer.api.quality import quality_routes
     from work_observer.api.updates import update_routes
+
+    routes.extend(
+        career_routes(
+            repository=lambda: repository,
+            store=lambda: store,
+            settings=settings,
+            response=response,
+            read_json=read_json,
+            busy=busy,
+            tasks=tasks,
+        )
+    )
 
     routes.extend(
         knowledge_routes(

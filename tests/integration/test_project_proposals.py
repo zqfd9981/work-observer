@@ -69,6 +69,29 @@ def test_proposal_keeps_complete_conditions_without_changing_the_research_budget
     assert COMPLETION in report and EVIDENCE_NEEDED in report
 
 
+def test_career_action_cannot_start_an_extra_investigation(setup):
+    repo, store, job_id = setup
+    service = ProjectService(store)
+    project = create(service, job_id)
+    with store.lock, store.db:
+        project["career"] = {"stories": [], "tasks": []}
+        service._write(project)
+    executed = asyncio.run(
+        execute_project(
+            service,
+            project["id"],
+            repo,
+            Settings(),
+            model=ProposalModel(),
+            max_steps=3,
+        )
+    )
+    assert len(executed["steps"]) == 1
+    result = store.get(executed["steps"][0]["run_id"])["result"]
+    assert result["stop_reason"] == "INVALID_INVESTIGATION_PROPOSAL"
+    assert result["investigation_proposals"] == []
+
+
 def test_concurrent_project_edit_during_planning_does_not_turn_completed_answer_into_failure(
     setup,
     monkeypatch,

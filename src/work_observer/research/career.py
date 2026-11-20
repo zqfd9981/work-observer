@@ -1,0 +1,384 @@
+"""A job seeker's evidence, experiments and interview practice in one research project."""
+
+import json
+from uuid import uuid4
+
+from work_observer.collection.contracts import now
+from work_observer.connectors.public_documents import PublicDocumentService
+from work_observer.memory.service import MemoryService
+from work_observer.quality.reviews import QualityReviewService
+from work_observer.reports.results import audit_result
+from work_observer.research.applications import PREFIX
+from work_observer.research.applications import background as application_background
+from work_observer.research.projects import ProjectService
+
+QUESTIONS = {
+    "reflect": (
+        "结合project_context.career_evidence中用户记录的工作样本实际观察，反思下一步。"
+        "先说明练习原先要检验什么、用户实际观察到什么，再判断哪些解释得到支持、哪些被挑战、"
+        "哪些还无法判断。任务状态done只表示用户记录结果，不代表成功或具备岗位能力。"
+        "实际观察是用户自述，不能当作招聘原文或独立评测；区分没有证据与证实不会。"
+        "回查相关岗位原文，最多建议一个最小的后续验证，可通过application_plan给出。"
+        "若记录不足，明确需要补什么观察，不编造结果，不安排额外调查。"
+    ),
+    "role": (
+        "帮助求职者看清所选岗位到底在做什么。只从岗位JD提取最多8条关键任务、交付物、"
+        "能力与责任判断，分别保留必备、加分和未说明性质及原文引用。不要把公司平台能力当作个人权限。"
+        "同一判断只说明一个具体工作要求，便于逐条对照个人经历。最后指出最值得向面试官核实的问题。"
+        "本轮先理解岗位，不评价用户是否胜任，不生成行动计划，不安排后续调查。"
+    ),
+    "gaps": (
+        "依据所选岗位原文、已保存的个人背景和用户项目经历，分析下一步值得验证什么。"
+        "区分招聘原文要求、用户自述、研究推断；没有经历证据应说尚未证明，不能判定用户不会。"
+        "指出自述经历可迁移的具体任务、迁移前提、缺少的产物或验证，以及需要询问用户的问题。"
+        "不要给虚假的匹配百分比，不把关键词重合等同于胜任。优先讨论影响目标的三项问题。"
+        "如给application_plan，最多三项具体补证据动作，不安排额外调查。"
+    ),
+    "plan": (
+        "为这个求职目标设计最多三个可执行的工作样本实验，使用已保存的个人背景与经历。"
+        "先核对目标岗位原文，再在application_plan给出针对的任务或能力、要解决的业务问题、"
+        "可展示产物、可复现的完成检查、需要的资源和未知。每项引用对应岗位依据。"
+        "尊重用户投入限制，不编造完成时间；避免只有看教程、学工具的建议。"
+        "建议的验收是练习设计，不冒充企业要求；不安排额外调查。"
+    ),
+    "interview": (
+        "围绕目标岗位原文和用户项目经历，设计一次证据驱动的模拟面试。"
+        "在gaps中写最多三道完整的面试问题，每道都使用问号，分别检查任务理解、真实参与边界、失败案例与取舍。"
+        "每道说明为何与岗位有关、回答时应提供什么过程或产物证据。"
+        "claims只列有引用的岗位依据，不能把问题写成已经成立的岗位事实。"
+        "若没有足够经历，先指出要补充的真实信息，不编造用户的项目、指标或标准答案。"
+        "不要在用户回答前替其回答，不生成行动计划，不安排额外调查。"
+    ),
+}
+
+
+class CareerService:
+    def __init__(self, store, repository, raw_directory):
+        self.projects = ProjectService(store)
+        self.store = store
+        self.repository = repository
+        self.raw_directory = raw_directory
+
+    def _project(self, identity):
+        project = self.projects.get(identity)
+        if project["state"] != "active" or not project.get("career"):
+            raise ValueError("这个求职目标已不可用，请重新选择。")
+        return project
+
+    def create(self, *, title, goal, background, constraints, job_ids):
+        for identity in job_ids:
+            self.repository.job(identity)
+        project = self.projects.create(
+            title,
+            goal,
+            job_ids,
+            public_document_ids=[],
+            max_calls=72,
+            max_seconds=1800,
+            max_rounds=12,
+            max_public=0,
+        )
+        note = MemoryService(self.repository).create(
+            "preference",
+            PREFIX
+            + json.dumps(
+                {
+                    "background": background,
+                    "goal": goal,
+                    "constraints": constraints,
+                },
+                ensure_ascii=False,
+            ),
+            scope="project",
+            project_id=project["id"],
+            subject="个人应用背景",
+            origin="user",
+        )
+        with self.store.lock, self.store.db:
+            project["career"] = {
+                "background_memory_id": note["id"],
+                "stories": [],
+                "tasks": [],
+                "runs": [],
+            }
+            self.projects._write(project)
+        return self.get(project["id"])
+
+    def listing(self):
+        return [
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "goal": row["goal"],
+                "updated_at": row["updated_at"],
+                "job_count": len(row["job_ids"]),
+                "story_count": len(row["career"]["stories"]),
+                "task_count": len(row["career"]["tasks"]),
+                "done_count": sum(task["state"] == "done" for task in row["career"]["tasks"]),
+            }
+            for row in self.projects.list(all_records=True)
+            if row["state"] == "active" and row.get("career")
+        ]
+
+    def get(self, identity):
+        project = self._project(identity)
+        career = project["career"]
+        notes = MemoryService(self.repository).list()
+        profile = application_background(notes, identity)
+        requirements, results = [], []
+        role_selected = False
+        for entry in reversed(career["runs"]):
+            step = next((row for row in project["steps"] if row["id"] == entry["step_id"]), None)
+            if not step:
+                continue
+            run = self.store.get(step["run_id"]) if step.get("run_id") else None
+            result = (run or {}).get("result")
+            available = bool(result and run["state"] != "invalidated")
+            audit = audit_result(result, self.repository) if available else None
+            current = available and not (audit["changed_sources"] or audit["stale_dependencies"])
+            review = (
+                next(
+                    (
+                        row
+                        for row in QualityReviewService(self.store, self.repository).list_run(
+                            step["run_id"]
+                        )
+                        if not row["stale_result"]
+                    ),
+                    None,
+                )
+                if available and result["status"] == "completed"
+                else None
+            )
+            if review and review["status"] == "rejected":
+                current = False
+            results.append(
+                {
+                    **entry,
+                    "state": step["state"],
+                    "run_id": step.get("run_id"),
+                    "result": {
+                        **result,
+                        "audit": audit,
+                        "business_review": review or {"status": "pending"},
+                    }
+                    if available
+                    else None,
+                }
+            )
+            if (
+                entry["kind"] == "role"
+                and current
+                and result["status"] == "completed"
+                and not role_selected
+            ):
+                role_selected = True
+                evidence = {row["id"]: row for row in result["evidence"]}
+                for index, claim in enumerate(result["claims"]):
+                    if not all(key in evidence for key in claim["evidence_ids"]):
+                        continue
+                    requirements.append(
+                        {
+                            "key": f"{step['run_id']}:{index}",
+                            **claim,
+                            "evidence": [evidence[key] for key in claim["evidence_ids"]],
+                        }
+                    )
+        return {
+            "id": identity,
+            "title": project["title"],
+            "goal": project["goal"],
+            "profile": profile,
+            "jobs": [self.repository.job(key) for key in project["job_ids"]],
+            "stories": career["stories"],
+            "tasks": career["tasks"],
+            "requirements": requirements,
+            "results": results,
+            "usage": self.projects.usage(project),
+            "budget": project["budget"],
+            "running": any(step["state"] == "running" for step in project["steps"]),
+        }
+
+    def add_story(self, identity, data):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if len(project["career"]["stories"]) >= 12:
+                raise ValueError("每个目标最多保存12份经历，请精简后再补充。")
+            if len(project.get("public_document_ids") or []) >= 20:
+                raise ValueError("本研究已选满20份资料，请先在研究工作台调整。")
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等当前研究结束后再补充经历，输入仍保留。")
+            text = "\n".join(
+                [
+                    "用户自述经历，尚未独立核实。",
+                    "项目/工作：" + data["title"],
+                    "目标和场景：" + data["situation"],
+                    "我亲自负责：" + data["action"],
+                    "结果与证据：" + data["result"],
+                    "限制和未参与部分：" + data["limits"],
+                ]
+            )
+            document = PublicDocumentService(
+                self.repository, self.raw_directory / "public"
+            ).archive_text(
+                data["title"],
+                text,
+                "用户自述项目经历；不是企业招聘要求或独立核验结果",
+            )["document"]
+            project["career"]["stories"].append(
+                {
+                    "id": uuid4().hex,
+                    **data,
+                    "document_id": document["id"],
+                    "created_at": now(),
+                }
+            )
+            project["public_document_ids"] = [
+                *(project.get("public_document_ids") or []),
+                document["id"],
+            ]
+            self.projects._write(project)
+        return self.get(identity)
+
+    def prepare(self, identity, kind, answer="", offline=False, question_index=0, task_id=None):
+        if kind not in QUESTIONS and kind != "answer":
+            raise ValueError("请选择一种研究方式。")
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if not project["job_ids"]:
+                raise ValueError("请先在研究工作台为这个目标选择岗位原文。")
+            if any(
+                step["state"] in {"running", "queued", "interrupted"} for step in project["steps"]
+            ):
+                raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
+            if kind == "reflect" and task_id:
+                task = next(
+                    (row for row in project["career"]["tasks"] if row["id"] == task_id), None
+                )
+                if not task or not task["outcome"].strip():
+                    raise ValueError("请先为这项练习记录实际观察，再开始反思。")
+            if kind == "answer":
+                if not answer.strip():
+                    raise ValueError("请先写下你的真实回答。")
+                interview = next(
+                    (
+                        row
+                        for row in reversed(project["career"]["runs"])
+                        if row["kind"] == "interview"
+                    ),
+                    None,
+                )
+                if not interview:
+                    raise ValueError("请先准备一次模拟面试。")
+                interview_step = next(
+                    row for row in project["steps"] if row["id"] == interview["step_id"]
+                )
+                interview_run = (
+                    self.store.get(interview_step["run_id"]) if interview_step.get("run_id") else {}
+                )
+                interview_result = interview_run.get("result") or {}
+                questions = [
+                    text for text in interview_result.get("gaps", []) if "？" in text or "?" in text
+                ]
+                if interview_result.get("status") != "completed" or not 0 <= question_index < len(
+                    questions
+                ):
+                    raise ValueError("请先选择一份已生成的面试问题。")
+                question = (
+                    "本次模拟面试问题：" + questions[question_index] + "\n"
+                    "这是用户的自述回答，不是招聘原文或已核验事实：\n"
+                    + answer
+                    + "\n请对照前一轮面试问题、岗位原文和用户经历反馈：回答覆盖了什么，"
+                    "哪些主张还缺证据，下一步最有价值的追问是什么。区分表达问题和能力未知，"
+                    "不编造经历或替用户补出成功指标，不给虚假分数。最多三条具体反馈，不安排额外调查。"
+                )
+                reply = interview["step_id"]
+            else:
+                question = QUESTIONS[kind]
+                reply = None
+            project = self.projects.add(
+                identity,
+                question,
+                revision=project["revision"],
+                max_calls=6,
+                timeout=150,
+                offline=offline,
+                allow_public=False,
+                coverage_mode="question",
+                reply_to_step_id=reply,
+                completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
+            )
+            project["career"]["runs"].append(
+                {
+                    "kind": kind,
+                    "step_id": project["steps"][-1]["id"],
+                    "answer": answer,
+                    "question_index": question_index if kind == "answer" else None,
+                    "interview_question": questions[question_index] if kind == "answer" else "",
+                    "task_id": task_id if kind == "reflect" else None,
+                    "created_at": now(),
+                }
+            )
+            if kind == "reflect" and task_id:
+                project["steps"][-1]["career_task_id"] = task_id
+            project["steps"][-1]["career_action"] = kind
+            self.projects._write(project)
+            return {"project_id": identity, "step_id": project["steps"][-1]["id"]}
+
+    def import_tasks(self, identity, step_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            step = next((row for row in project["steps"] if row["id"] == step_id), None)
+            if not step or not step.get("run_id"):
+                raise ValueError("未找到这份研究建议。")
+            run = self.store.get(step["run_id"])
+            result = run.get("result") or {}
+            if run["state"] == "invalidated" or result.get("status") != "completed":
+                raise ValueError("这份建议尚不可用，请查看原研究。")
+            reviews = QualityReviewService(self.store, self.repository).list_run(step["run_id"])
+            if any(row["status"] == "rejected" and not row["stale_result"] for row in reviews[:1]):
+                raise ValueError("这份建议的质量核对未通过，请先查看或修正原研究。")
+            audit = audit_result(result, self.repository)
+            if audit["changed_sources"] or audit["stale_dependencies"]:
+                raise ValueError("建议依据已有变化，请先重新研究。")
+            tasks = project["career"]["tasks"]
+            for index, action in enumerate(
+                (result.get("application_plan") or {}).get("actions", [])
+            ):
+                key = f"{step['run_id']}:{index}"
+                if any(row["source_key"] == key for row in tasks):
+                    continue
+                if len(tasks) >= 24:
+                    raise ValueError("这个目标已保存24项练习，请先集中完成已有练习。")
+                tasks.append(
+                    {
+                        "id": uuid4().hex,
+                        "source_key": key,
+                        **action,
+                        "state": "planned",
+                        "outcome": "",
+                        "hypothesis": "",
+                        "artifact": "",
+                        "created_at": now(),
+                    }
+                )
+            self.projects._write(project)
+        return self.get(identity)
+
+    def update_task(self, identity, task_id, *, state, outcome, artifact, hypothesis=""):
+        if state == "done" and not outcome.strip():
+            raise ValueError("请先记录实际做了什么或观察到什么，再标记为已记录结果。")
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            task = next((row for row in project["career"]["tasks"] if row["id"] == task_id), None)
+            if not task:
+                raise ValueError("未找到这项练习。")
+            task.update(
+                state=state,
+                outcome=outcome,
+                artifact=artifact,
+                hypothesis=hypothesis,
+                updated_at=now(),
+            )
+            self.projects._write(project)
+        return self.get(identity)

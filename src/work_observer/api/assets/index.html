@@ -8,6 +8,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='11' fill='%232d5b45'/%3E%3Cpath d='m9 12 5 17 6-12 6 12 5-17' fill='none' stroke='%23fff' stroke-width='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
+  <script defer src="/assets/career.js"></script>
   <script defer src="/assets/projects.js"></script>
   <script defer src="/assets/knowledge.js"></script>
   <script defer src="/assets/quality.js"></script>
@@ -21,16 +22,18 @@
 <body>
   <a href="#main" class="skip-link">跳转到主要内容</a>
   <aside class="sidebar">
-    <a class="brand" href="#research"><span class="brand-mark">W</span><span>Work Observer<small>工作观察</small></span></a>
+    <a class="brand" href="#career"><span class="brand-mark">W</span><span>Work Observer<small>工作观察</small></span></a>
     <div class="nav-label">工作空间</div>
     <nav aria-label="主要导航">
+      <a href="#career" data-page="career" aria-label="求职成长" title="求职成长"><span class="nav-icon">↗</span><span>求职成长</span></a>
       <a href="#research" data-page="research" aria-label="研究工作台" title="研究工作台"><span class="nav-icon">⌕</span><span>研究工作台</span></a>
       <a href="#jobs" data-page="jobs" aria-label="岗位资料" title="岗位资料"><span class="nav-icon">▦</span><span>岗位资料</span><span class="nav-count" id="nav-jobs">—</span></a>
       <a href="#reports" data-page="reports" aria-label="已存研究" title="已存研究"><span class="nav-icon">▧</span><span>已存研究</span></a>
-      <a href="#memory" data-page="memory" aria-label="知识与偏好" title="知识与偏好"><span class="nav-icon">◇</span><span>知识与偏好</span></a>
-      <a href="#knowledge" data-page="knowledge"><span class="nav-icon">⌘</span><span>领域与证据</span></a>
       <a href="#matches" data-page="matches" aria-label="个人匹配" title="个人匹配"><span class="nav-icon">✓</span><span>个人匹配</span></a>
       <details class="nav-advanced"><summary>更多工具</summary>
+      <a href="#memory" data-page="memory" aria-label="知识与偏好" title="知识与偏好"><span class="nav-icon">◇</span><span>知识与偏好</span></a>
+      <a href="#knowledge" data-page="knowledge"><span class="nav-icon">⌘</span><span>领域与证据</span></a>
+
       <a href="#companies" data-page="companies" aria-label="公司档案" title="公司档案"><span class="nav-icon">▤</span><span>公司档案</span></a>
       <a href="#projects" data-page="projects"><span class="nav-icon">◎</span><span>持续研究项目</span></a>
       <a href="#workflows" data-page="workflows"><span class="nav-icon">↻</span><span>日常研究流程</span></a>
@@ -43,7 +46,7 @@
     </nav>
     <div class="sidebar-bottom"><a class="api-help-link" href="/api/docs" target="_blank" rel="noopener">接口说明 ↗</a>
       <div class="source-note"><span class="status-dot amber"></span><strong id="sidebar-source">正在读取来源状态</strong><p>已有资料仍可查看、补充和研究。</p></div>
-      <div class="local-label"><span class="status-dot"></span> 本机工作空间 <span>V0.12</span></div>
+      <div class="local-label"><span class="status-dot"></span> 本机工作空间</div>
     </div>
   </aside>
   <div class="workspace">

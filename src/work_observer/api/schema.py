@@ -10,6 +10,13 @@ from starlette.routing import Route
 def openapi(routes):
     from work_observer import __version__
     from work_observer.analysis.profiles import PersonalPreferences
+    from work_observer.api.career import (
+        CareerInput,
+        CareerResearchInput,
+        StoryInput,
+        TaskImport,
+        TaskUpdate,
+    )
     from work_observer.api.data_quality import SCHEMA_MODELS as DATA_QUALITY_MODELS
     from work_observer.api.imports import CSVCommitInput, CSVPreviewInput, ImageExtractInput
     from work_observer.api.knowledge import (
@@ -69,6 +76,11 @@ def openapi(routes):
     from work_observer.research.run_history import HistoryQuery
 
     models = {
+        ("/api/career", "POST"): CareerInput,
+        ("/api/career/{id}/stories", "POST"): StoryInput,
+        ("/api/career/{id}/prepare", "POST"): CareerResearchInput,
+        ("/api/career/{id}/tasks", "POST"): TaskImport,
+        ("/api/career/{id}/tasks/{task_id}", "PATCH"): TaskUpdate,
         ("/api/workflows", "POST"): WorkflowInput,
         ("/api/workflows/{id}", "PATCH"): WorkflowScopeInput,
         ("/api/workflows/{id}/run", "POST"): WorkflowRunInput,

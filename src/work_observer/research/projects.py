@@ -1452,6 +1452,57 @@ class ProjectService:
                 context["reply_to"]["findings_included"] = True
                 if result.get("application_plan"):
                     context["reply_to"]["application_plan_included"] = "application_plan" in item
+        if career := record.get("career"):
+            if step.get("career_action"):
+                # Coaching starts from current sources and the user's own records.
+                # It does not require a formal revision of earlier research sentences.
+                context["previous_findings"] = []
+                context["memory_dependencies"] = []
+                context["knowledge_dependencies"] = []
+                context.pop("historical_reply", None)
+                if context.get("reply_to"):
+                    context["reply_to"]["findings_included"] = False
+                context["selection_note"] = (
+                    "本轮从当前岗位原文及用户自述重新分析，旧研究句子不作为既定事实，"
+                    "不要求生成逐句修订记录。经历、实验预期与实际观察见career_evidence；"
+                    "如需面试反馈，本轮问题已明确包含用户回答的那道面试问题。"
+                )
+            stories = career.get("stories", [])
+            observations = [row for row in career.get("tasks", []) if row.get("outcome")]
+            if selected_task := step.get("career_task_id"):
+                observations = [row for row in observations if row["id"] == selected_task]
+            context["career_evidence"] = {
+                "notice": "以下是用户自述和个人练习记录，不是招聘原文、独立评测或能力认证。"
+                "摘要仅供定位；项目经历全文可按document_id读取本轮归档。",
+                "selected_experiment_id": step.get("career_task_id"),
+                "stories": [
+                    {
+                        "title": row["title"],
+                        "document_id": row["document_id"],
+                        "personal_action": row["action"][:400],
+                        "reported_result": row["result"][:300],
+                        "limits": row["limits"][:200],
+                    }
+                    for row in stories[-3:]
+                ],
+                "experiments": [
+                    {
+                        "title": row["title"],
+                        "proposed_check": row["completion_check"],
+                        "state": row["state"],
+                        "reported_observation": row["outcome"]
+                        if selected_task
+                        else row["outcome"][:500],
+                        "prior_expectation": row.get("hypothesis", "")
+                        if selected_task
+                        else row.get("hypothesis", "")[:400],
+                        "artifact": row["artifact"][:200],
+                    }
+                    for row in observations[-3:]
+                ],
+                "omitted_stories": max(0, len(stories) - 3),
+                "omitted_experiments": max(0, len(observations) - 3),
+            }
         return context
 
 
@@ -1547,6 +1598,7 @@ async def _execute_project_locked(
                 max_calls=step["max_calls"],
                 timeout=step["timeout"],
                 allow_public=step["allow_public"],
+                allow_proposals=not bool(service.get(identity).get("career")),
                 model=model,
                 project_id=identity,
                 conversation_context=context,

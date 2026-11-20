@@ -1,0 +1,114 @@
+"""Job-seeker workspace routes; research execution reuses the existing project worker."""
+
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+from starlette.routing import Route
+
+from work_observer.research.career import CareerService
+
+
+class CareerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=150)
+    goal: str = Field(min_length=1, max_length=1000)
+    background: str = Field(min_length=1, max_length=1500)
+    constraints: str = Field(default="", max_length=500)
+    job_ids: list[str] = Field(min_length=1, max_length=6)
+
+
+class StoryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=150)
+    situation: str = Field(min_length=1, max_length=1500)
+    action: str = Field(min_length=1, max_length=2000)
+    result: str = Field(min_length=1, max_length=1500)
+    limits: str = Field(default="", max_length=1000)
+    requirement_key: str = Field(default="", max_length=100)
+
+
+class CareerResearchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["role", "gaps", "plan", "reflect", "interview", "answer"]
+    answer: str = Field(default="", max_length=2500)
+    offline: bool = False
+    question_index: int = Field(default=0, ge=0, le=20)
+    task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
+class TaskImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_id: str = Field(pattern="^[a-f0-9]{32}$")
+
+
+class TaskUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: Literal["planned", "doing", "done"]
+    outcome: str = Field(default="", max_length=4000)
+    artifact: str = Field(default="", max_length=1000)
+    hypothesis: str = Field(default="", max_length=1500)
+
+
+def career_routes(*, repository, store, settings, response, read_json, busy, tasks):
+    def service():
+        return CareerService(store(), repository(), settings.raw_directory)
+
+    def detail(identity):
+        data = service().get(identity)
+        task = tasks.get("project:" + identity)
+        data["running"] = data["running"] or bool(task and not task.done())
+        return data
+
+    def change(action, status=200):
+        try:
+            return response(action(), status)
+        except ValueError as error:
+            return response({"message": str(error)}, 422)
+
+    async def listing(request):
+        return response(service().listing())
+
+    async def create(request):
+        data = CareerInput.model_validate(await read_json(request))
+        return change(lambda: service().create(**data.model_dump()), 201)
+
+    async def get(request):
+        return change(lambda: detail(request.path_params["id"]))
+
+    async def story(request):
+        if busy():
+            return response({"message": "请等当前研究结束后再保存经历，输入仍保留。"}, 409)
+        data = StoryInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().add_story(request.path_params["id"], data.model_dump()), 201
+        )
+
+    async def prepare(request):
+        if busy():
+            return response({"message": "已有研究正在进行，请稍后再开始。"}, 409)
+        data = CareerResearchInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().prepare(request.path_params["id"], **data.model_dump()), 201
+        )
+
+    async def import_tasks(request):
+        data = TaskImport.model_validate(await read_json(request))
+        return change(lambda: service().import_tasks(request.path_params["id"], data.step_id))
+
+    async def update_task(request):
+        data = TaskUpdate.model_validate(await read_json(request))
+        return change(
+            lambda: service().update_task(
+                request.path_params["id"], request.path_params["task_id"], **data.model_dump()
+            )
+        )
+
+    return [
+        Route("/api/career", listing),
+        Route("/api/career", create, methods=["POST"]),
+        Route("/api/career/{id}", get),
+        Route("/api/career/{id}/stories", story, methods=["POST"]),
+        Route("/api/career/{id}/prepare", prepare, methods=["POST"]),
+        Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
+        Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),
+    ]

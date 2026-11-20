@@ -6,7 +6,7 @@ const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"
 const e = escapeHTML;
 const token = $('meta[name="wo-token"]').content;
 const state = {importAsset:null,csvRows:[],operations:null, filters:{}, offset:0, limit:20, jobs:new Map(), selected:new Map(), researchIds:null,
-  activeRun:null, lastRun:null, lastResult:null, memories:new Map(), overview:null, page:"research", querySerial:0};
+  activeRun:null, lastRun:null, lastResult:null, memories:new Map(), overview:null, page:"career", querySerial:0};
 const statusLabels = {analysis_draft:"开发分析样稿（待核对）",completed:"回答已生成", partial:"已保留部分结果", evidence_only:"原文证据包", failed:"研究未完成", incomplete:"达到研究上限", insufficient_evidence:"正文不足"};
 const originLabels = {website:"网站响应", unknown:"新鲜度未知", cache:"缓存资料", replay:"回放资料", manual:"人工资料", test:"测试资料", client_error:"获取失败"};
 const requirementLabels = {required:"必备", preferred:"加分", unspecified:"未明确性质"};
@@ -16,7 +16,7 @@ const claimBasisLabels = {direct:"原文明示",synthesis:"研究归纳",inferen
 const claimBasisLabel = claim => claimBasisLabels[claim?.basis] || "性质未标注";
 const categoryLabels = {business:"业务背景", deliverable:"交付物", task:"任务", responsibility:"责任", ability:"能力", tool:"工具"};
 const reasonLabels = {VISION_NO_READABLE_TEXT:"未取得可核对的正文，未写入岗位。可对照原图人工填写。",VISION_MODEL_HTTP_ERROR:"当前模型服务未能处理图片，未写入岗位。",INVALID_VISION_DRAFT:"视觉响应不符合草稿格式，未写入岗位。",MODEL_CONFIG_MISSING:"尚未配置模型，可改用仅整理证据模式。",MODEL_AUTH_REQUIRED:"模型服务认证未通过。",MODEL_FORBIDDEN:"当前模型服务权限不足。",MODEL_RATE_LIMIT_OR_QUOTA:"模型服务限流或额度不足，可稍后再试。",MODEL_HTTP_ERROR:"模型服务暂时没有正常响应。",TIMEOUT:"已达到时间上限，研究停止。",model_call_limit:"已达到调用次数上限，研究停止。",no_available_details:"范围内没有可研究的完整正文。"};
-const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "profile-quality":"完整画像核对", "research-benchmarks":"研究方法核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
+const titles = {career:"求职成长",jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "profile-quality":"完整画像核对", "research-benchmarks":"研究方法核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
 let toastTimer, pollTimer;
 const conversation = {id:null, timer:null, reports:new Map(), drafts:new Map(), sourceScopes:new Map(), notes:[], knowledge:[], notesFor:null, renderedId:null};
 Object.assign(reasonLabels,{
@@ -2943,7 +2943,7 @@ function showArchivedImage(id) {
 }
 
 async function route() {
-  const page = location.hash.slice(1).split("/")[0] || "research";
+  const page = location.hash.slice(1).split("/")[0] || "career";
   state.page = titles[page] ? page : "research";
   $$(".page").forEach(element=>{element.hidden = element.id !== "page-" + state.page;});
   $$("nav [data-page]").forEach(link=>{
@@ -2954,6 +2954,7 @@ async function route() {
   $("#breadcrumb").textContent = titles[state.page];
   document.title = `${titles[state.page]} · Work Observer`;
   if (state.page === "jobs") await loadJobs();
+  if (state.page === "career") await window.loadCareer?.();
   if (state.page === "companies") await loadCompanies();
   if (state.page === "research") {
     updateResearchScope();await Promise.all([loadResearchProjects(),loadResearchHistory()]);
