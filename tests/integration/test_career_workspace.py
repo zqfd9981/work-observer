@@ -271,9 +271,56 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         manual_context = model.contexts[-1]["project_context"]["career_evidence"]
         assert manual_context["experiments"][0]["title"] == manual_task["title"]
         assert manual_context["experiments"][0]["origin"] == "user"
+        calls_before_goal_edit = len(model.contexts)
+        before_edit = client.get(f"/api/career/{identity}").json()
+        another_job = client.post(
+            "/api/import",
+            json={
+                "title": "合成平台目标岗位",
+                "company": "合成团队",
+                "description": "负责平台任务编排与接口验证。",
+                "external_id": "career-new-target",
+                "data_kind": "synthetic",
+            },
+            headers=auth,
+        ).json()["job_id"]
+        goal_edit = client.patch(
+            f"/api/career/{identity}",
+            json={
+                "title": "调整后的合成求职目标",
+                "goal": "转向理解平台工作与个人分工",
+                "background": "更正：只有本地接口练习经历",
+                "constraints": "仅使用合成记录",
+                "job_ids": [another_job],
+            },
+            headers=auth,
+        )
+        assert goal_edit.status_code == 200, goal_edit.text
+        changed = goal_edit.json()
+        assert changed["title"] == "调整后的合成求职目标"
+        assert changed["profile"]["background"] == "更正：只有本地接口练习经历"
+        assert (
+            len(changed["stories"]) == 1
+            and len(changed["tasks"]) == 2
+            and len(changed["insights"]) == 1
+        )
+        assert (
+            changed["usage"] == before_edit["usage"] and changed["budget"] == before_edit["budget"]
+        )
+        assert changed["requirements"] == [] and all(
+            not row["current"] for row in changed["results"]
+        )
+        assert len(model.contexts) == calls_before_goal_edit
+        old_interview = client.post(
+            f"/api/career/{identity}/prepare",
+            json={"kind": "answer", "answer": "旧问题的回答"},
+            headers=auth,
+        )
+        assert old_interview.status_code == 422
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         data = client.get(f"/api/career/{identity}").json()
         assert len(data["stories"]) == 1 and len(data["tasks"]) == 2
         assert data["tasks"][0]["state"] == "done"
         assert data["insights"][0]["current_view"] == insight["current_view"]
+        assert data["title"] == "调整后的合成求职目标"
         assert client.get("/api/career").json()[0]["done_count"] == 2

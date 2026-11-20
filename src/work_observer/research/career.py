@@ -133,6 +133,41 @@ class CareerService:
             if row["state"] == "active" and row.get("career")
         ]
 
+    def update_goal(self, identity, *, title, goal, background, constraints, job_ids):
+        for job_id in job_ids:
+            self.repository.job(job_id)
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再调整目标，当前输入仍保留。")
+            memory = MemoryService(self.repository)
+            profile = application_background(memory.list(), identity)
+            content = PREFIX + json.dumps(
+                {"background": background, "goal": goal, "constraints": constraints},
+                ensure_ascii=False,
+            )
+            note = (
+                memory.revise(profile["memory_id"], content)
+                if profile
+                else memory.create(
+                    "preference",
+                    content,
+                    scope="project",
+                    project_id=identity,
+                    subject="个人应用背景",
+                    origin="user",
+                )
+            )
+            if project["goal"] != goal or set(project["job_ids"]) != set(job_ids):
+                project = self.projects.revise(
+                    identity, revision=project["revision"], goal=goal, job_ids=job_ids
+                )
+            if project["title"] != title:
+                project = self.projects.rename(identity, revision=project["revision"], title=title)
+            project["career"]["background_memory_id"] = note["id"]
+            self.projects._write(project)
+        return self.get(identity)
+
     def get(self, identity):
         project = self._project(identity)
         career = project["career"]
@@ -148,7 +183,16 @@ class CareerService:
             result = (run or {}).get("result")
             available = bool(result and run["state"] != "invalidated")
             audit = audit_result(result, self.repository) if available else None
-            current = available and not (audit["changed_sources"] or audit["stale_dependencies"])
+            current = (
+                available
+                and step["scope_version"] == project["scope_version"]
+                and not (
+                    audit["changed_sources"]
+                    or audit["stale_dependencies"]
+                    or audit["stale_memory"]
+                    or audit["stale_knowledge"]
+                )
+            )
             review = (
                 next(
                     (
@@ -169,6 +213,7 @@ class CareerService:
                 {
                     **entry,
                     "state": step["state"],
+                    "current": bool(current),
                     "run_id": step.get("run_id"),
                     "result": {
                         **result,
@@ -343,20 +388,16 @@ class CareerService:
                 interview = next(
                     (
                         row
-                        for row in reversed(project["career"]["runs"])
+                        for row in self.get(identity)["results"]
                         if row["kind"] == "interview"
+                        and row["current"]
+                        and row["result"]["status"] == "completed"
                     ),
                     None,
                 )
                 if not interview:
                     raise ValueError("请先准备一次模拟面试。")
-                interview_step = next(
-                    row for row in project["steps"] if row["id"] == interview["step_id"]
-                )
-                interview_run = (
-                    self.store.get(interview_step["run_id"]) if interview_step.get("run_id") else {}
-                )
-                interview_result = interview_run.get("result") or {}
+                interview_result = interview["result"]
                 questions = [
                     text for text in interview_result.get("gaps", []) if "？" in text or "?" in text
                 ]
@@ -411,6 +452,8 @@ class CareerService:
             step = next((row for row in project["steps"] if row["id"] == step_id), None)
             if not step or not step.get("run_id"):
                 raise ValueError("未找到这份研究建议。")
+            if step["scope_version"] != project["scope_version"]:
+                raise ValueError("这份建议来自调整前的目标，请先按当前岗位重新研究。")
             run = self.store.get(step["run_id"])
             result = run.get("result") or {}
             if run["state"] == "invalidated" or result.get("status") != "completed":
@@ -419,7 +462,12 @@ class CareerService:
             if any(row["status"] == "rejected" and not row["stale_result"] for row in reviews[:1]):
                 raise ValueError("这份建议的质量核对未通过，请先查看或修正原研究。")
             audit = audit_result(result, self.repository)
-            if audit["changed_sources"] or audit["stale_dependencies"]:
+            if (
+                audit["changed_sources"]
+                or audit["stale_dependencies"]
+                or audit["stale_memory"]
+                or audit["stale_knowledge"]
+            ):
                 raise ValueError("建议依据已有变化，请先重新研究。")
             tasks = project["career"]["tasks"]
             for index, action in enumerate(

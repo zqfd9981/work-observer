@@ -8,13 +8,16 @@ from starlette.routing import Route
 from work_observer.research.career import CareerService
 
 
-class CareerInput(BaseModel):
+class CareerGoalInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=150)
     goal: str = Field(min_length=1, max_length=1000)
     background: str = Field(min_length=1, max_length=1500)
     constraints: str = Field(default="", max_length=500)
     job_ids: list[str] = Field(min_length=1, max_length=6)
+
+
+class CareerInput(CareerGoalInput):
     resume_title: str = Field(default="个人简历", min_length=1, max_length=150)
     resume_text: str = Field(default="", max_length=20_000)
 
@@ -101,6 +104,13 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
     async def get(request):
         return change(lambda: detail(request.path_params["id"]))
 
+    async def update_goal(request):
+        task = tasks.get("project:" + request.path_params["id"])
+        if task and not task.done():
+            return response({"message": "请等本轮研究结束后再调整目标，输入仍保留。"}, 409)
+        data = CareerGoalInput.model_validate(await read_json(request))
+        return change(lambda: service().update_goal(request.path_params["id"], **data.model_dump()))
+
     async def story(request):
         if busy():
             return response({"message": "请等当前研究结束后再保存经历，输入仍保留。"}, 409)
@@ -170,6 +180,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", listing),
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
+        Route("/api/career/{id}", update_goal, methods=["PATCH"]),
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
         Route("/api/career/{id}/insights", insight, methods=["POST"]),
         Route("/api/career/{id}/stories", story, methods=["POST"]),

@@ -11,6 +11,7 @@ def openapi(routes):
     from work_observer import __version__
     from work_observer.analysis.profiles import PersonalPreferences
     from work_observer.api.career import (
+        CareerGoalInput,
         CareerInput,
         CareerResearchInput,
         ExperimentInput,
@@ -80,6 +81,7 @@ def openapi(routes):
 
     models = {
         ("/api/career", "POST"): CareerInput,
+        ("/api/career/{id}", "PATCH"): CareerGoalInput,
         ("/api/career/{id}/stories", "POST"): StoryInput,
         ("/api/career/{id}/stories/{story_id}", "PATCH"): StoryInput,
         ("/api/career/{id}/prepare", "POST"): CareerResearchInput,
