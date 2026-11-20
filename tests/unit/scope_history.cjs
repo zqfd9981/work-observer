@@ -1,0 +1,38 @@
+const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
+const node=()=>({querySelector:node,querySelectorAll:()=>[],addEventListener(){}});
+const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:"",origin:"http://127.0.0.1:8776"},URL,console,setTimeout,clearTimeout,Intl};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),ctx);
+const ev={id:"e",title:"合成原文",quote:"负责接口开发，与平台协作。",start:0,end:15,source:"manual",document_id:"document"};
+const old={id:"old-step",run_id:"old-run",scope_version:1,question:"原范围接口权限",result:{status:"completed",audit:{},claims:[{text:"<script>旧权限解释</script>",category:"responsibility",basis:"inference",requirement:"unspecified",evidence_ids:["e"]}],evidence:[ev],scope:{jobs:[{title:"原岗位"}]}}};
+const fresh={id:"new-step",run_id:"new-run",scope_version:2,question:"新增资料后核实权限",result:{status:"completed",audit:{},claims:[{text:"不能确认独立上线权",category:"responsibility",basis:"inference",requirement:"unspecified",evidence_ids:["e"]}],evidence:[ev],scope:{jobs:[]},cognition_revisions:[{previous_run_id:"old-run",previous_claim_index:0,previous_statement:old.result.claims[0].text,new_statements:["不能确认独立上线权"],decision:"revise",reason:"新增材料说明协作边界",evidence_ids:["e"]}]}};
+ctx.project={id:"project",title:"合成范围调整",state:"active",scope_version:2,job_ids:[],usage:{calls:4},steps:[old,fresh]};
+const original=JSON.stringify(ctx.project);
+let view=vm.runInContext('projectUnderstanding(project)',ctx);ctx.view=view;
+assert.equal(view.claims.length,1);assert.equal(view.claims[0].step.run_id,"new-run");
+assert.equal(view.scopeHistory.length,1);assert.equal(view.scopeHistory[0].claims[0].changes[0].revision.decision,"revise");
+const html=vm.runInContext('renderScopeHistory(view)',ctx);
+assert.ok(html.includes("只供原范围对照")&&html.includes("原岗位"));
+assert.ok(html.includes("&lt;script&gt;旧权限解释")&&!html.includes("<script>"));
+assert.ok(html.includes('data-reply-step="old-step"')&&html.includes('data-open-run="old-run"'));
+assert.ok(html.includes("新增材料说明协作边界")&&html.includes('data-open-run="new-run"'));
+assert.ok(!html.includes("data-knowledge-run"));
+const markdown=vm.runInContext('projectDossierMarkdown(project)',ctx);
+assert.ok(markdown.includes("范围调整前的认识（仅供原范围对照）")&&markdown.includes("新增材料说明协作边界"));
+assert.equal(JSON.stringify(ctx.project),original);
+old.result.audit.stale_memory=true;
+assert.equal(vm.runInContext('projectUnderstanding(project).scopeHistory.length',ctx),0);
+old.result.audit={};old.result.business_review={status:"rejected"};
+assert.equal(vm.runInContext('projectUnderstanding(project).scopeHistory.length',ctx),0);
+delete old.result.business_review;old.result.claims[0].evidence_ids=["missing"];
+assert.equal(vm.runInContext('projectUnderstanding(project).scopeHistory.length',ctx),0);
+// Opening a source-run link should reveal the requested historical turn.
+let scrolled=0;ctx.turns=[{dataset:{conversationRun:"old-run"},open:false,scrollIntoView(){scrolled++;}},{dataset:{conversationRun:"new-run"},open:true}];
+ctx.root={querySelectorAll:()=>ctx.turns};ctx.scrolled=()=>scrolled;
+ctx.document.querySelector=()=>ctx.root;
+vm.runInContext('api=async()=>({project_id:"project"});openResearchConversation=async id=>{conversation.id=id;};',ctx);
+(async()=>{
+ await vm.runInContext('openRun("old-run")',ctx);
+ assert.equal(ctx.turns[0].open,true);assert.equal(scrolled,1);
+ assert.equal(vm.runInContext('focusConversationRun("missing")',ctx),false);
+ console.log("Scope history: original-scope comparison, later decisions, safe sources and exact historical turn navigation passed.");
+})().catch(error=>{console.error(error);process.exitCode=1;});
