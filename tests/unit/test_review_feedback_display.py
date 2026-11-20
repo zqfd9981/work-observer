@@ -23,6 +23,7 @@ import pytest
         "public_versions.cjs",
         "investigation_proposals.cjs",
         "update_cohort.cjs",
+        "domain_lineage.cjs",
     ],
 )
 def test_review_repair_submit_and_diagnostic_display(harness):

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.knowledge.lineage import source_contexts
 from work_observer.knowledge.models import DomainDefinition, WorkRelation
 from work_observer.storage.models import MemoryRecord
 from work_observer.tracking.models import RetrievalStrategy
@@ -214,6 +215,21 @@ class DependencyAudit:
             result = record.get("result") or {}
             parents.update(result.get("continued_from", []))
             with Session(self.repository.engine) as session:
+
+                def inherit_definition(definition):
+                    if definition:
+                        for context in source_contexts(self.repository, definition):
+                            parents.add(context["run_id"])
+                            found.append(
+                                {
+                                    "kind": "knowledge",
+                                    "id": definition.id,
+                                    "project_id": context.get("project_id"),
+                                    "job_ids": context.get("job_ids", []),
+                                    "public_document_ids": context.get("public_document_ids", []),
+                                }
+                            )
+
                 for ref in [
                     *result.get("memory_used", result.get("memories", [])),
                     *result.get("context_memory_used", []),
@@ -235,14 +251,14 @@ class DependencyAudit:
                 for ref in result.get("knowledge_used", []):
                     if ref.get("kind") == "domain_definition":
                         definition = session.get(DomainDefinition, ref.get("id"))
-                        if definition and (definition.source_context or {}).get("run_id"):
-                            parents.add(definition.source_context["run_id"])
+                        inherit_definition(definition)
                         continue
                     if ref.get("kind") != "work_relation":
                         continue
                     row = session.get(WorkRelation, ref.get("id"))
                     if not row:
                         continue
+                    inherit_definition(session.get(DomainDefinition, row.domain_id))
                     found.append(
                         {
                             "kind": "knowledge",
@@ -276,6 +292,16 @@ class DependencyAudit:
                 found.append(
                     self._issue(
                         constraint["kind"], constraint["id"], "inherited_job_scope_mismatch"
+                    )
+                )
+            if (
+                "public_document_ids" in scope
+                and not set(constraint.get("public_document_ids", []))
+                <= scope["public_document_ids"]
+            ):
+                found.append(
+                    self._issue(
+                        constraint["kind"], constraint["id"], "inherited_public_scope_mismatch"
                     )
                 )
         return found
@@ -335,19 +361,23 @@ class DependencyAudit:
                 or row.reviewed_at != ref.get("reviewed_at")
             ):
                 return [self._issue("knowledge", identity, "domain_version_or_status_changed")]
-            context = row.source_context or {}
-            if context.get("run_id"):
+            issues = []
+            for context in source_contexts(self.repository, row):
                 if (
-                    not set(context.get("job_ids", [])) <= scope["job_ids"]
+                    context.get("project_id")
+                    and context["project_id"] != scope["project_id"]
+                    or not set(context.get("job_ids", [])) <= scope["job_ids"]
                     or not set(context.get("public_document_ids", []))
                     <= scope["public_document_ids"]
                 ):
                     return [self._issue("knowledge", identity, "domain_source_scope_mismatch")]
-                return [
-                    *self._run(context["run_id"], evidence_ids=context.get("evidence_ids")),
-                    *self._inherited_scope(context["run_id"], scope),
-                ]
-            return []
+                issues.extend(
+                    [
+                        *self._run(context["run_id"], evidence_ids=context.get("evidence_ids")),
+                        *self._inherited_scope(context["run_id"], scope),
+                    ]
+                )
+            return issues
         if kind != "work_relation":
             return [self._issue("knowledge", identity, "unknown_knowledge_dependency")]
         row = session.get(WorkRelation, identity)
@@ -369,7 +399,7 @@ class DependencyAudit:
             domain = session.get(DomainDefinition, row.domain_id)
             if not domain or domain.status != "active":
                 found.append(self._issue("knowledge", identity, "relation_domain_changed"))
-            elif domain.source_context:
+            else:
                 found.extend(
                     self._knowledge(
                         session,

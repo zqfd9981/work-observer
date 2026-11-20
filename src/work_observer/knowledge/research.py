@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.knowledge.lineage import source_contexts
 from work_observer.knowledge.models import DomainDefinition, WorkRelation
 from work_observer.knowledge.service import DomainKnowledgeService, _record
 from work_observer.knowledge.support import claim_support
@@ -120,7 +121,10 @@ class ResearchKnowledgeService:
                 }
                 for row in domains
                 if row.status in {"active", "candidate"}
-                and (row.source_context or {}).get("project_id") in {None, result.get("project_id")}
+                and all(
+                    context.get("project_id") in {None, result.get("project_id")}
+                    for context in source_contexts(self.repository, row)
+                )
             ],
             "relations": [
                 {

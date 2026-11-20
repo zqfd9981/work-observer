@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.knowledge.lineage import source_contexts
 from work_observer.knowledge.models import DomainDefinition, WorkRelation
 from work_observer.knowledge.support import research_support
 from work_observer.memory.service import MemoryService
@@ -166,16 +167,31 @@ class DomainKnowledgeService:
                 statement.order_by(DomainDefinition.domain_key, DomainDefinition.version.desc())
             ):
                 reasons = self.definition_validity(row)
+                contexts = source_contexts(self.repository, row)
                 output.append(
                     {
                         **_record(row),
                         "stale": bool(reasons),
                         "stale_reasons": reasons,
                         "revision_notices": self.revision_notices(row),
-                        "supporting_claims": research_support(
-                            self.repository,
-                            (row.source_context or {}).get("run_id"),
-                            (row.source_context or {}).get("claim_indices", []),
+                        **(
+                            {"source_contexts": contexts}
+                            if contexts and not row.source_context.get("run_id")
+                            else {}
+                        ),
+                        "supporting_claims": list(
+                            {
+                                (context["run_id"], claim["claim_index"]): {
+                                    **claim,
+                                    "run_id": context["run_id"],
+                                }
+                                for context in contexts
+                                for claim in research_support(
+                                    self.repository,
+                                    context["run_id"],
+                                    context.get("claim_indices", []),
+                                )
+                            }.values()
                         )
                         if row.status != "invalidated"
                         else [],
@@ -189,8 +205,32 @@ class DomainKnowledgeService:
         from work_observer.memory.revisions import claim_revision_notices
 
         if isinstance(row, DomainDefinition):
-            context = row.source_context or {}
-            source_run_id = context.get("run_id")
+            if row.status == "invalidated":
+                return []
+            notices = [
+                {**notice, "source_run_id": context["run_id"]}
+                for context in source_contexts(self.repository, row)
+                for notice in claim_revision_notices(
+                    self.repository,
+                    context["run_id"],
+                    context.get("claim_indices", []),
+                    at=at,
+                    project_id=project_id,
+                    scoped=scoped,
+                    excluded_runs=(),
+                    job_ids=job_ids,
+                    public_document_ids=public_document_ids,
+                )
+            ]
+            distinct = {
+                (item["source_run_id"], item["run_id"], item["previous_claim_index"]): item
+                for item in notices
+            }
+            return sorted(
+                distinct.values(),
+                key=lambda item: (item["recorded_at"], item["run_id"]),
+                reverse=True,
+            )[:3]
         else:
             context = row.scope.get("research_map", {})
             source_run_id = row.source_run_id
@@ -210,7 +250,22 @@ class DomainKnowledgeService:
     def definition_validity(
         self, row, *, job_ids=None, public_document_ids=None, project_id=None, scoped=False, at=None
     ):
-        context = row.source_context or {}
+        for context in source_contexts(self.repository, row):
+            reasons = self._definition_source_validity(
+                context,
+                job_ids=job_ids,
+                public_document_ids=public_document_ids,
+                project_id=project_id,
+                scoped=scoped,
+                at=at,
+            )
+            if reasons:
+                return reasons
+        return []
+
+    def _definition_source_validity(
+        self, context, *, job_ids, public_document_ids, project_id, scoped, at
+    ):
         if scoped and context.get("project_id") and context["project_id"] != project_id:
             return ["工作类型的来源不在本轮研究范围"]
         if not context.get("run_id"):
@@ -661,20 +716,26 @@ class DomainKnowledgeService:
         cutoff = normalized_time(as_of)
         jobs, public_ids = set(job_ids), set(public_document_ids)
         with Session(self.repository.engine) as session:
+            domain_contexts = {}
+
+            def contexts_for(row):
+                if row.id not in domain_contexts:
+                    domain_contexts[row.id] = source_contexts(self.repository, row)
+                return domain_contexts[row.id]
+
+            def source_jobs(row):
+                return {job for context in contexts_for(row) for job in context.get("job_ids", [])}
+
             definitions = {
                 row.id: row
                 for row in session.scalars(
                     select(DomainDefinition).where(DomainDefinition.status == "active")
                 )
                 if (not cutoff or row.reviewed_at <= cutoff)
-                and (
-                    not for_retrieval or set((row.source_context or {}).get("job_ids", [])) <= jobs
-                )
+                and (not for_retrieval or source_jobs(row) <= jobs)
                 and not self.definition_validity(
                     row,
-                    job_ids=(row.source_context or {}).get("job_ids", [])
-                    if for_retrieval
-                    else jobs,
+                    job_ids=source_jobs(row) if for_retrieval else jobs,
                     public_document_ids=public_ids,
                     project_id=project_id,
                     scoped=True,
@@ -722,6 +783,8 @@ class DomainKnowledgeService:
                 for identity in domain_ids:
                     row = definitions[identity]
                     size = len(row.definition) + len(row.inclusion) + len(row.exclusion)
+                    if not row.source_context.get("run_id") and contexts_for(row):
+                        size += len(json.dumps(contexts_for(row), ensure_ascii=False))
                     if definition_characters + size > 12000:
                         omitted_domains.append(identity)
                         continue
@@ -760,6 +823,11 @@ class DomainKnowledgeService:
                         "exclusion": row.exclusion,
                         "derived": True,
                         "source_context": row.source_context or {},
+                        **(
+                            {"source_contexts": contexts_for(row)}
+                            if not row.source_context.get("run_id") and contexts_for(row)
+                            else {}
+                        ),
                         "independent_source": False,
                         **({"revision_notices": notices} if notices else {}),
                     }
@@ -826,12 +894,12 @@ class DomainKnowledgeService:
                 )
             support_indices = {}
             for row in domain_output:
-                context = row["source_context"]
-                if context.get("run_id"):
-                    source_runs.add(context["run_id"])
-                    support_indices.setdefault(context["run_id"], set()).update(
-                        context.get("claim_indices", [])
-                    )
+                for context in row.get("source_contexts", [row["source_context"]]):
+                    if context.get("run_id"):
+                        source_runs.add(context["run_id"])
+                        support_indices.setdefault(context["run_id"], set()).update(
+                            context.get("claim_indices", [])
+                        )
             for row in relation_output:
                 if row["source_run_id"]:
                     support_indices.setdefault(row["source_run_id"], set()).update(

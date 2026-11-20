@@ -83,3 +83,9 @@ assert.ok(graph.includes("不能外推到本次全部候选")&&graph.includes("�
 assert.ok(graph.includes('data-open-run="source-map"')&&graph.includes('data-knowledge-locate="relation"'));
 assert.ok(graph.includes('data-knowledge-locate="large-domain"')&&graph.includes('data-open-run="large-run"'));
 assert.ok(!graph.includes("data-evidence-index"));
+context.graph.domains[0].source_context={};
+context.graph.domains[0].source_contexts=[{run_id:"source-map",claim_indices:[4],job_ids:["j"],scope_note:"<script>合成原范围</script>"},{run_id:"other-map",claim_indices:[0],job_ids:["j2"]}];
+const lineageGraph=vm.runInContext("renderRetrievedDomainKnowledge(graph)",context);
+assert.ok(lineageGraph.includes("沿用合并或拆分前定义的来源")&&lineageGraph.includes("精通&lt;script&gt;平台系统"));
+assert.ok(lineageGraph.includes('data-open-run="source-map"')&&lineageGraph.includes('data-open-run="other-map"'));
+assert.ok(lineageGraph.includes("&lt;script&gt;合成原范围&lt;/script&gt;")&&!lineageGraph.includes("<script>"));

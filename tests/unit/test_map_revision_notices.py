@@ -15,9 +15,9 @@ from work_observer.quality.service import DIMENSIONS
 from work_observer.research.projects import ProjectService
 
 
-def setup_map(workspace):
+def setup_map(workspace, project_id=None):
     repo, store, memory, jobs, _ = workspace
-    original = source(repo, store, jobs)
+    original = source(repo, store, jobs, project_id=project_id)
     original["claims"].append({**original["claims"][0], "text": "合成 RAG 接口开发"})
     original["work_map"] = dict(
         version="existing-map",

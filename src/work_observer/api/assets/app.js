@@ -2363,6 +2363,11 @@ function renderRetrievedKnowledge(result,evidenceCard) {
     +renderRetrievedDomainKnowledge(result.domain_knowledge);
 }
 
+function renderDomainSourceContexts(contexts) {
+  if(!contexts?.length)return "";
+  return `<p class="form-note">沿用合并或拆分前定义的来源；不表示原文直接支持当前全部表述，仍须核对。</p>${contexts.map(context=>`<p class="form-note">${e(context.scope_note||"")}</p>${context.run_id?`<button class="text-button" data-open-run="${e(context.run_id)}">核对沿用的来源研究及原文 ↗</button>`:""}`).join("")}`;
+}
+
 function renderRetrievedDomainKnowledge(data) {
   if(!data||(!data.domains?.length&&!data.relations?.length&&!data.omissions?.length&&!data.truncated))return "";
   const locate=(kind,id,label)=>`<button class="text-button" data-knowledge-locate="${e(id)}" data-knowledge-kind="${kind}">${label} ↗</button>`;
@@ -2371,7 +2376,7 @@ function renderRetrievedDomainKnowledge(data) {
     return packet?renderKnowledgeSupport(packet.claims.filter(row=>(indices||[]).includes(row.claim_index)))+(packet.omitted_claims?'<p class="form-note">原研究另有未展开的判断，请打开来源研究完整核对。</p>':""):"";
   };
   const scope=context=>`<p class="form-note">${context?.job_ids?.length||context?.public_document_ids?.length?`来源范围：${context.job_ids?.length||0} 个岗位、${context.public_document_ids?.length||0} 份归档；不能外推到本次全部候选。`:"未绑定具体来源范围，适用边界以保存的定义文字为准。"}</p>`;
-  return `<section class="detail-section"><h3>相关领域定义与工作关系</h3><p class="form-note">这些是已保存的派生认识，不计作新的原文来源或岗位样本；“需要”关系不自动等于招聘必备资格。</p>${(data.domains||[]).map(row=>`<article class="panel"><h4>${e(row.name)} · 第 ${row.version} 版</h4><p>${e(row.definition)}</p><dl>${detailData("包括",row.inclusion)}${detailData("边界与未知",row.exclusion)}</dl>${scope(row.source_context)}${renderMemoryRevisionNotices(row.revision_notices)}${support(row.source_context?.run_id,row.source_context?.claim_indices)}${row.source_context?.run_id?`<button class="text-button" data-open-run="${e(row.source_context.run_id)}">核对来源研究及原文 ↗</button>`:""}${locate("domains",row.id,"查看保存的定义")}</article>`).join("")}${(data.relations||[]).map(row=>{
+  return `<section class="detail-section"><h3>相关领域定义与工作关系</h3><p class="form-note">这些是已保存的派生认识，不计作新的原文来源或岗位样本；“需要”关系不自动等于招聘必备资格。</p>${(data.domains||[]).map(row=>`<article class="panel"><h4>${e(row.name)} · 第 ${row.version} 版</h4><p>${e(row.definition)}</p><dl>${detailData("包括",row.inclusion)}${detailData("边界与未知",row.exclusion)}</dl>${renderDomainSourceContexts(row.source_contexts)}${(row.source_contexts||[row.source_context||{}]).map(context=>`${scope(context)}${support(context.run_id,context.claim_indices)}${context.run_id?`<button class="text-button" data-open-run="${e(context.run_id)}">核对来源研究及原文 ↗</button>`:""}`).join("")}${renderMemoryRevisionNotices(row.revision_notices)}${locate("domains",row.id,"查看保存的定义")}</article>`).join("")}${(data.relations||[]).map(row=>{
     const map=row.scope?.research_map||{};
     return `<article class="panel"><h4>${e(row.domain_name||"已保存的工作关系")}</h4><p>${e(row.source_text)} → ${e(workPredicateLabels[row.predicate]||row.predicate)} → ${e(row.target_text)}</p>${map.rationale?`<p>${e(map.rationale)}</p>`:""}${map.transfer_limit?`<p><strong>适用与迁移边界：</strong>${e(map.transfer_limit)}</p>`:""}${scope(row.scope)}${renderMemoryRevisionNotices(row.revision_notices)}${support(row.source_run_id,map.claim_indices)}${row.source_run_id?`<button class="text-button" data-open-run="${e(row.source_run_id)}">核对来源研究及原文 ↗</button>`:""}${locate("relations",row.id,"查看保存的关系与反例")}</article>`;
   }).join("")}${(data.omissions||[]).map(row=>`<p class="form-note">因展示长度限制未展开：${row.kind==="research"?`<button class="text-button" data-open-run="${e(row.id)}">查看原研究及完整判断 ↗</button>`:locate(row.kind,row.id,row.kind==="domains"?"查看完整定义":"查看完整工作关系")}</p>`).join("")}${data.truncated?'<p class="form-note">当前仅展示部分相关认识，未展示不表示不存在；已保存记录保持完整。</p>':""}</section>`;

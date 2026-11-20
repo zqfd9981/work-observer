@@ -211,11 +211,11 @@ class UnifiedRetrieval:
                         row["scope"].get("research_map", {}).get("claim_indices", [])
                     )
             for row in domain_knowledge["domains"]:
-                context = row.get("source_context", {})
-                if context.get("run_id"):
-                    support_indices.setdefault(context["run_id"], set()).update(
-                        context.get("claim_indices", [])
-                    )
+                for context in row.get("source_contexts", [row.get("source_context", {})]):
+                    if context.get("run_id"):
+                        support_indices.setdefault(context["run_id"], set()).update(
+                            context.get("claim_indices", [])
+                        )
             for packet in found["supporting_findings"]:
                 if packet["run_id"] not in support_indices:
                     continue
