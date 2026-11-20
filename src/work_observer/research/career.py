@@ -24,6 +24,8 @@ QUESTIONS = {
     "reflect": (
         "结合project_context.career_evidence中用户记录的工作样本实际观察，反思下一步。"
         "先说明练习原先要检验什么、用户实际观察到什么，再判断哪些解释得到支持、哪些被挑战、"
+        "若附有作品或运行记录，先用artifact_document中的document_id读取归档正文，"
+        "对照记录讨论，不能把用户的总结当作已经运行过的独立评测。"
         "哪些还无法判断。任务状态done只表示用户记录结果，不代表成功或具备岗位能力。"
         "实际观察是用户自述，不能当作招聘原文或独立评测；区分没有证据与证实不会。"
         "回查相关岗位原文，最多建议一个最小的后续验证，可通过application_plan给出。"
@@ -624,7 +626,18 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
-    def update_task(self, identity, task_id, *, state, outcome, artifact, hypothesis=""):
+    def update_task(
+        self,
+        identity,
+        task_id,
+        *,
+        state,
+        outcome,
+        artifact,
+        hypothesis="",
+        artifact_title="工作样本材料",
+        artifact_text="",
+    ):
         if state == "done" and not outcome.strip():
             raise ValueError("请先记录实际做了什么或观察到什么，再标记为已记录结果。")
         with self.store.lock, self.store.db:
@@ -632,6 +645,24 @@ class CareerService:
             task = next((row for row in project["career"]["tasks"] if row["id"] == task_id), None)
             if not task:
                 raise ValueError("未找到这项练习。")
+            if artifact_text.strip():
+                if any(step["state"] == "running" for step in project["steps"]):
+                    raise ValueError("请等本轮研究结束后再保存作品材料，输入仍保留。")
+                previous = task.get("artifact_document_id")
+                if not previous and len(project.get("public_document_ids") or []) >= 20:
+                    raise ValueError("这个目标已保存20份资料，请先在研究工作台调整。")
+                title = artifact_title.strip() or task["title"] + " · 作品材料"
+                document = PublicDocumentService(
+                    self.repository, self.raw_directory / "public"
+                ).archive_text(
+                    title,
+                    "用户提供的个人练习产物或运行记录，尚未独立执行或验证。\n" + artifact_text,
+                    "用户提供的工作样本材料，不是招聘要求或独立评测结果。",
+                )["document"]
+                task.update(artifact_document_id=document["id"], artifact_title=title)
+                project["public_document_ids"] = [
+                    key for key in (project.get("public_document_ids") or []) if key != previous
+                ] + [document["id"]]
             task.update(
                 state=state,
                 outcome=outcome,

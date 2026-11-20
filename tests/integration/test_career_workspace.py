@@ -23,8 +23,30 @@ class CareerModel:
             for row in history
             if row.get("type") == "function_call_output"
         ]
+        selected_artifact = next(
+            (
+                row["artifact_document"]
+                for row in (context.get("project_context") or {})
+                .get("career_evidence", {})
+                .get("experiments", [])
+                if row.get("artifact_document")
+            ),
+            None,
+        )
         if not outputs:
             name, arguments = "read_job", {"job_id": context["fixed_scope"]["jobs"][0]["id"]}
+        elif selected_artifact and not any(
+            evidence.get("public_document_id") == selected_artifact["document_id"]
+            for output in outputs
+            for evidence in output.get("evidence", [])
+        ):
+            name, arguments = (
+                "read_archived_document",
+                {
+                    "document_id": selected_artifact["document_id"],
+                    "start": 0,
+                },
+            )
         else:
             evidence = outputs[0]["evidence"][0]["id"]
             question = context["question"]
@@ -372,13 +394,22 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
                 "hypothesis": manual_task["hypothesis"],
                 "outcome": "两组都观察到了重复写入，原先解释仍需调整",
                 "artifact": "本地合成对照记录",
+                "artifact_title": "合成双组运行日志",
+                "artifact_text": "normal request_id=demo-1 writes=2\n"
+                "timeout request_id=demo-2 writes=2",
             },
             headers=auth,
         )
-        run_stage(client, identity, auth, "reflect", task_id=manual_task["id"])
+        reflected_material = run_stage(client, identity, auth, "reflect", task_id=manual_task["id"])
         manual_context = model.contexts[-1]["project_context"]["career_evidence"]
         assert manual_context["experiments"][0]["title"] == manual_task["title"]
         assert manual_context["experiments"][0]["origin"] == "user"
+        material_id = manual_context["experiments"][0]["artifact_document"]["document_id"]
+        assert "writes=2" in client.get("/api/public-documents/" + material_id).json()["text"]
+        assert any(
+            row.get("public_document_id") == material_id
+            for row in reflected_material["results"][0]["result"]["evidence"]
+        )
         calls_before_goal_edit = len(model.contexts)
         before_edit = client.get(f"/api/career/{identity}").json()
         another_job = client.post(

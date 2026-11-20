@@ -81,6 +81,8 @@ class TaskUpdate(BaseModel):
     outcome: str = Field(default="", max_length=4000)
     artifact: str = Field(default="", max_length=1000)
     hypothesis: str = Field(default="", max_length=1500)
+    artifact_title: str = Field(default="工作样本材料", max_length=150)
+    artifact_text: str = Field(default="", max_length=20_000)
 
 
 def career_routes(*, repository, store, settings, response, read_json, busy, tasks):
@@ -175,6 +177,8 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
 
     async def update_task(request):
         data = TaskUpdate.model_validate(await read_json(request))
+        if data.artifact_text.strip() and busy():
+            return response({"message": "请等本轮研究结束后再保存作品材料，输入仍保留。"}, 409)
         return change(
             lambda: service().update_task(
                 request.path_params["id"], request.path_params["task_id"], **data.model_dump()

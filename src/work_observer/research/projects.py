@@ -1516,6 +1516,14 @@ class ProjectService:
                         if selected_task
                         else row.get("hypothesis", "")[:400],
                         "artifact": row["artifact"][:200],
+                        "artifact_document": {
+                            "document_id": row["artifact_document_id"],
+                            "title": row["artifact_title"],
+                            "notice": "用户提供的练习产物或运行记录，"
+                            "未独立执行验证；可读取归档全文。",
+                        }
+                        if row.get("artifact_document_id")
+                        else None,
                     }
                     for row in observations[-3:]
                 ],
