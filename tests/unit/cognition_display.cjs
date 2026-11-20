@@ -69,3 +69,12 @@ assert.ok(historyNotices.includes("后续重新保留（仍待核对）")&&histo
 assert.ok(historyNotices.includes("不以时间决定真假")&&historyNotices.includes("记录于"));
 assert.ok(historyNotices.includes('data-open-run="retained"')&&historyNotices.includes('data-open-run="challenged"'));
 assert.ok(!historyNotices.includes("人工核对通过"));
+
+context.graph={domains:[{id:"domain",version:2,name:"<script>工作定义</script>",definition:"完整定义",inclusion:"适用任务",exclusion:"保留边界",source_context:{job_ids:["j"],run_id:"source-map",claim_indices:[4]}}],relations:[{id:"relation",domain_name:"工作定义",source_text:"任务",target_text:"精通平台设计",predicate:"requires",source_run_id:"source-map",scope:{job_ids:["j"],research_map:{claim_indices:[4],rationale:"关系解释",transfer_limit:"不能直接迁移"}}}],supporting_findings:[{run_id:"source-map",claims:context.support,omitted_claims:0}],omissions:[{kind:"domains",id:"large-domain"},{kind:"research",id:"large-run"}],truncated:true};
+const graph=vm.runInContext("renderRetrievedDomainKnowledge(graph)",context);
+assert.ok(graph.includes("&lt;script&gt;工作定义")&&!graph.includes("<script>"));
+assert.ok(graph.includes("保留边界")&&graph.includes("不能直接迁移")&&graph.includes("加分"));
+assert.ok(graph.includes("不能外推到本次全部候选")&&graph.includes("不计作新的原文来源或岗位样本"));
+assert.ok(graph.includes('data-open-run="source-map"')&&graph.includes('data-knowledge-locate="relation"'));
+assert.ok(graph.includes('data-knowledge-locate="large-domain"')&&graph.includes('data-open-run="large-run"'));
+assert.ok(!graph.includes("data-evidence-index"));

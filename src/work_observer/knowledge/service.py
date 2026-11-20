@@ -13,6 +13,7 @@ from work_observer.knowledge.models import DomainDefinition, WorkRelation
 from work_observer.knowledge.support import research_support
 from work_observer.memory.service import MemoryService
 from work_observer.retrieval.enhanced import RetrievalService
+from work_observer.text_match import match_text
 
 DIMENSIONS = {"business", "task", "deliverable", "responsibility", "ability", "tool"}
 
@@ -210,6 +211,8 @@ class DomainKnowledgeService:
         self, row, *, job_ids=None, public_document_ids=None, project_id=None, scoped=False, at=None
     ):
         context = row.source_context or {}
+        if scoped and context.get("project_id") and context["project_id"] != project_id:
+            return ["工作类型的来源不在本轮研究范围"]
         if not context.get("run_id"):
             return []
         if scoped and (
@@ -632,12 +635,29 @@ class DomainKnowledgeService:
         return issues
 
     def browse_for_research(
-        self, terms, *, job_ids, public_document_ids, project_id=None, as_of=None
+        self,
+        terms,
+        *,
+        job_ids,
+        public_document_ids,
+        project_id=None,
+        as_of=None,
+        for_retrieval=False,
     ):
-        """只返回有限派生线索和原文定位信息，不生成可直接提交的引用。"""
+        """只返回派生线索；检索可展示较大范围中的原范围认识，不扩大研究复用的覆盖。"""
         from work_observer.retrieval.enhanced import normalized_time, validated_terms
 
-        terms = validated_terms(terms)
+        terms = (
+            list(
+                dict.fromkeys(
+                    term
+                    for start in range(0, len(terms), 10)
+                    for term in validated_terms(terms[start : start + 10])
+                )
+            )
+            if for_retrieval
+            else validated_terms(terms)
+        )
         cutoff = normalized_time(as_of)
         jobs, public_ids = set(job_ids), set(public_document_ids)
         with Session(self.repository.engine) as session:
@@ -647,9 +667,14 @@ class DomainKnowledgeService:
                     select(DomainDefinition).where(DomainDefinition.status == "active")
                 )
                 if (not cutoff or row.reviewed_at <= cutoff)
+                and (
+                    not for_retrieval or set((row.source_context or {}).get("job_ids", [])) <= jobs
+                )
                 and not self.definition_validity(
                     row,
-                    job_ids=jobs,
+                    job_ids=(row.source_context or {}).get("job_ids", [])
+                    if for_retrieval
+                    else jobs,
                     public_document_ids=public_ids,
                     project_id=project_id,
                     scoped=True,
@@ -668,7 +693,8 @@ class DomainKnowledgeService:
                 text = " ".join(
                     (row.source_text, row.target_text, definition.name, definition.definition)
                 )
-                score = sum(text.casefold().count(term.casefold()) for term in terms)
+                folded = match_text(text)
+                score = sum(folded.count(match_text(term)) for term in terms)
                 if score:
                     ranked.append((-score, row.id, row))
             ranked.sort(key=lambda item: item[:2])
@@ -684,11 +710,10 @@ class DomainKnowledgeService:
             for row in sorted(definitions.values(), key=lambda value: value.id):
                 if len(domain_ids) == 6:
                     break
-                if row.id not in domain_ids and any(
-                    term.casefold()
-                    in " ".join((row.name, row.definition, row.inclusion, row.exclusion)).casefold()
-                    for term in terms
-                ):
+                folded = match_text(
+                    " ".join((row.name, row.definition, row.inclusion, row.exclusion))
+                )
+                if row.id not in domain_ids and any(match_text(term) in folded for term in terms):
                     domain_ids.append(row.id)
             domain_output, relation_output = [], []
             for identity in domain_ids:
@@ -716,9 +741,9 @@ class DomainKnowledgeService:
                         "id": row.id,
                         "version": row.version,
                         "name": row.name,
-                        "definition": row.definition[:1200],
-                        "inclusion": row.inclusion[:500],
-                        "exclusion": row.exclusion[:500],
+                        "definition": row.definition if for_retrieval else row.definition[:1200],
+                        "inclusion": row.inclusion if for_retrieval else row.inclusion[:500],
+                        "exclusion": row.exclusion if for_retrieval else row.exclusion[:500],
                         "derived": True,
                         "source_context": row.source_context or {},
                         "independent_source": False,
@@ -766,6 +791,11 @@ class DomainKnowledgeService:
                     {
                         "id": row.id,
                         "domain_id": row.domain_id,
+                        **(
+                            {"domain_name": definitions[row.domain_id].name}
+                            if for_retrieval
+                            else {}
+                        ),
                         "source_kind": row.source_kind,
                         "source_text": row.source_text,
                         "target_kind": row.target_kind,

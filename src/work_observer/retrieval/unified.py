@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.connectors.public_documents import MAX_BYTES, PublicDocumentService
 from work_observer.connectors.public_models import PublicDocument
+from work_observer.knowledge.service import DomainKnowledgeService
 from work_observer.memory.service import MemoryService
 from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.enhanced import RetrievalService, normalized_time, validated_terms
-from work_observer.storage.models import Job
 from work_observer.text_match import match_text
 
 
@@ -79,7 +79,7 @@ class UnifiedRetrieval:
             statement = statement.where(PublicDocument.id.in_(public_document_ids))
         if cutoff:
             statement = statement.where(PublicDocument.observed_at <= cutoff)
-        public_count, public_matches, seen_urls = 0, set(), set()
+        public_count, public_matches, seen_urls, scoped_public_ids = 0, set(), set(), []
         with Session(self.repository.engine) as session:
             for row in session.scalars(statement):
                 # 默认当前口径每个URL仅取最新材料；显式ID允许重放旧版本。
@@ -90,6 +90,7 @@ class UnifiedRetrieval:
                 if not intact(row):
                     excluded_integrity.append(row.id)
                     continue
+                scoped_public_ids.append(row.id)
                 chunks = []
                 for start in range(0, len(row.text), 600):
                     quote = row.text[start : start + 700]
@@ -118,9 +119,7 @@ class UnifiedRetrieval:
                             "retrieval": {"score": score},
                         }
                     )
-            scoped_jobs = (
-                list(session.scalars(select(Job.id))) if job_ids is None else list(job_ids)
-            )
+        scoped_jobs = jobs["scope_job_ids"]
         evidence.sort(key=lambda item: (-item.get("retrieval", {}).get("score", 0), item["id"]))
         # 每份原始资料先有一条代表片段，避免长官网正文挤掉短JD。
         source_seen, diversified = set(), []
@@ -136,6 +135,13 @@ class UnifiedRetrieval:
             selected.append(item)
             characters += len(item["quote"])
         knowledge, knowledge_omissions = [], []
+        domain_knowledge = {
+            "domains": [],
+            "relations": [],
+            "supporting_findings": [],
+            "omissions": [],
+            "truncated": False,
+        }
         if include_knowledge:
             recalled = MemoryService(self.repository).recall(
                 " ".join(terms),
@@ -182,6 +188,55 @@ class UnifiedRetrieval:
                         "independent_source": False,
                     }
                 )
+            found = DomainKnowledgeService(self.repository).browse_for_research(
+                expanded,
+                job_ids=scoped_jobs,
+                public_document_ids=scoped_public_ids,
+                project_id=project_id,
+                as_of=cutoff,
+                for_retrieval=True,
+            )
+            for kind in ("relations", "domains"):
+                for item in found[kind]:
+                    size = len(json.dumps(item, ensure_ascii=False))
+                    if characters + size > 7000:
+                        domain_knowledge["omissions"].append({"kind": kind, "id": item["id"]})
+                        continue
+                    domain_knowledge[kind].append(item)
+                    characters += size
+            support_indices = {}
+            for row in domain_knowledge["relations"]:
+                if row.get("source_run_id"):
+                    support_indices.setdefault(row["source_run_id"], set()).update(
+                        row["scope"].get("research_map", {}).get("claim_indices", [])
+                    )
+            for row in domain_knowledge["domains"]:
+                context = row.get("source_context", {})
+                if context.get("run_id"):
+                    support_indices.setdefault(context["run_id"], set()).update(
+                        context.get("claim_indices", [])
+                    )
+            for packet in found["supporting_findings"]:
+                if packet["run_id"] not in support_indices:
+                    continue
+                indices = support_indices[packet["run_id"]]
+                selected_claims = [row for row in packet["claims"] if row["claim_index"] in indices]
+                packet = {
+                    **packet,
+                    "claims": selected_claims,
+                    "omitted_claims": len(indices) - len(selected_claims),
+                }
+                size = len(json.dumps(packet, ensure_ascii=False))
+                if characters + size > 7000:
+                    domain_knowledge["omissions"].append(
+                        {"kind": "research", "id": packet["run_id"]}
+                    )
+                    continue
+                domain_knowledge["supporting_findings"].append(packet)
+                characters += size
+            domain_knowledge["truncated"] = found["truncated"] or bool(
+                domain_knowledge["omissions"]
+            )
         return {
             "terms": terms,
             "expanded_terms": expanded,
@@ -192,12 +247,14 @@ class UnifiedRetrieval:
             "evidence": selected,
             "knowledge": knowledge,
             "knowledge_omissions": knowledge_omissions,
+            "domain_knowledge": domain_knowledge,
             "excluded_integrity_ids": sorted(set(excluded_integrity)),
             "context_characters": characters,
             "context_limit": 7000,
             "truncated": len(evidence) > len(selected),
             "scope": {
                 "job_ids": job_ids,
+                "effective_job_ids": scoped_jobs,
                 "public_document_ids": public_document_ids,
                 "project_id": project_id,
                 "as_of": cutoff,
@@ -205,6 +262,7 @@ class UnifiedRetrieval:
             "rules": (
                 "岗位分母独立于公开资料和派生知识；来源计数先于分页。"
                 "知识只回链原文，不是新增独立证据。"
+                "领域定义与工作关系仅在各自原来源范围内作为派生线索展示，不能外推到全部候选。"
                 "后续修正提示也计入展示额度；knowledge_omissions仅指本次召回但放不下的认识，"
                 "可到已保存知识查看完整内容，不表示知识已经失效或没有后续修正。"
                 "检索比较统一大小写和同形部首，引用仍保留原文。"

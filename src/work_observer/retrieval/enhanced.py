@@ -295,6 +295,7 @@ class RetrievalService:
             "expanded_terms": expanded,
             "aliases": aliases,
             "sample": self._sample(records, filters, cutoff),
+            "scope_job_ids": [item["job_id"] for item in records if item["state"] != "excluded"],
             "matching_jobs": len(matching_jobs),
             "evidence": evidence,
             "tag_only_hits": tag_only[:20],

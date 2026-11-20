@@ -181,6 +181,140 @@ def test_unified_separates_originals_from_derived_and_counts_before_limit(corpus
     assert scoped["evidence"][0]["evidence_kind"] == "public_document"
 
 
+def test_unified_applies_original_filters_to_all_derived_results(corpus):
+    repository, add, _ = corpus
+    shanghai = add("shanghai", city="上海")
+    beijing = add("beijing", city="北京")
+    memory = MemoryService(repository)
+    saved = memory.create(
+        "knowledge", "Python业务交付的北京样本认识", evidence=Catalog(repository).evidence(beijing)
+    )
+    memory.activate(saved["id"])
+    domain = active_domain(repository)
+    relation = reviewed_relation(repository, domain, beijing)
+    found = UnifiedRetrieval(repository).search(
+        ["Python"], filters={"city": "上海"}, public_document_ids=[]
+    )
+    assert found["scope"]["effective_job_ids"] == [shanghai]
+    assert not found["knowledge"]
+    assert relation["id"] not in {row["id"] for row in found["domain_knowledge"]["relations"]}
+    assert found["matching_jobs"] == found["sample"]["denominator"] == 1
+
+
+def test_unified_returns_source_bound_map_knowledge_in_a_larger_search_without_expanding_it(
+    corpus, tmp_path
+):
+    repository, add, _ = corpus
+    jobs = [add("a"), add("b")]
+    store = ResearchStore(
+        tmp_path / "retrieval-checkpoints.db", str(Path(repository.engine.url.database).resolve())
+    )
+    try:
+        original = completed_source(repository, store, jobs[0])
+        result = store.get(original["id"])["result"]
+        service = DomainKnowledgeService(repository)
+        domain = service.propose_domain(
+            "source_python",
+            "Python交付",
+            "Python接口交付",
+            source_context={
+                "run_id": original["id"],
+                "job_ids": jobs[:1],
+                "public_document_ids": [],
+                "claim_indices": [0],
+                "evidence_ids": result["claims"][0]["evidence_ids"],
+            },
+        )
+        service.review_domain(domain["id"], "accept", "合成机制核对")
+        relation = reviewed_relation(
+            repository,
+            domain,
+            jobs[0],
+            source_run_id=original["id"],
+            research_map={
+                "claim_indices": [0],
+                "basis": "inference",
+                "transfer_limit": "仅限原岗位",
+            },
+        )
+        found = UnifiedRetrieval(repository).search(["Python"], public_document_ids=[])
+        graph = found["domain_knowledge"]
+        assert graph["domains"][0]["id"] == domain["id"]
+        assert graph["domains"][0]["source_context"]["job_ids"] == jobs[:1]
+        assert graph["relations"][0]["id"] == relation["id"]
+        assert not graph["relations"][0]["independent_source"]
+        assert found["matching_jobs"] == 2 and found["sample"]["denominator"] == 2
+        assert found["context_characters"] <= found["context_limit"]
+        originals_only = UnifiedRetrieval(repository).search(["Python"], include_knowledge=False)
+        assert not originals_only["domain_knowledge"]["domains"]
+        assert not originals_only["domain_knowledge"]["relations"]
+        assert store.get(original["id"])["result"] == result
+    finally:
+        store.close()
+
+
+def test_unified_keeps_project_origin_on_retrieved_domain_definitions(corpus, tmp_path):
+    from test_dependency_eligibility import source
+
+    from work_observer.research.projects import ProjectService
+
+    repository, add, _ = corpus
+    job = add("private-domain")
+    store = ResearchStore(
+        tmp_path / "project-domain.db", str(Path(repository.engine.url.database).resolve())
+    )
+    repository.bind_research_store(store)
+    try:
+        project = ProjectService(store).create("合成研究", "Python任务", [job])
+        original = source(repository, store, [job], project_id=project["id"])
+        service = DomainKnowledgeService(repository)
+        domain = service.propose_domain(
+            "private_python",
+            "Python项目定义",
+            "Python任务边界",
+            source_context={
+                "run_id": original["run_id"],
+                "project_id": project["id"],
+                "job_ids": [job],
+                "public_document_ids": [],
+                "claim_indices": [0],
+                "evidence_ids": original["claims"][0]["evidence_ids"],
+            },
+        )
+        service.review_domain(domain["id"], "accept", "合成项目内核对")
+        assert not UnifiedRetrieval(repository).search(["Python"])["domain_knowledge"]["domains"]
+        scoped = UnifiedRetrieval(repository).search(["Python"], project_id=project["id"])
+        assert scoped["domain_knowledge"]["domains"][0]["id"] == domain["id"]
+    finally:
+        store.close()
+
+
+def test_unified_omits_a_whole_large_definition_instead_of_shortening_its_boundary(corpus):
+    repository, _, _ = corpus
+    text = "Python工作边界与限定；" * 250
+    service = DomainKnowledgeService(repository)
+    domain = service.propose_domain(
+        "large_definition", "Python范围", text, inclusion=text, exclusion=text
+    )
+    service.review_domain(domain["id"], "accept", "合成定义核对")
+    found = UnifiedRetrieval(repository).search(["Python"])
+    assert not found["domain_knowledge"]["domains"]
+    assert found["domain_knowledge"]["omissions"] == [{"kind": "domains", "id": domain["id"]}]
+    assert found["context_characters"] <= found["context_limit"]
+    assert service.list_domains()[0]["exclusion"] == text
+
+
+def test_unified_matches_saved_definition_glyphs_without_rewriting_its_words(corpus):
+    repository, _, _ = corpus
+    service = DomainKnowledgeService(repository)
+    domain = service.propose_domain("context_work", "上下⽂工程", "处理上下⽂与⼯具调用的工作")
+    service.review_domain(domain["id"], "accept", "合成定义核对")
+    found = UnifiedRetrieval(repository).search(["上下文"])
+    assert found["domain_knowledge"]["domains"][0]["id"] == domain["id"]
+    assert found["domain_knowledge"]["domains"][0]["definition"] == domain["definition"]
+    assert not found["evidence"] and found["matching_jobs"] == 0
+
+
 def test_unified_public_latest_explicit_history_and_integrity(corpus):
     repository, _, public = corpus
     old, _ = public("旧合成 Python 产品", at="2026-11-01T00:00:00+00:00")

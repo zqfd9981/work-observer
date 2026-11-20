@@ -85,6 +85,14 @@ def test_unified_domain_review_relation_correction_and_collection_http(tmp_path)
             json={"decision": "accept", "reason": "合成审核引用与范围"},
         )
         assert reviewed.status_code == 200
+        unified = client.post(
+            "/api/retrieval/unified",
+            headers=headers,
+            json={"terms": ["接口"], "job_ids": [job], "public_document_ids": []},
+        ).json()
+        assert unified["domain_knowledge"]["domains"][0]["id"] == identity
+        assert unified["domain_knowledge"]["relations"][0]["id"] == relation_id
+        assert unified["sample"]["denominator"] == 1
         collection = client.post(
             "/api/knowledge/collection",
             headers=headers,
