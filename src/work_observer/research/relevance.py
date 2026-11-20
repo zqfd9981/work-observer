@@ -13,18 +13,18 @@ MAP_FIELDS = {
 def map_content(result):
     value = result.get("work_map") or {}
     for key, fields in MAP_FIELDS.items():
-        for row in value.get(key, []):
+        for index, row in enumerate(value.get(key, [])):
             text = []
             for field in fields:
                 content = row.get(field, "")
                 text.extend(content if isinstance(content, list) else [content])
-            yield row, " ".join(text)
+            yield key, index, row, " ".join(text)
 
 
 def finding_score(query, question, result):
     text = [question, *result.get("gaps", [])]
     text.extend(claim["text"] for claim in result.get("claims", []))
-    text.extend(content for _, content in map_content(result))
+    text.extend(content for _, _, _, content in map_content(result))
     text.extend((result.get("work_map") or {}).get("unknowns", []))
     return len(query & _tokens(" ".join(text)))
 
@@ -35,7 +35,7 @@ def ranked_claims(result, query):
         index: len(query & _tokens(claim["text"]))
         for index, claim in enumerate(result.get("claims", []))
     }
-    for row, text in map_content(result):
+    for _, _, row, text in map_content(result):
         score = len(query & _tokens(text))
         for index in row.get("claim_indices", []):
             if index in scores:
@@ -48,3 +48,20 @@ def ranked_claims(result, query):
             pair[0],
         ),
     )
+
+
+def ranked_map_rows(result, query):
+    """Choose whole reasoning units; a comparison's indices include both source sides."""
+    order = {"comparisons": 0, "work_relations": 1, "ability_relations": 2, "work_types": 3}
+    claims = result.get("claims", [])
+    ranked = []
+    for key, index, row, text in map_content(result):
+        indices = row.get("claim_indices", [])
+        linked = " ".join(claims[i]["text"] for i in indices if 0 <= i < len(claims))
+        score = len(query & _tokens(text + " " + linked))
+        if score:
+            ranked.append((-score, order[key], index, key, indices))
+    for index, text in enumerate((result.get("work_map") or {}).get("unknowns", [])):
+        if score := len(query & _tokens(text)):
+            ranked.append((-score, 4, index, "unknowns", []))
+    return [(key, index, indices) for _, _, index, key, indices in sorted(ranked)]

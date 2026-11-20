@@ -60,6 +60,9 @@ def test_reopened_question_reuses_map_and_corrections_with_or_without_explicit_r
     assert "精通" in old["derived_claims"][1]["text"]
     changed = store.get(project["steps"][1]["run_id"])["result"]
     assert changed["cognition_revisions"][0]["previous_run_id"] == original["run_id"]
+    correction_reason = "同一材料的适用范围仍须逐项核对；" * 40 + "末句：资格要求不证明个人上线权。"
+    changed["cognition_revisions"][0]["reason"] = correction_reason
+    store.save(changed["run_id"], result=changed)
     store.close()
     reopened = ResearchStore(store.path, store.namespace)
     try:
@@ -82,6 +85,7 @@ def test_reopened_question_reuses_map_and_corrections_with_or_without_explicit_r
             row for row in old["derived_claims"] if row["previous_claim_index"] == revised_index
         )
         assert claim["followup_decisions"][0]["decision"] == "revise"
+        assert claim["followup_decisions"][0]["reason"] == correction_reason
         assert claim["reuse_status"] == "has_provisional_followup"
         assert old["work_map"]["comparisons"][0]["transfer_conditions"] == "核实个人分工与规模"
         assert old["work_map"]["omitted"] == dict.fromkeys(old["work_map"]["omitted"], 0)
@@ -165,3 +169,47 @@ def test_map_context_keeps_original_indices_and_discloses_rows_missing_their_cla
     assert len(json.dumps(context, ensure_ascii=False)) <= 14000
     assert item["work_map"]["omitted"]["ability_relations"] == 1
     assert result == full
+
+
+def test_relevant_comparison_survives_unrelated_claims_filling_the_context(source_workspace):
+    repo, store, jobs = source_workspace
+    service = ProjectService(store)
+    project = service.create("合成地图容量", "概览两份资料", jobs[:2])
+    project = service.add(
+        project["id"], "概览两份资料", revision=project["revision"],
+        approach="work_map", max_calls=4,
+    )
+    project = asyncio.run(
+        execute_project(
+            service, project["id"], repo, Settings(), model=ComparedJobMap(), max_steps=1
+        )
+    )
+    source = project["steps"][0]
+    result = deepcopy(store.get(source["run_id"])["result"])
+    result["claims"].extend(
+        {
+            **result["claims"][0],
+            "text": "合成无关主题：" + "日常资料整理记录；" * 90,
+            "requirement": "unspecified",
+        }
+        for _ in range(20)
+    )
+    store.save(source["run_id"], state="finished", result=result)
+    original = deepcopy(store.get(source["run_id"]))
+    project = service.add(
+        project["id"], "核实个人分工与规模", revision=project["revision"], max_calls=2
+    )
+    step = service.claim(project["id"])
+    context = service.context(project["id"], step, repo)
+    old = next(row for row in context["previous_findings"] if row["run_id"] == source["run_id"])
+    comparison = old.get("work_map", {}).get("comparisons", [])
+    assert comparison and comparison[0]["transfer_conditions"] == "核实个人分工与规模"
+    assert comparison[0]["relation_indices"] == [0, 1]
+    assert {row["previous_index"] for row in old["work_map"]["work_relations"]} == {0, 1}
+    claims = {row["previous_claim_index"]: row for row in old["derived_claims"]}
+    assert {0, 1, 2, 3} <= claims.keys()
+    assert claims[1]["text"] == result["claims"][1]["text"]
+    assert claims[3]["requirement"] == "required"
+    assert old["omitted_claims"] > 0
+    assert len(json.dumps(context, ensure_ascii=False)) <= 14000
+    assert store.get(source["run_id"]) == original

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from copy import deepcopy
 from datetime import datetime
 from uuid import uuid4
 
@@ -84,7 +85,7 @@ def upstream_revision_notices(findings):
                 "previous_run_id": revision["previous_run_id"],
                 "previous_claim_index": revision["previous_claim_index"],
                 "decision": revision["decision"],
-                "reason": revision["reason"][:400],
+                "reason": revision["reason"],
                 "aspects": revision.get("aspects", []),
                 "comparison_notice": revision.get("comparison_notice"),
             }
@@ -156,8 +157,8 @@ def step_continuation(project, step, run, checkpoint, audit, *, at=None):
     return {**info, "reason": reason, "available": reason is None}
 
 
-def _map_context(context, item, result):
-    """Carry prior reasoning with its original indices within the existing context limit."""
+def _map_context(context, item, result, *, focus=None):
+    """Extend selected reasoning; a comparison and any missing relations fit as one unit."""
     from work_observer.reports.cognition import checked_map
 
     if not result.get("work_map"):
@@ -165,7 +166,7 @@ def _map_context(context, item, result):
     value = checked_map(result)
     keys = ("work_types", "ability_relations", "work_relations", "comparisons", "unknowns")
     selected = {row["previous_claim_index"] for row in item["derived_claims"]}
-    output = {
+    output = item.get("work_map") or {
         "version": value["version"],
         "scope_note": value["scope_note"],
         "note": (
@@ -183,31 +184,82 @@ def _map_context(context, item, result):
         if omitted is not None:
             item["work_map_omitted"] = omitted
         return
-    for key in keys:
-        for index, row in enumerate(value.get(key, [])):
-            if key != "unknowns" and not set(row["claim_indices"]) <= selected:
+    targets = [focus] if focus else [
+        (key, index) for key in keys for index in range(len(value.get(key, [])))
+    ]
+    for key, index in targets:
+        row = value[key][index]
+        unit = (
+            [("work_relations", i) for i in row["relation_indices"]] + [(key, index)]
+            if key == "comparisons" else [(key, index)]
+        )
+        if any(
+            kind != "unknowns" and not set(value[kind][i]["claim_indices"]) <= selected
+            for kind, i in unit
+        ):
+            continue
+        added = []
+        for kind, i in unit:
+            if any(existing["previous_index"] == i for existing in output[kind]):
                 continue
-            if key == "comparisons" and not set(row["relation_indices"]) <= {
-                r["previous_index"] for r in output["work_relations"]
-            }:
-                continue
+            row = value[kind][i]
             bound = (
-                {"previous_index": index, "text": row}
-                if key == "unknowns"
+                {"previous_index": i, "text": row}
+                if kind == "unknowns"
                 else {
                     **row,
-                    "previous_index": index,
+                    "previous_index": i,
                 }
             )
-            if key == "work_relations" and row.get("source_claim_index") is not None:
+            if kind == "work_relations" and row.get("source_claim_index") is not None:
                 # Canonical node text/category already live in the selected claims.
                 for field in ("source_text", "target_text", "source_kind", "target_kind"):
                     bound.pop(field)
-            output[key].append(bound)
-            output["omitted"][key] -= 1
-            if len(json.dumps(context, ensure_ascii=False)) > 14000:
-                output[key].pop()
-                output["omitted"][key] += 1
+            output[kind].append(bound)
+            output["omitted"][kind] -= 1
+            added.append(kind)
+        if len(json.dumps(context, ensure_ascii=False)) > 14000:
+            for kind in reversed(added):
+                output[kind].pop()
+                output["omitted"][kind] += 1
+    for key in keys:
+        output[key].sort(key=lambda row: row["previous_index"])
+    return focus is None or any(
+        row["previous_index"] == focus[1] for row in output[focus[0]]
+    )
+
+
+def _prior_claim_context(context, item, result, ranked, followups, query):
+    """Pack relevant reasoning and all its claims before filling remaining context space."""
+    from work_observer.research.relevance import ranked_map_rows
+
+    prepared = {}
+    for index, claim in ranked:
+        selected = {**claim, "previous_claim_index": index}
+        if decisions := followups.get((item["run_id"], index)):
+            selected["followup_decisions"] = decisions[-3:]
+            selected["reuse_status"] = "has_provisional_followup"
+        prepared[index] = selected
+    for key, index, indices in ranked_map_rows(result, query):
+        saved = deepcopy(item)
+        present = {row["previous_claim_index"] for row in item["derived_claims"]}
+        item["derived_claims"].extend(
+            prepared[i] for i in dict.fromkeys(indices) if i not in present
+        )
+        item["omitted_claims"] = len(prepared) - len(item["derived_claims"])
+        if not _map_context(context, item, result, focus=(key, index)):
+            item.clear()
+            item.update(saved)
+    for index, _ in ranked:
+        if any(row["previous_claim_index"] == index for row in item["derived_claims"]):
+            continue
+        item["derived_claims"].append(prepared[index])
+        if len(json.dumps(context, ensure_ascii=False)) > 14000:
+            item["derived_claims"].pop()
+            continue
+        item["omitted_claims"] -= 1
+    item["derived_claims"].sort(key=lambda claim: claim["previous_claim_index"])
+    _map_context(context, item, result)
 
 
 def historical_document_scope(repository, identities, selected):
@@ -1136,7 +1188,7 @@ class ProjectService:
                         "run_id": previous["run_id"],
                         "decision": revision["decision"],
                         "new_claim_indices": revision["new_claim_indices"],
-                        "reason": revision["reason"][:400],
+                        "reason": revision["reason"],
                         "aspects": revision.get("aspects", []),
                         "comparison_notice": revision.get("comparison_notice"),
                         "review_state": previous["state"],
@@ -1164,6 +1216,7 @@ class ProjectService:
             refresh_note=step.get("refresh_note"),
             selection_note=(
                 "按旧问题、原判断及地图关系/边界定位同范围、仍有效的相关研究；"
+                "优先带入本题相关关系/比较及其完整原判断，其他内容按剩余额度选择。"
                 "文字相关不证明结论成立。omitted_claims是未放入上下文的判断数，"
                 "work_map_omitted表示整份地图未带入时各类省略数；未展示不能当作不存在。"
                 "origin为agent的问题由Agent提出，不是用户新增偏好或知识采纳。"
@@ -1339,18 +1392,7 @@ class ProjectService:
                 context["memory_dependencies"] = saved_dependencies
                 context["knowledge_dependencies"] = saved_knowledge
                 continue
-            for index, claim in ranked:
-                selected = {**claim, "previous_claim_index": index}
-                if decisions := followups.get((previous["run_id"], index)):
-                    selected["followup_decisions"] = decisions[-3:]
-                    selected["reuse_status"] = "has_provisional_followup"
-                item["derived_claims"].append(selected)
-                if len(json.dumps(context, ensure_ascii=False)) > 14000:
-                    item["derived_claims"].pop()
-                    continue
-                item["omitted_claims"] -= 1
-            item["derived_claims"].sort(key=lambda claim: claim["previous_claim_index"])
-            _map_context(context, item, result)
+            _prior_claim_context(context, item, result, ranked, followups, query_tokens)
             if previous["id"] == reply_id:
                 context["reply_to"]["findings_included"] = True
                 if result.get("application_plan"):

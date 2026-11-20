@@ -31,6 +31,9 @@ def test_later_correction_flags_existing_descendants_without_rewriting_them():
     assert notices["direct"]["items"][0]["run_id"] == "correction"
     assert "不能据此断定本轮每条判断错误" in notices["direct"]["notice"]
     assert findings == before
+    full_reason = "每项限定仍需查证；" * 60 + "末句：原协作任务不能证明个人权限。"
+    correction[1]["cognition_revisions"][0]["reason"] = full_reason
+    assert upstream_revision_notices(findings)["direct"]["items"][0]["reason"] == full_reason
     # A rejected/invalid correction is not in the caller's eligible findings.
     assert not upstream_revision_notices(findings[:4])
     correction[1]["cognition_revisions"][0]["previous_statement"] = "未被原判断定位的内容"
