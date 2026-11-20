@@ -874,9 +874,19 @@ class ProjectService:
             used["calls"] += result.get("model_calls", 0)
             used["seconds"] += result.get("elapsed_seconds", 0)
             used["public"] += result.get("public_searches", 0) + result.get("public_reads", 0)
-            # 领取前预留整轮预算；中断不会把额度重新开放给另一步。
-            used["reserved_calls"] += step["max_calls"] if not step["offline"] else 0
-            used["reserved_seconds"] += step["timeout"] if not step["offline"] else 0
+            # Finished coaching releases unused headroom; resumable work keeps its reservation.
+            settled = (
+                record.get("career")
+                and run["state"] == "finished"
+                and result.get("status") in {"completed", "evidence_only", "insufficient_evidence"}
+            )
+            if not step["offline"]:
+                used["reserved_calls"] += (
+                    result.get("model_calls", 0) if settled else step["max_calls"]
+                )
+                used["reserved_seconds"] += (
+                    result.get("elapsed_seconds", 0) if settled else step["timeout"]
+                )
         return used
 
     def claim(self, identity, *, worker_caps=None, claim_outcome=None, preferred_step_id=None):
@@ -1472,6 +1482,15 @@ class ProjectService:
             if selected_task := step.get("career_task_id"):
                 observations = [row for row in observations if row["id"] == selected_task]
             context["career_evidence"] = {
+                "selected_answer": {
+                    "document_id": step["career_answer_document_id"],
+                    "notice": "本次讨论的用户回答原文，可引用原话；经历和效果仍未独立核实。",
+                }
+                if step.get("career_answer_document_id")
+                else None,
+                "omitted_documents": step.get("career_omitted_documents", 0),
+                "document_selection_notice": "omitted_documents是本轮未带入的长期材料数量，"
+                "未带入不表示没有或不相关；本轮可读范围以归档目录为准。",
                 "selected_material": {
                     "document_id": step["career_material_id"],
                     "notice": "用户明确选中的归档资料，需读取正文后回答；标题不是证据。",

@@ -23,17 +23,27 @@ class CareerModel:
             for row in history
             if row.get("type") == "function_call_output"
         ]
-        selected_artifact = (
-            (context.get("project_context") or {})
-            .get("career_evidence", {})
-            .get("selected_material")
-        ) or next(
-            (
+        career_context = (context.get("project_context") or {}).get("career_evidence", {})
+        required_documents = [
+            value
+            for key in ("selected_answer", "selected_material")
+            if (value := career_context.get(key))
+        ]
+        if not required_documents:
+            required_documents = [
                 row["artifact_document"]
-                for row in (context.get("project_context") or {})
-                .get("career_evidence", {})
-                .get("experiments", [])
+                for row in career_context.get("experiments", [])
                 if row.get("artifact_document")
+            ][:1]
+        selected_artifact = next(
+            (
+                document
+                for document in required_documents
+                if not any(
+                    evidence.get("public_document_id") == document["document_id"]
+                    for output in outputs
+                    for evidence in output.get("evidence", [])
+                )
             ),
             None,
         )
@@ -137,6 +147,22 @@ class CareerModel:
                     "unknowns": ["具体交付物和业务验收方式未说明。"],
                 }
                 arguments["revisions"] = []
+            if selected_answer := career_context.get("selected_answer"):
+                answer_evidence = next(
+                    ev
+                    for output in outputs
+                    for ev in output.get("evidence", [])
+                    if ev.get("public_document_id") == selected_answer["document_id"]
+                )
+                arguments["claims"] = [
+                    {
+                        "category": "responsibility",
+                        "basis": "inference",
+                        "requirement": "unspecified",
+                        "text": "合成反馈示例：个人行动、实际观察和尚未验证的部分需要分别说明。",
+                        "evidence_ids": [evidence, answer_evidence["id"]],
+                    }
+                ]
             name = "finish_research"
         call = {
             "type": "function_call",
@@ -327,6 +353,28 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         question_source = interview["results"][0]["step_id"]
         first_answer = feedback["results"][0]
         assert first_answer["source_step_id"] == question_source
+        answer_document = first_answer["answer_document_id"]
+        answer_original = client.get("/api/public-documents/" + answer_document).json()["text"]
+        assert question in answer_original and first_answer["answer"] in answer_original
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["selected_answer"][
+                "document_id"
+            ]
+            == answer_document
+        )
+        answer_evidence = next(
+            row
+            for row in first_answer["result"]["evidence"]
+            if row.get("public_document_id") == answer_document
+        )
+        assert answer_evidence["id"] in first_answer["result"]["claims"][0]["evidence_ids"]
+        interview_practice = run_stage(
+            client, identity, auth, "plan", source_step_id=first_answer["step_id"]
+        )
+        assert interview_practice["results"][0]["source_step_id"] == first_answer["step_id"]
+        assert interview_practice["results"][0]["answer_document_id"] == answer_document
+        assert len(interview_practice["results"][0]["result"]["application_plan"]["actions"]) == 1
+        assert "表达不清" in model.contexts[-1]["question"]
         followup = run_stage(
             client, identity, auth, "followup", source_step_id=first_answer["step_id"]
         )
@@ -334,6 +382,7 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert first_answer["answer"] in model.contexts[-1]["question"]
         assert question in model.contexts[-1]["question"]
         assert followup["results"][0]["source_step_id"] == first_answer["step_id"]
+        assert followup["results"][0]["answer_document_id"] == answer_document
         followup_question = followup["results"][0]["result"]["gaps"][-1]
         followed = run_stage(
             client,
@@ -344,6 +393,7 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             answer="我还没有记录请求标识，需要补上两者的对照。",
         )
         assert followed["results"][0]["interview_question"] == followup_question
+        assert followed["results"][0]["answer_document_id"] != answer_document
         retried = run_stage(
             client,
             identity,
@@ -353,6 +403,10 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             answer="重答：我只验证了超时响应，无法凭现有记录判断是否重复写入。",
         )
         assert retried["results"][0]["interview_question"] == question
+        assert retried["results"][0]["answer_document_id"] != answer_document
+        assert (
+            client.get("/api/public-documents/" + answer_document).json()["text"] == answer_original
+        )
         assert followup_question not in model.contexts[-1]["question"]
         saved_answers = [row for row in retried["results"] if row["kind"] == "answer"]
         assert len(saved_answers) == 3 and first_answer["answer"] == saved_answers[-1]["answer"]
@@ -374,6 +428,7 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         inquiry = asked["results"][0]
         assert inquiry["user_question"] == "为何接口测试不能证明重复写入已解决？"
         assert inquiry["section"] == "interview"
+        assert inquiry["answer_document_id"] == retried["results"][0]["answer_document_id"]
         assert retried["results"][0]["answer"] in model.contexts[-1]["question"]
         assert inquiry["user_question"] in model.contexts[-1]["question"]
         assert model.contexts[-1]["project_context"]["previous_findings"] == []
@@ -563,7 +618,8 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert reused_context["experiments"][0]["origin"] == "reused"
         assert reused_context["experiments"][0]["artifact_document"]["document_id"] == material_id
         full_project = client.get(f"/api/projects/{identity}").json()
-        assert len(full_project["steps"]) == full_project["budget"]["max_rounds"] == 12
+        assert len(full_project["steps"]) >= full_project["budget"]["max_rounds"] == 12
+        assert full_project["usage"]["reserved_calls"] == full_project["usage"]["calls"]
         assert changed["usage"]["calls"] < full_project["budget"]["max_calls"]
         continued = client.post(
             f"/api/career/{identity}/prepare", json={"kind": "role"}, headers=auth

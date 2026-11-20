@@ -195,7 +195,20 @@ class CareerService:
         originals = UnifiedRetrieval(self.repository).search(
             terms,
             job_ids=project["job_ids"] if scope == "goal" else None,
-            public_document_ids=project.get("public_document_ids", []) if scope == "goal" else None,
+            public_document_ids=list(
+                dict.fromkeys(
+                    [
+                        *(project.get("public_document_ids") or []),
+                        *[
+                            row["answer_document_id"]
+                            for row in project["career"]["runs"]
+                            if row.get("answer_document_id")
+                        ],
+                    ]
+                )
+            )
+            if scope == "goal"
+            else None,
             project_id=identity if scope == "goal" else None,
             include_knowledge=False,
             limit=12,
@@ -691,15 +704,45 @@ class CareerService:
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
             user_question = question.strip() if kind == "ask" else ""
+            answer_document_id, answer_record = None, None
             if material_id and material_id not in (project.get("public_document_ids") or []):
                 raise ValueError("这份资料已不在当前目标中，请重新选择或先加入资料。")
-            if kind in {"answer", "followup", "ask"}:
+            if kind in {"answer", "followup", "ask"} or (kind == "plan" and source_step_id):
                 sources = [
                     row
                     for row in self.get(identity)["results"]
                     if row["current"] and row["result"]["status"] == "completed"
                 ]
-            if kind == "challenge":
+            if kind == "plan" and source_step_id:
+                previous = next(
+                    (
+                        row
+                        for row in sources
+                        if row["step_id"] == source_step_id and row["kind"] == "answer"
+                    ),
+                    None,
+                )
+                if not previous:
+                    raise ValueError("请选择一份当前目标下已完成反馈的回答。")
+                answer_document_id = previous.get("answer_document_id")
+                answer_record = previous
+                feedback = "\n".join(
+                    [claim["text"] for claim in previous["result"]["claims"]]
+                    + previous["result"].get("gaps", [])
+                )[:1000]
+                question = (
+                    QUESTIONS["plan"] + "\n本次只围绕这次模拟面试回答的证据缺口，设计一个最小练习。"
+                    "不要把表达不清直接当作能力不会，先区分需要重新表达与确实缺少实际观察。"
+                    "本次面试问题："
+                    + previous["interview_question"][:700]
+                    + "\n上一轮研究反馈（待结合原文核对）："
+                    + feedback
+                    + "\n按selected_answer读取用户回答原文，不照抄旧反馈作为事实。"
+                    "最多给application_plan中的一个动作，检查方式应有机会发现失败或反例，"
+                    "而不是保证一次练习就能胜任岗位。"
+                )
+                reply = previous["step_id"]
+            elif kind == "challenge":
                 if not hypothesis_a.strip() or not hypothesis_b.strip():
                     raise ValueError("请分别写下两种想对照的解释。")
                 user_question = (
@@ -727,6 +770,8 @@ class CareerService:
                     raise ValueError("这份分析已不是当前目标下的结果，请重新选择或直接提问。")
                 previous_text = ""
                 if previous:
+                    answer_document_id = previous.get("answer_document_id")
+                    answer_record = previous if previous.get("answer") else None
                     previous_text = (
                         "\n用户希望接着讨论的旧分析（不是新证据，请重新核对原文）：\n"
                         + "\n".join(
@@ -781,6 +826,8 @@ class CareerService:
                 )
                 if not previous:
                     raise ValueError("请选择一份已完成反馈的回答，再继续追问。")
+                answer_document_id = previous.get("answer_document_id")
+                answer_record = previous
                 feedback = "\n".join(
                     [claim["text"] for claim in previous["result"]["claims"]]
                     + previous["result"].get("gaps", [])
@@ -796,7 +843,7 @@ class CareerService:
                     + "\n结合岗位原文，在gaps中给出最多两道完整的面试追问，每道使用问号。"
                     "追问必须指出这份回答中具体需要澄清的行动、取舍、证据或责任边界；"
                     "说明为什么追问以及应拿什么材料回答。不要替用户回答或编造指标，"
-                    "claims只列有引用的岗位依据，不生成行动计划，不安排额外调查。"
+                    "claims只列有引用的岗位依据或回答中的自述依据，不生成行动计划，不安排额外调查。"
                 )
                 reply = previous["step_id"]
             elif kind == "answer":
@@ -827,19 +874,32 @@ class CareerService:
                     + answer
                     + "\n请对照本次明确选中的面试问题、岗位原文和用户经历反馈：回答覆盖了什么，"
                     "哪些主张还缺证据，下一步最有价值的追问是什么。区分表达问题和能力未知，"
+                    "反馈评价属于分析推断，应引用用户回答原文及相关岗位依据；"
+                    "不能只拿JD证明用户说过什么或亲自做过什么。"
                     "不编造经历或替用户补出成功指标，不给虚假分数。最多三条具体反馈，不安排额外调查。"
                 )
                 reply = interview["step_id"]
                 source_step_id = interview["step_id"]
+                answer_record = {"interview_question": questions[question_index], "answer": answer}
             else:
                 question = QUESTIONS[kind]
                 reply = None
+            if answer_document_id or answer_record:
+                question += (
+                    "请先按career_evidence.selected_answer.document_id读取本次所讨论的回答全文，"
+                    "再作反馈或追问。回答是用户自述，不代表经历已核实或能力已经证明。"
+                )
+            used = self.projects.usage(project)
+            calls_left = project["budget"]["max_calls"] - used["reserved_calls"]
+            seconds_left = int(project["budget"]["max_seconds"] - used["reserved_seconds"])
+            if not offline and (calls_left < 2 or seconds_left < 1):
+                raise ValueError("本目标的模型调用或时间额度已用完，仍可整理资料、记录观察和认识。")
             project = self.projects.add(
                 identity,
                 question,
                 revision=project["revision"],
-                max_calls=6,
-                timeout=150,
+                max_calls=6 if offline else min(6, calls_left),
+                timeout=150 if offline else min(150, seconds_left),
                 offline=offline,
                 allow_public=False,
                 coverage_mode="question",
@@ -847,14 +907,57 @@ class CareerService:
                 reply_to_step_id=reply,
                 completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
             )
+            if answer_record and not answer_document_id:
+                document = PublicDocumentService(
+                    self.repository, self.raw_directory / "public"
+                ).archive_text(
+                    "模拟面试回答 · " + project["title"],
+                    "用户模拟面试回答，未经独立核实，不是招聘原文或能力认证。\n"
+                    "面试问题："
+                    + answer_record["interview_question"]
+                    + "\n用户回答：\n"
+                    + answer_record["answer"],
+                    "用户的模拟面试回答，仅作为原话依据；经历及效果未经独立核实。",
+                )["document"]
+                answer_document_id = document["id"]
+                if answer_record.get("step_id"):
+                    original = next(
+                        row
+                        for row in project["career"]["runs"]
+                        if row["step_id"] == answer_record["step_id"]
+                    )
+                    original["answer_document_id"] = answer_document_id
+            if answer_document_id:
+                step = project["steps"][-1]
+                documents = list(step.get("public_document_ids") or [])
+                if answer_document_id not in documents:
+                    preferred = [project["career"].get("resume_document_id")]
+                    preferred.extend(
+                        row["document_id"] for row in project["career"]["stories"][-3:]
+                    )
+                    preferred.extend(
+                        row.get("artifact_document_id")
+                        for row in [
+                            item for item in project["career"]["tasks"] if item.get("outcome")
+                        ][-3:]
+                    )
+                    if material_id:
+                        preferred.insert(0, material_id)
+                    selected = list(
+                        dict.fromkeys([key for key in preferred if key in documents] + documents)
+                    )[:19]
+                    step["public_document_ids"] = [*selected, answer_document_id]
+                    step["career_omitted_documents"] = len(documents) - len(selected)
+                step["career_answer_document_id"] = answer_document_id
             project["career"]["runs"].append(
                 {
                     "kind": kind,
                     "step_id": project["steps"][-1]["id"],
                     "answer": answer,
+                    "answer_document_id": answer_document_id,
                     "question_index": question_index if kind == "answer" else None,
                     "source_step_id": source_step_id
-                    if kind in {"answer", "followup", "ask"}
+                    if kind in {"answer", "followup", "ask", "plan"}
                     else None,
                     "user_question": user_question,
                     "section": section if kind in {"ask", "challenge"} else None,
