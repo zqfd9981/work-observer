@@ -161,6 +161,7 @@ class ExperimentInput(BaseModel):
     deliverable: str = Field(min_length=1, max_length=700)
     completion_check: str = Field(min_length=1, max_length=700)
     hypothesis: str = Field(default="", max_length=1500)
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class TaskUpdate(BaseModel):

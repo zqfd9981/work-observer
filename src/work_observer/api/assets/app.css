@@ -115,3 +115,9 @@
 .source-reader-text .source-search-hit{background:#ffe49a;outline:1px solid #d9ab3e}
 .source-reader-notice{padding:10px 12px;background:#edf4e7;border-radius:8px}
 @media(max-width:600px){.source-reader-text{padding:12px;max-height:48vh}.source-reader-toolbar{padding:12px}}
+
+.career-question-experiments{margin:18px 0;padding:16px;background:#f4f7ef;border-radius:10px}
+.career-question-experiments h4{font-size:13px;margin:0 0 12px;color:#46634b}
+.career-question-experiments article{padding:10px 0;border-top:1px solid #dfe7da}
+.career-question-experiments .quiet-tag{margin-left:12px}
+.career-manual-question{white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;background:#edf3e7;border-radius:8px}

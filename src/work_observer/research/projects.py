@@ -1517,6 +1517,33 @@ class ProjectService:
                 None,
             )
             if selected_inquiry:
+                linked_experiments = [
+                    row
+                    for row in career.get("tasks", [])
+                    if row.get("question_id") == selected_inquiry["id"]
+                ]
+                selected_inquiry["linked_experiment_count"] = len(linked_experiments)
+                selected_inquiry["linked_experiments"] = [
+                    {
+                        key: row.get(key)
+                        for key in (
+                            "id",
+                            "title",
+                            "state",
+                            "hypothesis",
+                            "deliverable",
+                            "completion_check",
+                            "outcome",
+                            "artifact_document_id",
+                        )
+                    }
+                    for row in linked_experiments[-3:]
+                ]
+                selected_inquiry["experiment_notice"] = (
+                    "列出最近三项相关练习，先参考已有计划与实际观察，避免重复安排。"
+                    "planned只是计划，done只表示用户记录了结果；这些都不是独立评测。"
+                    "指定练习的完整观察及作品读取位置另见career_evidence.experiments。"
+                )
                 earlier = []
                 comparison_steps = step.get("career_comparison_steps", [])
                 for entry in career["runs"]:

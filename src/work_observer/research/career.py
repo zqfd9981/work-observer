@@ -878,6 +878,7 @@ class CareerService:
                 copied["requirement_key"] = ""
             else:
                 copied.update(origin="reused", source_key="user:" + copied["id"], evidence_ids=[])
+                copied["question_id"] = None
             records.append(copied)
             project["public_document_ids"] = documents
             self.projects._write(project)
@@ -1016,12 +1017,14 @@ class CareerService:
                 step["state"] in {"running", "queued", "interrupted"} for step in project["steps"]
             ):
                 raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
-            if kind in {"reflect", "challenge"} and task_id:
+            if kind in {"reflect", "challenge", "ask"} and task_id:
                 task = next(
                     (row for row in project["career"]["tasks"] if row["id"] == task_id), None
                 )
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
+                if kind in {"reflect", "ask"}:
+                    question_id = question_id or task.get("question_id")
             user_question = question.strip() if kind == "ask" else ""
             selected_requirement = None
             continued_requirement = None
@@ -1047,8 +1050,8 @@ class CareerService:
                     ),
                     None,
                 )
-                if not saved_question or kind != "ask":
-                    raise ValueError("请选择一条已保存的调查问题，并通过提问继续研究。")
+                if not saved_question or kind not in {"ask", "plan", "reflect"}:
+                    raise ValueError("请选择已保存的调查问题，再继续提问、设计验证或反思。")
             comparison_step_ids = comparison_step_ids or []
             if comparison_step_ids:
                 candidates = {
@@ -1060,7 +1063,8 @@ class CareerService:
                     and row["state"] != "abandoned"
                 }
                 if (
-                    not question_id
+                    kind != "ask"
+                    or not question_id
                     or len(set(comparison_step_ids)) != 2
                     or not all(step_id in candidates for step_id in comparison_step_ids)
                 ):
@@ -1288,6 +1292,17 @@ class CareerService:
                     "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
                     "不因为本轮生成回答而宣称问题已解决。"
                 )
+                if kind == "plan":
+                    question += (
+                        "本次只为这个调查问题设计一个最小工作样本验证，不扩大成通用学习路线。"
+                        "先写要区分的解释，再给出实际产物和可能推翻预期的检查方式。"
+                    )
+            if kind == "ask" and task_id:
+                question += (
+                    "用户本次带回的具体练习在career_evidence.selected_experiment_id对应记录，"
+                    "对照完整预期、实际观察和附带作品原文回答原问题；不能把done状态当成成功。"
+                    "有artifact_document时先读取正文，说明哪些原先解释被支持或挑战、哪些仍未知。"
+                )
             if continued_requirement:
                 question += (
                     "本次沿着一项岗位要求的证据对照继续讨论，原先选定的材料在"
@@ -1398,11 +1413,13 @@ class CareerService:
                     if selected_requirement
                     else "",
                     "interview_question": questions[question_index] if kind == "answer" else "",
-                    "task_id": task_id if kind in {"reflect", "challenge"} or insight_id else None,
+                    "task_id": task_id
+                    if kind in {"reflect", "challenge", "ask"} or insight_id
+                    else None,
                     "created_at": now(),
                 }
             )
-            if (kind in {"reflect", "challenge"} or insight_id) and task_id:
+            if (kind in {"reflect", "challenge", "ask"} or insight_id) and task_id:
                 project["steps"][-1]["career_task_id"] = task_id
             if insight_id and kind in {"ask", "challenge"}:
                 project["steps"][-1]["career_insight_id"] = insight_id
@@ -1453,6 +1470,9 @@ class CareerService:
             ):
                 raise ValueError("建议依据已有变化，请先重新研究。")
             tasks = project["career"]["tasks"]
+            source = next(
+                (row for row in project["career"]["runs"] if row["step_id"] == step_id), {}
+            )
             for index, action in enumerate(
                 (result.get("application_plan") or {}).get("actions", [])
             ):
@@ -1466,6 +1486,7 @@ class CareerService:
                         "id": uuid4().hex,
                         "source_key": key,
                         "origin": "research",
+                        "question_id": source.get("question_id"),
                         **action,
                         "state": "planned",
                         "outcome": "",
@@ -1480,6 +1501,10 @@ class CareerService:
     def add_experiment(self, identity, data):
         with self.store.lock, self.store.db:
             project = self._project(identity)
+            if data.get("question_id") and not any(
+                row["id"] == data["question_id"] for row in project["career"].get("questions", [])
+            ):
+                raise ValueError("未找到这项练习要检验的调查问题，请重新选择。")
             tasks = project["career"]["tasks"]
             if len(tasks) >= 24:
                 raise ValueError("这个目标已保存24项练习，请先集中完成已有练习。")
