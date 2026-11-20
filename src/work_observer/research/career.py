@@ -1276,6 +1276,7 @@ class CareerService:
                     raise ValueError("请选择一份已完成反馈的回答，再继续追问。")
                 answer_document_id = previous.get("answer_document_id")
                 answer_record = previous
+                story_id, task_id = previous.get("story_id"), previous.get("task_id")
                 feedback = "\n".join(
                     [claim["text"] for claim in previous["result"]["claims"]]
                     + previous["result"].get("gaps", [])
@@ -1309,6 +1310,7 @@ class CareerService:
                 if not interview:
                     raise ValueError("请先选择当前目标下已生成的面试问题。")
                 interview_result = interview["result"]
+                story_id, task_id = interview.get("story_id"), interview.get("task_id")
                 questions = [
                     text for text in interview_result.get("gaps", []) if "？" in text or "?" in text
                 ]
@@ -1332,6 +1334,42 @@ class CareerService:
             else:
                 question = QUESTIONS[kind]
                 reply = None
+            focused_document_id = None
+            interview_kinds = {"interview", "answer", "followup"}
+            if kind in interview_kinds:
+                if story_id and task_id:
+                    raise ValueError("本轮请选择一份经历或一个工作样本作为面试重点。")
+                if story_id:
+                    story = next(
+                        (row for row in project["career"]["stories"] if row["id"] == story_id),
+                        None,
+                    )
+                    if not story or story["document_id"] not in project["public_document_ids"]:
+                        raise ValueError("这份经历已不在当前目标中，请重新选择面试重点。")
+                    focused_document_id = story["document_id"]
+                    question += (
+                        "本次面试明确围绕career_evidence.selected_story对应的这份经历，"
+                        "请先读取其document_id对应原文，再结合岗位提问或反馈。"
+                        "后续回答和追问保持这个项目的场景、个人行动与限制，不能混入其他经历。"
+                    )
+                if task_id:
+                    task = next(
+                        (row for row in project["career"]["tasks"] if row["id"] == task_id), None
+                    )
+                    if not task or not task["outcome"].strip():
+                        raise ValueError("请先为这个工作样本记录实际观察，再围绕它面试。")
+                    focused_document_id = task.get("artifact_document_id")
+                    if (
+                        focused_document_id
+                        and focused_document_id not in project["public_document_ids"]
+                    ):
+                        raise ValueError("这份作品材料已移出目标，请重新选择面试重点。")
+                    question += (
+                        "本次面试明确围绕career_evidence.selected_experiment_id对应的工作样本，"
+                        "对照其完整预期和实际观察提问或反馈，有artifact_document时先读取正文。"
+                        "关注失败、取舍、检查方法和迁移限制；后续追问保持同一个样本。"
+                        "done仅表示记下结果，不能把失败观察改写成成功或真实业务经验。"
+                    )
             if answer_document_id or answer_record:
                 question += (
                     "请先按career_evidence.selected_answer.document_id读取本次所讨论的回答全文，"
@@ -1439,7 +1477,7 @@ class CareerService:
                 step = project["steps"][-1]
                 documents = list(step.get("public_document_ids") or [])
                 if answer_document_id not in documents:
-                    preferred = [project["career"].get("resume_document_id")]
+                    preferred = [focused_document_id, project["career"].get("resume_document_id")]
                     preferred.extend(
                         row["document_id"] for row in project["career"]["stories"][-3:]
                     )
@@ -1457,6 +1495,9 @@ class CareerService:
                     step["public_document_ids"] = [*selected, answer_document_id]
                     step["career_omitted_documents"] = len(documents) - len(selected)
                 step["career_answer_document_id"] = answer_document_id
+            has_task = task_id and (
+                kind in {"reflect", "challenge", "ask"} | interview_kinds or insight_id
+            )
             project["career"]["runs"].append(
                 {
                     "kind": kind,
@@ -1472,7 +1513,7 @@ class CareerService:
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
-                    "story_id": story_id if kind == "pitch" else None,
+                    "story_id": story_id if kind in {"pitch"} | interview_kinds else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
@@ -1481,13 +1522,11 @@ class CareerService:
                     if selected_requirement
                     else "",
                     "interview_question": questions[question_index] if kind == "answer" else "",
-                    "task_id": task_id
-                    if kind in {"reflect", "challenge", "ask"} or insight_id
-                    else None,
+                    "task_id": task_id if has_task else None,
                     "created_at": now(),
                 }
             )
-            if (kind in {"reflect", "challenge", "ask"} or insight_id) and task_id:
+            if has_task:
                 project["steps"][-1]["career_task_id"] = task_id
             if insight_id and kind in {"ask", "challenge"}:
                 project["steps"][-1]["career_insight_id"] = insight_id
@@ -1509,7 +1548,7 @@ class CareerService:
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
-            if kind == "pitch":
+            if story_id and kind in {"pitch"} | interview_kinds:
                 project["steps"][-1]["career_story_id"] = story_id
             self.projects._write(project)
             return {"project_id": identity, "step_id": project["steps"][-1]["id"]}

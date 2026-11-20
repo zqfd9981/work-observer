@@ -1488,6 +1488,13 @@ class ProjectService:
             selected_story = next(
                 (row for row in stories if row["id"] == step.get("career_story_id")), None
             )
+            if selected_story:
+                stories = [selected_story]
+            if step.get("career_action") in {"interview", "answer", "followup"}:
+                if selected_story:
+                    observations = []
+                elif selected_task:
+                    stories = []
             notes = career.get("insights", [])
             active_notes = sorted(
                 (row for row in notes if row.get("use_for_research", True)),

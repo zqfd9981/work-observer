@@ -36,6 +36,12 @@ class CareerModel:
             for row in (career_context.get("selected_requirement") or {}).get("records", [])
             if row.get("document_id")
         )
+        if career_context.get("selected_experiment_id"):
+            required_documents.extend(
+                row["artifact_document"]
+                for row in career_context.get("experiments", [])
+                if row.get("artifact_document")
+            )
         required_documents = list({row["document_id"]: row for row in required_documents}.values())
         if not required_documents:
             required_documents = [
@@ -171,7 +177,8 @@ class CareerModel:
                         "evidence_ids": [evidence, answer_evidence["id"]],
                     }
                 ]
-            if selected_story := career_context.get("selected_story"):
+            selected_story = career_context.get("selected_story")
+            if selected_story and context["project_context"].get("career_action") == "pitch":
                 story_evidence = next(
                     ev
                     for output in outputs

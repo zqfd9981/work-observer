@@ -136,3 +136,4 @@
 @media(max-width:680px){.work-graph-controls{grid-template-columns:minmax(0,1fr) 110px;gap:10px}}
 
 .work-graph-scroll svg{width:auto;height:auto;max-width:none}
+.career-interview-focus{padding:24px;margin:20px 0}.career-interview-focus select{width:100%;min-width:0}.career-interview-source{padding:10px 14px;background:var(--green-soft);border-radius:8px;overflow-wrap:anywhere}
