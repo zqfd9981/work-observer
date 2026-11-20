@@ -541,6 +541,17 @@ class ProjectService:
                 raise ProbeError("PROJECT_SOURCE_KEY_CONFLICT")
         return existing
 
+    def rename(self, identity, *, revision, title):
+        if not isinstance(title, str) or not title.strip() or len(title) > 150:
+            raise ProbeError("INVALID_PROJECT")
+        with self.store.lock, self.store.db:
+            record = self.get(identity)
+            self._editable(record, revision)
+            if record["title"] == title.strip():
+                return record
+            record["title"] = title.strip()
+            return self._write(record)
+
     def revise(self, identity, *, revision, goal, job_ids, public_document_ids=...):
         from work_observer.research.document_scope import normalize
 

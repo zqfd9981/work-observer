@@ -172,9 +172,9 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(vm.runInContext('renderQualityMap({cognition_revisions:revisionRows})',context).includes("原质量核对未通过（Agent辅助，非独立人审）"));
 
  context.project={id:"project-1",title:"合成持续调查",state:"active",usage:{calls:0,reserved_calls:0},budget:{max_calls:24},worker_running:false,steps:[{id:"step",question:"合成问题",state:"waiting_material",offline:true,result:{question:"合成问题",status:"evidence_only",scope:{counts:{matched:1,unknown:0,candidate_details:1},jobs:[]},evidence:[],claims:[],gaps:["哪些资料还需要核实？"],mode:"offline",created_at:"2026-11-19"}}]};
- vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs";conversation.id="project-1"',context);
+ vm.runInContext('openResearchConversation=originalOpen;api=async()=>project;state.page="jobs";location.hash="#jobs";conversation.id="project-1"',context);
  await vm.runInContext('openResearchConversation("project-1",false)',context);
- assert.equal(context.location.hash,""); // Background refresh never forces navigation.
+ assert.equal(context.location.hash,"#jobs"); // Background refresh never forces navigation.
  assert.ok(node("#research-output").innerHTML.includes('id="conversation-followup"'));
  assert.ok(node("#research-output").innerHTML.includes("只整理原文，不调用模型"));
  assert.ok(!node("#research-output").innerHTML.includes("继续未完成的调查"));

@@ -25,6 +25,7 @@ import pytest
         "update_cohort.cjs",
         "domain_lineage.cjs",
         "research_intake.cjs",
+        "research_hub.cjs",
     ],
 )
 def test_review_repair_submit_and_diagnostic_display(harness):

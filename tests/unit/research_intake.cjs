@@ -44,5 +44,21 @@ vm.runInContext(`api=async(path,options)=>{
  await vm.runInContext("startResearch({preventDefault(){}})",ctx);
  assert.equal(node("#work-material-text").value,"合成待保存资料");
  assert.equal(calls.filter(call=>call.path==="projects").length,writes);
+ // Add a file to the existing conversation without starting another study.
+ ctx.project={...project,id:"project-intake",revision:3,state:"active",worker_running:false};
+ node("#conversation-question").value="已经写好的后续问题";
+ vm.runInContext(`conversation.id="project-intake";conversation.project=project;api=async(path,options)=>{
+  calls.push({path,options});
+  if(path==="work-materials"){const data=JSON.parse(options.body),document={...data,id:"f".repeat(32),full_text_length:data.text.length};return {document};}
+  if(path==="projects")return [project];
+  if(options?.method==="PATCH"){Object.assign(project,JSON.parse(options.body));project.revision++;}
+  return project;
+ };`,ctx);
+ ctx.extra=[{name:"补充观察.txt",size:20,text:async()=>"合成新观察：业务同事核对失败样例。"}];
+ const added=await vm.runInContext('importResearchFiles(extra,"project-intake")',ctx);
+ assert.equal(added.saved.length,1);assert.equal(ctx.project.public_document_ids.length,4);
+ assert.equal(node("#conversation-question").value,"已经写好的后续问题");
+ assert.equal(calls.filter(call=>call.path==="projects"&&call.options?.method==="POST").length,writes);
+ assert.equal(calls.filter(call=>call.path.endsWith("/run")).length,1);
  console.log("Research intake: multiple files → automatic paste save → scoped project and first question passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

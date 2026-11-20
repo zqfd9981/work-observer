@@ -355,6 +355,43 @@ async function loadCompanies() {
 }
 
 const selectedResearchDocuments = new Map();
+const researchJobChoices=new Map();
+let researchJobResults=[];
+
+function renderResearchJobChoices() {
+  const selected=new Set(state.researchIds||[]);
+  $("#research-job-list").innerHTML=researchJobResults.length?'<p class="form-note">最多显示20项，可搜索缩小范围。勾选后会直接用于本次研究。</p>'+researchJobResults.map(job=>`<div class="research-job-choice"><label><input type="checkbox" data-research-job="${e(job.id)}" ${selected.has(job.id)?"checked":""}><span><strong>${e(job.title)}</strong><small>${e(job.company||"公司未说明")} · ${e(job.city||"地点未说明")} · ${job.has_detail?"有完整正文":"仅有摘要"}</small></span></label><button type="button" class="text-button" data-job="${e(job.id)}">查看资料</button></div>`).join(""):empty("没有找到岗位资料","可换个关键词，或直接上传工作资料。");
+}
+
+async function loadResearchJobChoices() {
+  $("#research-job-list").innerHTML='<p class="form-note">正在查找岗位…</p>';
+  try {
+    const query=$("#research-job-query").value.trim();
+    const result=await api("jobs?"+new URLSearchParams({keyword:query,limit:20}));
+    researchJobResults=result.jobs;
+    for(const job of researchJobResults)researchJobChoices.set(job.id,job);
+    renderResearchJobChoices();
+  }catch(error){$("#research-job-list").innerHTML=errorBox(error);}
+}
+
+$("#research-jobs-panel").addEventListener("toggle",event=>{if(event.target.open)loadResearchJobChoices();});
+$("#research-job-search").addEventListener("click",loadResearchJobChoices);
+$("#research-job-query").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();loadResearchJobChoices();}});
+document.addEventListener("change",event=>{
+  const input=event.target.closest?.("[data-research-job]");if(!input)return;
+  const ids=new Set(state.researchIds||[]);
+  if(input.checked){if(ids.size>=20){input.checked=false;notify("一次最多选择20个岗位。",true);return;}ids.add(input.dataset.researchJob);}
+  else ids.delete(input.dataset.researchJob);
+  state.researchIds=ids.size?[...ids]:null;$("#research-source-mode").value="jobs";updateResearchScope();updateResearchApproach();
+});
+document.addEventListener("click",event=>{
+  const remove=event.target.closest("[data-remove-research-job]"),all=event.target.closest("[data-use-all-research-jobs]");
+  if(!remove&&!all)return;
+  state.researchIds=remove?(state.researchIds||[]).filter(id=>id!==remove.dataset.removeResearchJob):null;
+  if(!state.researchIds?.length)state.researchIds=null;
+  if(all){$("#research-source-mode").value="jobs";updateResearchApproach();}
+  updateResearchScope();renderResearchJobChoices();
+});
 try {
   const saved=JSON.parse(sessionStorage.getItem("wo-document-selection") || "[]");
   if(Array.isArray(saved)) for(const doc of saved.slice(0,20)) if(/^[a-f0-9]{32}$/.test(doc.id) && typeof doc.title==="string") selectedResearchDocuments.set(doc.id,doc.title.slice(0,300));
@@ -381,7 +418,7 @@ function updateResearchScope() {
     return;
   }
   if (state.researchIds?.length) {
-    root.innerHTML = `<strong>所选 ${state.researchIds.length} 个岗位</strong><br>` + state.researchIds.map(id=>badge(state.selected.get(id)?.title || state.jobs.get(id)?.title || "指定岗位","muted")).join(" ");
+    root.innerHTML = `<strong>所选 ${state.researchIds.length} 个岗位</strong><br>` + state.researchIds.map(id=>`<button type="button" class="secondary small" data-remove-research-job="${e(id)}">${e(researchJobChoices.get(id)?.title || state.selected.get(id)?.title || state.jobs.get(id)?.title || "指定岗位")} ×</button>`).join(" ");
   } else {
     const labels = {city:"城市",company:"公司",keyword:"关键词",education:"学历",experience:"经验",salary_min:"薪资下限",salary_max:"薪资上限",source:"来源"};
     const filters = Object.entries(state.filters).filter(([key,value])=>value && !["salary_unit","detail"].includes(key));
@@ -749,7 +786,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
     ${renderApplicationPlan(result,evidence,replyStepId)}
     ${renderSourceFindings(result,evidence)}
     ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
-    ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${replyStepId ? `<button class="text-button" data-conversation-claim="${e(claim.text)}" data-reply-step="${e(replyStepId)}">针对这条判断继续核实 ↗</button>` : ""}${badge(claimBasisLabel(claim),"muted")} ${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${result.status === "completed" ? claimCorrectionButton(replyStepId,index)+renderClaimKnowledge(runIdentity,claim,index,evidence) : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}
+    ${result.claims.length ? `<div class="claim-list">${result.claims.map((claim,index)=>`<section class="claim">${badge(categoryLabels[claim.category] || claim.category,"muted")} ${badge(requirementLabels[claim.requirement] || claim.requirement,claim.requirement === "preferred" ? "amber" : "")}<p>${e(claim.text)}</p>${replyStepId ? `<button class="text-button" data-conversation-claim="${e(claim.text)}" data-reply-step="${e(replyStepId)}">针对这条判断继续核实 ↗</button>` : ""}${badge(claimBasisLabel(claim),"muted")} ${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}${claim.evidence_ids.map(id=>evidence.has(id) ? `<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>` : "").join("")}${result.status === "completed" ? claimCorrectionButton(replyStepId,index)+renderClaimKnowledge(runIdentity,claim,index,evidence,conversation.knowledge,result.project_id) : ""}</section>`).join("")}</div>` : `<p class="form-note">${result.status === "evidence_only" ? "这是原文证据包，未调用模型，也未进行自动比较或分类。" : "本次没有形成可接受的模型判断。可先查看已有证据，或缩小范围后再研究。"}</p>`}
     <div class="gaps"><strong>资料缺口与研究范围</strong><ul>${result.gaps.map(gap=>`<li>${e(gap)}</li>`).join("")}</ul>${!completed ? `<p>结束原因：${e(reasonLabels[result.stop_reason] || "本次未能完成研究，可核对范围后重试；已有资料仍可查看。")}</p>` : ""}</div>
     ${resultSourceComparison(result,runIdentity,replyStepId)}
     <details class="detail-section"><summary>本次候选与统计口径</summary><p class="form-note">统计在分页前计算。本次实际研究 ${result.scope.jobs.length} 个候选${result.scope.truncated ? "，候选较多，已截取前 20 个，请收窄范围" : ""}；未知条件不等于符合。</p>${result.scope.jobs.map(job=>`<div class="detail-history"><button class="job-link" data-job="${e(job.id)}">${e(job.title)} · ${e(job.company)}</button>${badge(job.has_detail ? "有正文" : "仅摘要","muted")} ${job.match_status === "unknown" ? badge("条件未知","amber") : ""}</div>`).join("")}</details>
@@ -797,9 +834,61 @@ function renderResearchContext(result) {
 const runLabels = {running:"正在研究",finished:"已结束",interrupted:"已中断，可查看进度",failed:"执行失败",invalidated:"相关记忆已忘记，结果已清除"};
 
 const researchHistory={query:"",offset:0,limit:20,request:0};
+let researchProjects=[],researchProjectsExpanded=false;
+
+function renderResearchProjects() {
+  const root=$("#research-project-list"),query=($("#research-project-query").value||"").trim().toLocaleLowerCase();
+  const matches=researchProjects.filter(project=>project.state==="active"&&[project.title,project.goal,project.last_question].some(text=>(text||"").toLocaleLowerCase().includes(query)));
+  if(!matches.length){root.innerHTML=empty(query?"没有找到这项研究":"从一个具体问题开始",query?"换个关键词，或新建研究。":"上传资料并提问，之后可以在这里继续。");return;}
+  const shown=researchProjectsExpanded||query?matches:matches.slice(0,6);
+  root.innerHTML=`<div class="research-project-grid">${shown.map(project=>{
+    const status=project.worker_running?"正在研究":project.last_state==="failed"?"本轮未完成":project.last_state==="interrupted"?"已暂停":project.step_count?"可继续":"还未开始";
+    const sources=[project.job_count?project.job_count+" 个岗位":"",project.document_count==null?"资料库":project.document_count?project.document_count+" 份文档":""].filter(Boolean).join(" · ")||"待添加资料";
+    return `<article class="research-project-card ${conversation.id===project.id?"is-current":""}"><div class="section-heading"><h3>${e(project.title)}</h3>${badge(status,project.worker_running?"":"muted")}</div><p>${e((project.last_question||project.goal||"").slice(0,140))}</p><small>${e(sources)} · ${project.step_count||0} 轮调查 · ${e(when(project.updated_at))}</small><button type="button" class="text-button" data-open-conversation="${e(project.id)}">${conversation.id===project.id?"查看当前研究":"打开并继续"} ↗</button></article>`;
+  }).join("")}</div>${!query&&matches.length>6?`<button type="button" class="text-button" data-expand-research-projects>${researchProjectsExpanded?"收起":"查看全部 "+matches.length+" 项研究"}</button>`:""}`;
+}
+
+async function loadResearchProjects() {
+  try {const items=await api("projects");researchProjects=Array.isArray(items)?items:[];renderResearchProjects();}
+  catch(error){$("#research-project-list").innerHTML=errorBox(error);}
+}
+
+function prepareNewResearch(clearQuestion=true) {
+  captureConversationDraft();clearTimeout(conversation.timer);
+  conversation.id=null;conversation.project=null;conversation.renderedId=null;conversation.notesFor=null;
+  conversation.notes=[];conversation.knowledge=[];conversation.replyToStepId=undefined;conversation.correctionTarget=null;
+  sessionStorage.removeItem("wo-conversation");sessionStorage.removeItem("wo-pending-research");
+  $("#research-output").innerHTML="";if(clearQuestion)$("#question").value="";
+  $("#research-form").hidden=false;$(".research-layout")?.classList?.remove("research-focused");
+  location.hash="research";setBusy(Boolean(state.activeRun));renderResearchProjects();
+  $("#research-form").scrollIntoView({block:"start",behavior:"smooth"});$("#question").focus();
+}
+
+$("#research-project-query").addEventListener("input",renderResearchProjects);
+$("#refresh-research-projects").addEventListener("click",loadResearchProjects);
+document.addEventListener("click",event=>{
+  const open=event.target.closest("[data-open-conversation]");
+  if(open){const hash="#research/"+open.dataset.openConversation;if(location.hash===hash)openResearchConversation(open.dataset.openConversation);else location.hash=hash;return;}
+  if(event.target.closest("[data-new-research]")){prepareNewResearch();return;}
+  if(event.target.closest("[data-expand-research-projects]")){researchProjectsExpanded=!researchProjectsExpanded;renderResearchProjects();}
+});
+
+document.addEventListener("submit",async event=>{
+  if(event.target.id!=="conversation-title-form")return;
+  event.preventDefault();const id=event.target.dataset.projectId,button=event.target.querySelector("button"),title=event.target.elements.title.value.trim();
+  if(!title||conversation.project?.id!==id)return;
+  button.disabled=true;
+  try {
+    await api("projects/"+id+"/title",{method:"POST",body:JSON.stringify({revision:conversation.project.revision,title})});
+    if(conversation.id===id)await openResearchConversation(id,false);
+    await loadResearchProjects();notify("研究名称已更新。");
+  }catch(error){notify(error.message,true);}
+  finally{button.disabled=false;}
+});
 
 function clearForgottenConversation(projectIds) {
   for(const id of projectIds){conversation.drafts.delete(id);conversation.sourceScopes.delete(id);}
+  researchProjects=researchProjects.filter(project=>!projectIds.includes(project.id));renderResearchProjects();
   if(!projectIds.includes(conversation.id))return;
   clearTimeout(conversation.timer);
   conversation.id=null;conversation.project=null;conversation.correctionTarget=null;
@@ -1375,11 +1464,12 @@ function renderProjectMaps(view) {
   }).join("")}</section>`;
 }
 
-function renderClaimKnowledge(runId,claim,index,evidence,records=conversation.knowledge) {
+function renderClaimKnowledge(runId,claim,index,evidence,records=conversation.knowledge,projectId=null) {
   const saved=records.filter(item=>item.source_run_id===runId&&item.content===claim.text);
   const item=saved.find(row=>row.status==="active"&&row.validity?.eligible===true)
     ||saved.find(row=>row.status==="active")||saved.find(row=>row.status==="candidate")||saved[0];
   if(item) {
+    if(item.status==="candidate")return `<button class="text-button" data-knowledge-run="${e(runId)}" data-claim-index="${index}" data-knowledge-project="${e(projectId||"")}" data-knowledge-memory="${e(item.id)}">收藏这条认识 ☆</button>`;
     const label=item.status==="active" ? item.validity?.eligible===true
       ? `已采纳为${item.scope==="job"?"岗位":item.scope==="project"?"本研究":"研究"}知识`
       : "已采纳，需重新核对"
@@ -1389,13 +1479,25 @@ function renderClaimKnowledge(runId,claim,index,evidence,records=conversation.kn
   }
   return runId&&claim.evidence_ids?.length&&claim.evidence_ids.every(id=>{
     const ev=evidence.get(id);return ev?.public_document_id||(ev?.document_id&&ev?.snapshot_id);
-  }) ? `<button class="text-button" data-knowledge-run="${e(runId)}" data-claim-index="${index}">留作知识候选 ＋</button>` : "";
+  }) ? `<button class="text-button" data-knowledge-run="${e(runId)}" data-claim-index="${index}" data-knowledge-project="${e(projectId||"")}">收藏这条认识 ☆</button>` : "";
+}
+
+async function collectResearchClaim(button) {
+  button.disabled=true;
+  try {
+    const projectId=button.dataset.knowledgeProject;
+    const item=button.dataset.knowledgeMemory?{id:button.dataset.knowledgeMemory}:await api("memories",{method:"POST",body:JSON.stringify({kind:"knowledge",source_run_id:button.dataset.knowledgeRun,claim_index:Number(button.dataset.claimIndex),...(projectId?{scope:"project",project_id:projectId}:{})})});
+    await api("memories/"+encodeURIComponent(item.id)+"/activate",{method:"POST"});
+    button.textContent="已收藏 ✓";
+    if(projectId&&conversation.id===projectId){conversation.notesFor=null;await openResearchConversation(projectId,false);}
+    notify("已收藏。后续研究会按资料和适用范围参考，可在“知识与偏好”修改或撤回。");
+  }catch(error){button.disabled=false;throw error;}
 }
 
 function renderProjectUnderstanding(project,knowledge=[]) {
   if(!(project.steps||[]).some(step=>step.result))return "";
   const view=projectUnderstanding(project);
-  const claimCard=row=>`<section class="claim">${badge(row.unresolved?"后续仍有疑问":row.result.business_review?.status==="approved"&&row.result.business_review?.reviewer_kind==="human"?"人工核对通过":"待核对",row.unresolved?"amber":"muted")} ${badge(claimBasisLabel(row.claim),"muted")} ${badge(requirementLabels[row.claim.requirement]||"性质待核","muted")} ${row.evidence.some(ev=>ev.historical_cutoffs?.length)?badge("含历史时点依据","muted"):""}<p>${e(row.claim.text)}</p><p class="form-note">第 ${row.round} 轮 · ${e(row.step.question)}</p><details class="research-context"><summary>核对这一判断的原文依据 · ${row.evidence.length} 个片段</summary>${row.evidence.map(ev=>`<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p>${historicalEvidenceNote(ev)}<blockquote>${e(ev.quote||"")}</blockquote><p class="form-note">取得 ${e(when(ev.observed_at))} · 字符 ${e(ev.start)}–${e(ev.end)}</p>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`).join("")}</details><button class="text-button" data-conversation-claim="${e(row.claim.text)}" data-reply-step="${e(row.step.id)}">针对这条认识继续核实 ↗</button><button class="text-button" data-open-run="${e(row.step.run_id)}">查看本轮完整回答 ↗</button>${claimCorrectionButton(row.step.id,row.index)}${renderClaimKnowledge(row.step.run_id,row.claim,row.index,new Map(row.evidence.map(ev=>[ev.id,ev])),knowledge)}</section>`;
+  const claimCard=row=>`<section class="claim">${badge(row.unresolved?"后续仍有疑问":row.result.business_review?.status==="approved"&&row.result.business_review?.reviewer_kind==="human"?"人工核对通过":"待核对",row.unresolved?"amber":"muted")} ${badge(claimBasisLabel(row.claim),"muted")} ${badge(requirementLabels[row.claim.requirement]||"性质待核","muted")} ${row.evidence.some(ev=>ev.historical_cutoffs?.length)?badge("含历史时点依据","muted"):""}<p>${e(row.claim.text)}</p><p class="form-note">第 ${row.round} 轮 · ${e(row.step.question)}</p><details class="research-context"><summary>核对这一判断的原文依据 · ${row.evidence.length} 个片段</summary>${row.evidence.map(ev=>`<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p>${historicalEvidenceNote(ev)}<blockquote>${e(ev.quote||"")}</blockquote><p class="form-note">取得 ${e(when(ev.observed_at))} · 字符 ${e(ev.start)}–${e(ev.end)}</p>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`).join("")}</details><button class="text-button" data-conversation-claim="${e(row.claim.text)}" data-reply-step="${e(row.step.id)}">针对这条认识继续核实 ↗</button><button class="text-button" data-open-run="${e(row.step.run_id)}">查看本轮完整回答 ↗</button>${claimCorrectionButton(row.step.id,row.index)}${renderClaimKnowledge(row.step.run_id,row.claim,row.index,new Map(row.evidence.map(ev=>[ev.id,ev])),knowledge,project.id)}</section>`;
   const questionLink=row=>`<p><button class="text-button" data-conversation-followup="${e(row.prompt||row.text)}" data-followup-kind="${e(row.kind||"investigate")}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`;
   const changeCard=({revision,step,round})=>`<section class="detail-section"><strong>第 ${round} 轮 · ${e(({retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"})[revision.decision]||"后续判断")}</strong><p><strong>旧判断：</strong>${e(revision.previous_statement)}</p>${(revision.new_statements||[]).map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(revision.reason)}</p>${renderRevisionAspects(revision)}${renderRevisionScope(revision)}<p class="form-note">${revision.evidence_relation==="reread"?"重读原材料":"含旧轮未读的引用；不表示新发布资料"}</p><button class="text-button" data-open-run="${e(revision.previous_run_id)}">查看旧研究 ↗</button><button class="text-button" data-open-run="${e(step.run_id)}">查看这次修正及依据 ↗</button></section>`;
   return `<article class="panel result-card"><h2>本研究当前认识</h2><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>导出整项研究成果 ↧</button><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length).map(row=>`<details class="detail-section" open><summary>第 ${row.round} 轮研究需要回看其沿用依据</summary>${renderUpstreamRevisionNotices(row.result)}</details>`).join("")}${renderProjectMaps(view)}${renderScopeHistory(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>仍需核实的问题</h3>${view.questions.slice(0,5).map(questionLink).join("")}${view.questions.length>5?`<details><summary>其余 ${view.questions.length-5} 个问题</summary>${view.questions.slice(5).map(questionLink).join("")}</details>`:""}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
@@ -1560,6 +1662,7 @@ async function openResearchConversation(id, navigate=true) {
   if(project.state==="invalidated"){
     clearForgottenConversation([id]);setBusy(false);return;
   }
+  $("#research-form").hidden=true;$(".research-layout")?.classList?.add("research-focused");
   const savedDraft=conversation.drafts.get(id)||{};
   conversation.project=project;
   conversation.replyToStepId=savedDraft.replyTo===undefined?defaultConversationReply(project):savedDraft.replyTo;
@@ -1581,7 +1684,7 @@ async function openResearchConversation(id, navigate=true) {
   const investigationKind=savedDraft.kind||project.steps.find(step=>step.key===pendingKey)?.kind||"investigate";
   const mapSupported=(state.serviceContract?.components?.schemas?.StepInput?.properties?.approach?.enum||[]).includes("work_map");
   const exhausted=Boolean(conversationAllocation(project,offline,allowPublic).issue);
-  root.innerHTML=`<article class="panel"><h2>${e(project.title)}</h2><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><div id="conversation-correction-target">${renderClaimCorrectionTarget(project.id)}</div><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}${renderActionFeedback(project)}</article>${renderConversationScopePanel(project)}${renderProjectUnderstanding(project,conversation.knowledge)}<div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3><p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label>这轮重点<select id="conversation-kind"><option value="investigate" ${investigationKind==="investigate"?"selected":""}>继续查证</option><option value="counterexample" ${investigationKind==="counterexample"?"selected":""}>寻找反例与其他解释</option></select></label>${mapSupported?`<label>本轮成果<select id="conversation-approach"><option value="standard" ${approach==="standard"?"selected":""}>简明研究回答</option><option value="work_map" ${approach==="work_map"?"selected":""}>工作地图与工作关系</option></select></label>`:""}<label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
+  root.innerHTML=`<article class="panel"><div class="conversation-heading"><h2>${e(project.title)}</h2><button type="button" class="text-button" data-new-research>＋ 新建研究</button></div><details class="conversation-title-editor"><summary>修改研究名称</summary><form id="conversation-title-form" data-project-id="${e(project.id)}"><input name="title" value="${e(project.title)}" maxlength="150" required aria-label="研究名称" ${project.worker_running?"disabled":""}><button class="secondary small" ${project.worker_running?"disabled":""}>保存名称</button></form></details><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}<button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><div id="conversation-correction-target">${renderClaimCorrectionTarget(project.id)}</div><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}${renderActionFeedback(project)}</article>${renderConversationScopePanel(project)}${renderProjectUnderstanding(project,conversation.knowledge)}<div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3>接着问</h3>${renderResearchNextActions(project)}<p id="conversation-reply" class="form-note"></p><label for="conversation-question">还有什么需要弄明白？</label><textarea id="conversation-question" rows="3" maxlength="4000" required placeholder="例如：这个判断在哪些情况下不成立？还有什么资料可以验证？">${e(draft)}</textarea><label>这轮重点<select id="conversation-kind"><option value="investigate" ${investigationKind==="investigate"?"selected":""}>继续查证</option><option value="counterexample" ${investigationKind==="counterexample"?"selected":""}>寻找反例与其他解释</option><option value="synthesis" ${investigationKind==="synthesis"?"selected":""}>整理阶段成果</option></select></label>${mapSupported?`<label>本轮成果<select id="conversation-approach"><option value="standard" ${approach==="standard"?"selected":""}>简明研究回答</option><option value="work_map" ${approach==="work_map"?"selected":""}>工作地图与工作关系</option></select></label>`:""}<label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>继续调查 ↗</button><p id="conversation-limit" class="form-note"></p></form>`;
   const contextPanel=$("#conversation-context")?.closest?.("details"),publicPanel=$("#conversation-public-document")?.closest?.("details");
   if(contextPanel)contextPanel.open=savedDraft.contextOpen||Boolean(conversation.correctionTarget);
   if(publicPanel)publicPanel.open=savedDraft.publicOpen||false;
@@ -1619,6 +1722,11 @@ async function openResearchConversation(id, navigate=true) {
   renderConversationReply();
   if(active){const input=$("#"+active);input.focus();input.setSelectionRange(...selection);}
   setBusy(project.worker_running);
+  researchProjects=[{id:project.id,title:project.title,goal:project.goal,state:project.state,updated_at:project.updated_at,
+    step_count:project.steps.length,
+    job_count:project.job_ids?.length||0,document_count:project.public_document_ids?.length??null,
+    last_question:project.steps.at(-1)?.question,last_state:project.steps.at(-1)?.state,worker_running:project.worker_running},...researchProjects.filter(row=>row.id!==project.id)];
+  renderResearchProjects();
   if(project.worker_running)conversation.timer=setTimeout(()=>openResearchConversation(id,false).catch(error=>{setBusy(false);notify(error.message,true);}),2000);
 }
 
@@ -1628,6 +1736,28 @@ document.addEventListener("submit",async event=>{
   const button=$("#conversation-submit");button.disabled=true;
   try{const offline=$("#conversation-offline").checked,allowPublic=$("#conversation-allow-public").checked;input.value="";await askResearchConversation(question,{offline,allowPublic});}catch(error){input.value=question;button.disabled=false;notify(error.message,true);}
 });
+function renderResearchNextActions(project) {
+  const latest=project.steps.slice().reverse().find(step=>step.run_id&&step.result);
+  if(!latest)return "";
+  const actions=[
+    ["解释得更具体","请结合本研究的原文和已有判断，用具体的任务与交付物解释核心区别。哪些是原文明示，哪些是推断？不要补造资料没有说明的内容。","investigate"],
+    ["找反例与边界","针对本研究的关键判断，寻找反例、其他合理解释和适用边界。请核对原文；没有反证时说明仍待验证，不为反驳而编造。","counterexample"],
+    ["整理阶段成果","围绕本研究目标整理一份简洁成果：核心认识、主要任务与交付物、依据、已发生的修正和仍未解决的问题。只复用当前适用的认识，未复查部分明确说明。","synthesis"],
+  ];
+  return `<div class="research-next-actions">${latest.result.status==="evidence_only"?'<button type="button" class="secondary" data-analyze-evidence>用 AI 分析这些原文</button>':""}${actions.map(([label,question,kind])=>`<button type="button" class="secondary small" data-conversation-followup="${e(question)}" data-followup-kind="${kind}" data-reply-step="${e(latest.id)}" ${project.worker_running?"disabled":""}>${label}</button>`).join("")}</div><p class="form-note">点选后先填写问题，可修改后再继续。</p>`;
+}
+
+function prepareEvidenceAnalysis() {
+  const project=conversation.project;if(!project||project.worker_running)return;
+  const input=$("#conversation-question");
+  if(!input.value.trim())input.value="请根据本研究已有原文回答研究目标，解释业务问题、主要任务、交付物和责任分工，引用原文并明确哪些内容仍未知。";
+  $("#conversation-offline").checked=false;$("#conversation-kind").value="investigate";
+  conversation.replyToStepId=defaultConversationReply(project);renderConversationReply();updateConversationAllocation(project);
+  input.focus();input.scrollIntoView({block:"center",behavior:"smooth"});
+}
+
+document.addEventListener("click",event=>{if(event.target.closest("[data-analyze-evidence]"))prepareEvidenceAnalysis();});
+
 function defaultConversationReply(project) {
   return project.steps?.slice().reverse().find(step=>!["queued","running","interrupted"].includes(step.state))?.id || null;
 }
@@ -1775,7 +1905,7 @@ function renderConversationReply() {
 
 function prefillConversationFollowup(button) {
   conversation.replyToStepId=button.dataset.replyStep;
-  const kind=$("#conversation-kind");if(kind)kind.value=button.dataset.conversationClaim?"counterexample":button.dataset.followupKind==="counterexample"?"counterexample":"investigate";
+  const kind=$("#conversation-kind");if(kind)kind.value=button.dataset.conversationClaim?"counterexample":["counterexample","synthesis"].includes(button.dataset.followupKind)?button.dataset.followupKind:"investigate";
   renderConversationReply();
   const input=$("#conversation-question");
   input.value=button.dataset.conversationClaim
@@ -1939,7 +2069,7 @@ function renderConversationMaterialReceipts(projectId) {
 }
 
 function renderConversationMaterialForm(project,draft={}) {
-  return `<details id="conversation-material-panel" class="detail-section" ${draft.open?"open":""}><summary>补充工作资料</summary><form id="conversation-work-material"><label>资料标题<input id="conversation-material-title" name="title" value="${e(draft.title||"")}" required maxlength="300" placeholder="例如：项目说明、SOP、任务复盘"></label><label>来源说明<input id="conversation-material-source" name="source_name" value="${e(draft.source||"")}" maxlength="500" placeholder="保留资料出处；未知可留空"></label><label>原文内容<textarea id="conversation-material-text" name="text" rows="5" required maxlength="100000">${e(draft.text||"")}</textarea></label><button class="secondary" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}>保存并加入本研究</button><p class="form-note">粘贴资料与岗位、网页来源分别标记，来源说明未经独立核实。保存不调用模型，旧回答保留；下一轮再核对它支持或改变了什么。</p><p id="conversation-material-status" class="form-note" role="status"></p><div id="conversation-material-receipts">${renderConversationMaterialReceipts(project.id)}</div></form></details>`;
+  return `<details id="conversation-material-panel" class="detail-section" ${draft.open?"open":""}><summary>补充工作资料</summary><label class="research-file-drop"><input type="file" id="conversation-material-files" data-conversation-files data-project-id="${e(project.id)}" multiple accept=".txt,.md,.markdown,text/plain,text/markdown" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}><strong>上传文件，加入这项研究</strong><span>TXT / Markdown，可多选；已有回答会保留</span></label><div id="conversation-file-status" class="form-note" role="status"></div><form id="conversation-work-material"><label>资料标题<input id="conversation-material-title" name="title" value="${e(draft.title||"")}" required maxlength="300" placeholder="例如：项目说明、SOP、任务复盘"></label><label>来源说明<input id="conversation-material-source" name="source_name" value="${e(draft.source||"")}" maxlength="500" placeholder="保留资料出处；未知可留空"></label><label>原文内容<textarea id="conversation-material-text" name="text" rows="5" required maxlength="100000">${e(draft.text||"")}</textarea></label><button class="secondary" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}>保存并加入本研究</button><p class="form-note">粘贴资料与岗位、网页来源分别标记，来源说明未经独立核实。保存不调用模型，旧回答保留；下一轮再核对它支持或改变了什么。</p><p id="conversation-material-status" class="form-note" role="status"></p><div id="conversation-material-receipts">${renderConversationMaterialReceipts(project.id)}</div></form></details>`;
 }
 
 async function attachConversationArchivedMaterial(projectId,documentId) {
@@ -2030,12 +2160,14 @@ function useSelectedMaterials() {
   updateResearchScope();updateResearchApproach();
 }
 
-async function importResearchFiles(fileList) {
+async function importResearchFiles(fileList,projectId=null) {
   if(materialImporting)return;
-  const files=Array.from(fileList||[]),status=$("#research-file-status");
+  const files=Array.from(fileList||[]),status=$(projectId?"#conversation-file-status":"#research-file-status"),fileInput=$(projectId?"#conversation-material-files":"#research-material-files");
+  const emptyFollowup=projectId&&conversation.id===projectId&&!$("#conversation-question")?.value.trim();
   if(!files.length)return;
   if(files.length>10){status.textContent="一次最多上传10份资料，请分批选择。";return;}
-  materialImporting=true;$("#research-material-files").disabled=true;$("#start-research").disabled=true;
+  materialImporting=true;fileInput.disabled=true;$("#start-research").disabled=true;
+  if(projectId)conversation.materialSaving=projectId;
   const messages=[],saved=[],failed=[];
   try {
     for(const file of files) {
@@ -2043,22 +2175,40 @@ async function importResearchFiles(fileList) {
       try {
         if(!/\.(txt|md|markdown)$/i.test(file.name))throw new Error("请使用TXT或Markdown文件");
         if(file.size>400000)throw new Error("文件过大，请保留10万字以内的相关内容");
-        if(selectedResearchDocuments.size>=20)throw new Error("本次已选满20份资料，请先移出不需要的资料");
+        if(!projectId&&selectedResearchDocuments.size>=20)throw new Error("本次已选满20份资料，请先移出不需要的资料");
+        if(projectId&&conversation.project?.id===projectId&&conversation.project.worker_running)throw new Error("请等本轮调查结束后再加入资料");
         const text=(await file.text()).replace(/^\uFEFF/,"");
         if(!text.trim())throw new Error("文件没有正文");
         if(text.length>100000)throw new Error("正文超过10万字，请拆分文件");
         const result=await api("work-materials",{method:"POST",body:JSON.stringify({title:file.name.slice(0,300),text,source_name:"用户上传文件："+file.name.slice(0,300)})});
-        selectResearchDocument(result.document.id,result.document.title);saved.push(result.document);
+        if(projectId){rememberConversationMaterial(projectId,result.document);await retryConversationMaterial(projectId,result.document.id);}
+        else selectResearchDocument(result.document.id,result.document.title);
+        saved.push(result.document);
         messages.push(`<p>✓ ${e(file.name)} · ${e(result.document.full_text_length)}字符 <button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看原文 ↗</button></p>`);
-      } catch(error) {failed.push(file.name);messages.push(`<p>未保存 ${e(file.name)}：${e(error.message)}</p>`);}
+      } catch(error) {failed.push(file.name);messages.push(`<p>${projectId?"未完成":"未保存"} ${e(file.name)}：${e(error.message)}</p>`);}
     }
-    if(saved.length){useSelectedMaterials();await loadPublicLibrary();$("#question").focus();}
-    status.innerHTML=`<strong>已保存并选入 ${saved.length} 份${failed.length?`，${failed.length} 份未保存`:""}。</strong>${messages.join("")}<p>可继续添加资料，或在下方提问。保存不调用模型。</p>`;
+    if(projectId){
+      if(conversation.id===projectId){
+        await openResearchConversation(projectId,false);
+        if(saved.length&&emptyFollowup)$("#conversation-question").value=`结合刚补充的 ${saved.length} 份资料继续核对：哪些旧判断得到支持，哪些需要修订？请区分原文、推断和未知。`;
+      }
+      await loadResearchProjects();
+    }else if(saved.length){useSelectedMaterials();await loadPublicLibrary();$("#question").focus();}
+    const target=projectId&&conversation.id===projectId?$("#conversation-file-status"):status;
+    target.innerHTML=`<strong>${projectId?"已加入本研究":"已保存并选入"} ${saved.length} 份${failed.length?`，${failed.length} 份未完成`:""}。</strong>${messages.join("")}<p>可继续添加资料，或在下方提问。保存不调用模型。</p>`;
     return {saved,failed};
-  } finally {materialImporting=false;$("#research-material-files").disabled=false;$("#research-material-files").value="";$("#start-research").disabled=Boolean(state.activeRun||conversationStarting);}
+  } finally {
+    materialImporting=false;fileInput.disabled=false;fileInput.value="";
+    if(projectId&&conversation.materialSaving===projectId)conversation.materialSaving=null;
+    if(projectId&&conversation.id===projectId)$("#conversation-material-files").disabled=Boolean(conversation.project?.worker_running);
+    $("#start-research").disabled=Boolean(state.activeRun||conversationStarting||conversation.project?.worker_running);
+  }
 }
 
 $("#research-material-files").addEventListener("change",event=>importResearchFiles(event.target.files));
+document.addEventListener("change",event=>{
+  if(event.target.matches?.("[data-conversation-files]"))importResearchFiles(event.target.files,event.target.dataset.projectId).catch(error=>notify(error.message,true));
+});
 const materialDrop=$("#research-file-drop");
 materialDrop.addEventListener("dragover",event=>{event.preventDefault();materialDrop.classList.add("dragging");});
 materialDrop.addEventListener("dragleave",()=>materialDrop.classList.remove("dragging"));
@@ -2115,6 +2265,7 @@ async function loadPublicLibrary(offset=0) {
 }
 
 function preparePublicDocumentQuestion(title,id) {
+  if(conversation.id)prepareNewResearch(false);
   const input=$("#question"),previous=state.publicQuestionPrefix;
   const draft=previous&&input.value.startsWith(previous)?input.value.slice(previous.length):input.value;
   const prefix="围绕归档文档《"+title+"》：\n";
@@ -2670,7 +2821,7 @@ async function route() {
   if (state.page === "jobs") await loadJobs();
   if (state.page === "companies") await loadCompanies();
   if (state.page === "research") {
-    updateResearchScope();await loadResearchHistory();
+    updateResearchScope();await Promise.all([loadResearchProjects(),loadResearchHistory()]);
     const linked=location.hash.slice(1).split("/")[1];
     const saved=linked && /^[a-f0-9]{32}$/.test(linked) ? linked : conversation.id || sessionStorage.getItem("wo-conversation");
     if(saved && !state.activeRun && !sessionStorage.getItem("wo-research")) {
@@ -2812,12 +2963,7 @@ document.addEventListener("click",async event=>{
     await pollResearch(element.dataset.cancelRun);
   }
   if (element.dataset.knowledgeRun) {
-    element.disabled=true;
-    try {
-      await api("memories",{method:"POST",body:JSON.stringify({kind:"knowledge",source_run_id:element.dataset.knowledgeRun,claim_index:Number(element.dataset.claimIndex)})});
-      element.textContent="已留作知识候选";
-      notify("已保存为候选，可到“知识与偏好”核对并采纳。");
-    } catch (error) {element.disabled=false;throw error;}
+    await collectResearchClaim(element);
   }
   if (element.dataset.followupQuestion) {
     element.disabled=true;

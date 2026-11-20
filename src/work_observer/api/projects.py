@@ -49,6 +49,12 @@ class ProjectRevision(BaseModel):
     )
 
 
+class ProjectTitle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=150)
+
+
 class StepInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
@@ -286,8 +292,21 @@ def project_routes(
         return response(
             [
                 {
-                    key: row[key]
-                    for key in ("id", "title", "goal", "state", "revision", "updated_at")
+                    **{
+                        key: row[key]
+                        for key in ("id", "title", "goal", "state", "revision", "updated_at")
+                    },
+                    "step_count": len(row["steps"]),
+                    "job_count": len(row["job_ids"]),
+                    "document_count": len(row["public_document_ids"])
+                    if row.get("public_document_ids") is not None
+                    else None,
+                    "last_question": row["steps"][-1]["question"] if row["steps"] else None,
+                    "last_state": row["steps"][-1]["state"] if row["steps"] else None,
+                    "worker_running": bool(
+                        tasks.get("project:" + row["id"])
+                        and not tasks["project:" + row["id"]].done()
+                    ),
                 }
                 for row in service().list()
             ]
@@ -305,6 +324,10 @@ def project_routes(
         if data.plan_steps:
             project = plan_project(service(), project, data.offline)
         return response(project, 201)
+
+    async def rename(request):
+        data = ProjectTitle.model_validate(await read_json(request))
+        return response(service().rename(request.path_params["id"], **data.model_dump()))
 
     async def get(request):
         return response(detail(request.path_params["id"]))
@@ -447,6 +470,7 @@ def project_routes(
     return [
         Route("/api/projects", listing),
         Route("/api/projects", create, methods=["POST"]),
+        Route("/api/projects/{id}/title", rename, methods=["POST"]),
         Route("/api/projects/{id}", get),
         Route("/api/projects/{id}", erase, methods=["DELETE"]),
         Route("/api/projects/{id}", revise, methods=["PATCH"]),

@@ -82,6 +82,99 @@ def setup(tmp_path):
     repo.close()
 
 
+def test_research_hub_lists_progress_and_renames_without_changing_the_research(setup):
+    repo, store, job = setup
+    service = ProjectService(store)
+    project = service.create("待命名研究", "理解接口任务", [job], public_document_ids=[])
+    project = service.add(
+        project["id"], "接口工作由谁验收？", revision=project["revision"], offline=True
+    )
+    with TestClient(
+        create_app(
+            Settings(
+                database_path=Path(repo.engine.url.database),
+                raw_directory=Path(repo.engine.url.database).parent / "raw",
+            )
+        ),
+        base_url="http://127.0.0.1",
+    ) as client:
+        token = re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
+        listed = client.get("/api/projects").json()[0]
+        assert listed["step_count"] == 1 and listed["last_question"] == "接口工作由谁验收？"
+        assert listed["job_count"] == 1 and listed["document_count"] == 0
+        renamed = client.post(
+            f"/api/projects/{project['id']}/title",
+            headers={"X-WO-Token": token},
+            json={"revision": project["revision"], "title": "接口工作与验收分工"},
+        )
+        assert renamed.status_code == 200, renamed.text
+        current = service.get(project["id"])
+        assert current["title"] == "接口工作与验收分工"
+        for key in ("goal", "job_ids", "public_document_ids", "scope_version", "steps", "budget"):
+            assert current[key] == project[key]
+        assert client.get("/api/projects").json()[0]["title"] == current["title"]
+
+
+def test_collected_claim_is_available_in_the_next_question_of_the_same_research(setup):
+    repo, store, job = setup
+    service = ProjectService(store)
+    project = service.create("合成收藏接续", "理解Python接口任务", [job], max_calls=6, max_rounds=2)
+    project = service.add(
+        project["id"],
+        "Python接口任务是什么？",
+        revision=project["revision"],
+        max_calls=3,
+        timeout=30,
+    )
+    project = asyncio.run(
+        execute_project(
+            service, project["id"], repo, Settings(), model=EvidenceModel(), max_steps=1
+        )
+    )
+    run_id = project["steps"][0]["run_id"]
+    with TestClient(
+        create_app(
+            Settings(
+                database_path=Path(repo.engine.url.database),
+                raw_directory=Path(repo.engine.url.database).parent / "raw",
+            )
+        ),
+        base_url="http://127.0.0.1",
+    ) as client:
+        auth = {
+            "X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
+        }
+        saved = client.post(
+            "/api/memories",
+            headers=auth,
+            json={
+                "kind": "knowledge",
+                "source_run_id": run_id,
+                "claim_index": 0,
+                "scope": "project",
+                "project_id": project["id"],
+            },
+        )
+        assert saved.status_code == 201, saved.text
+        accepted = client.post(f"/api/memories/{saved.json()['id']}/activate", headers=auth)
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["status"] == "active"
+    project = service.get(project["id"])
+    service.add(
+        project["id"],
+        "继续解释Python接口任务",
+        revision=project["revision"],
+        max_calls=3,
+        timeout=30,
+    )
+    model = EvidenceModel()
+    project = asyncio.run(
+        execute_project(service, project["id"], repo, Settings(), model=model, max_steps=1)
+    )
+    assert any(row["id"] == saved.json()["id"] for row in model.contexts[0]["memory_context"])
+    assert store.get(project["steps"][-1]["run_id"])["result"]["status"] == "completed"
+
+
 def test_three_stage_persistent_work_waits_for_review_then_synthesizes(setup):
     repo, store, job_id = setup
     service = ProjectService(store)
