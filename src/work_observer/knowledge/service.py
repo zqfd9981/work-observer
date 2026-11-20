@@ -707,14 +707,28 @@ class DomainKnowledgeService:
                 relations.append(row)
                 if len(relations) == 10:
                     break
+            matching_domain_ids = {row.domain_id for _, _, row in ranked}
             for row in sorted(definitions.values(), key=lambda value: value.id):
-                if len(domain_ids) == 6:
-                    break
                 folded = match_text(
                     " ".join((row.name, row.definition, row.inclusion, row.exclusion))
                 )
-                if row.id not in domain_ids and any(match_text(term) in folded for term in terms):
-                    domain_ids.append(row.id)
+                if any(match_text(term) in folded for term in terms):
+                    matching_domain_ids.add(row.id)
+                    if row.id not in domain_ids and len(domain_ids) < 6:
+                        domain_ids.append(row.id)
+            omitted_domains, definition_characters = [], 0
+            if not for_retrieval:
+                selected_domains = []
+                for identity in domain_ids:
+                    row = definitions[identity]
+                    size = len(row.definition) + len(row.inclusion) + len(row.exclusion)
+                    if definition_characters + size > 12000:
+                        omitted_domains.append(identity)
+                        continue
+                    selected_domains.append(identity)
+                    definition_characters += size
+                domain_ids = selected_domains
+                relations = [row for row in relations if row.domain_id in domain_ids]
             domain_output, relation_output = [], []
             for identity in domain_ids:
                 row = definitions[identity]
@@ -741,9 +755,9 @@ class DomainKnowledgeService:
                         "id": row.id,
                         "version": row.version,
                         "name": row.name,
-                        "definition": row.definition if for_retrieval else row.definition[:1200],
-                        "inclusion": row.inclusion if for_retrieval else row.inclusion[:500],
-                        "exclusion": row.exclusion if for_retrieval else row.exclusion[:500],
+                        "definition": row.definition,
+                        "inclusion": row.inclusion,
+                        "exclusion": row.exclusion,
                         "derived": True,
                         "source_context": row.source_context or {},
                         "independent_source": False,
@@ -846,9 +860,17 @@ class DomainKnowledgeService:
                 "supporting_findings": supporting_findings,
                 "dependencies": dependencies,
                 "source_run_ids": sorted(source_runs),
+                "matching_domains": len(matching_domain_ids),
                 "matching_relations": len(ranked),
-                "truncated": len(ranked) > len(relations),
-                "limits": {"domains": 6, "relations": 10, "supporting_claim_characters": 12000},
+                "omitted_domain_ids": omitted_domains,
+                "truncated": len(ranked) > len(relations)
+                or len(matching_domain_ids) > len(domain_ids),
+                "limits": {
+                    "domains": 6,
+                    "relations": 10,
+                    "definition_characters": None if for_retrieval else 12000,
+                    "supporting_claim_characters": 12000,
+                },
                 "rules": (
                     "领域与关系是人审派生线索，不是独立来源；原文引用尚未读取，"
                     "必须用read_job或search_archived_sources重新取得当前研究的证据后才能提交判断。"
@@ -856,6 +878,8 @@ class DomainKnowledgeService:
                     "supporting_findings保留原判断的完整表述、维度、解释性质及要求性质，"
                     "仍是派生认识，不是本轮已读证据。关系中的requires不自动等于招聘必备。"
                     "省略数非零时不能把已展示的部分当成完整能力条件或比较双方。"
+                    "定义、纳入与排除条件完整返回；omitted_domain_ids表示本次额度内放不下的整条定义，"
+                    "其关联关系也未提供，不能将省略解释为不存在该领域或关系。"
                 ),
             }
 

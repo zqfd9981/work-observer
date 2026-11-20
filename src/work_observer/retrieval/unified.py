@@ -144,7 +144,7 @@ class UnifiedRetrieval:
         }
         if include_knowledge:
             recalled = MemoryService(self.repository).recall(
-                " ".join(terms),
+                " ".join(expanded),
                 scoped_jobs,
                 project_id=project_id,
                 at=cutoff,

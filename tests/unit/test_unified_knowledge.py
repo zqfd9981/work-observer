@@ -201,6 +201,36 @@ def test_unified_applies_original_filters_to_all_derived_results(corpus):
     assert found["matching_jobs"] == found["sample"]["denominator"] == 1
 
 
+def test_unified_uses_the_same_aliases_for_saved_knowledge_and_originals(corpus):
+    repository, add, _ = corpus
+    job = add("alias", "交付智能体应用")
+    service = MemoryService(repository)
+    saved = service.create(
+        "knowledge", "智能体交付需要核对业务范围", evidence=Catalog(repository).evidence(job)
+    )
+    service.activate(saved["id"])
+    retrieval = UnifiedRetrieval(repository, alias_groups={"Agent": ["智能体"]})
+    found = retrieval.search(["Agent"])
+    assert found["expanded_terms"] == ["Agent", "智能体"]
+    assert found["matching_jobs"] == 1
+    assert [item["id"] for item in found["knowledge"]] == [saved["id"]]
+    literal = retrieval.search(["Agent"], aliases=False)
+    assert not literal["knowledge"] and not literal["evidence"]
+    assert service.list()[0]["content"] == saved["content"]
+
+
+@pytest.mark.parametrize("content,term", [("⼯具", "工具"), ("工具", "⼯具")])
+def test_unified_matches_saved_knowledge_radicals_without_rewriting_it(corpus, content, term):
+    repository, add, _ = corpus
+    job = add("memory-radicals")
+    service = MemoryService(repository)
+    saved = service.create("knowledge", content, evidence=Catalog(repository).evidence(job))
+    service.activate(saved["id"])
+    found = UnifiedRetrieval(repository).search([term], aliases=False)
+    assert [item["content"] for item in found["knowledge"]] == [content]
+    assert service.list()[0]["content"] == content
+
+
 def test_unified_returns_source_bound_map_knowledge_in_a_larger_search_without_expanding_it(
     corpus, tmp_path
 ):
@@ -890,6 +920,81 @@ class DomainToolModel:
             "call_id": name,
         }
         return [item], item
+
+
+def test_domain_agent_reads_complete_saved_definition_and_boundary_tails(corpus):
+    repository, add, _ = corpus
+    job = add("full-domain")
+    service = DomainKnowledgeService(repository)
+    fields = {
+        "definition": "Python应用交付。" * 140 + "仅适用于内部业务应用。",
+        "inclusion": "以业务验收为依据。" * 65 + "研究型任务需另行核对。",
+        "exclusion": "不要外推岗位资格。" * 65 + "工具熟悉程度不等于必备资历。",
+    }
+    domain = service.propose_domain("complete_boundary", "Python应用", **fields)
+    service.review_domain(domain["id"], "accept", "合成完整边界测试")
+    reviewed_relation(repository, domain, job)
+
+    class InspectDomainModel(DomainToolModel):
+        async def turn(self, history):
+            outputs = [
+                json.loads(item["output"])
+                for item in history
+                if item.get("type") == "function_call_output"
+            ]
+            if len(outputs) == 2:
+                returned = outputs[-1]["domains"][0]
+                assert all(returned[key] == text for key, text in fields.items())
+                assert not outputs[-1]["omitted_domain_ids"]
+            return await super().turn(history)
+
+    model = InspectDomainModel(job)
+    result = asyncio.run(
+        research(repository, "Python业务边界", Settings(), job_ids=[job], model=model, max_calls=4)
+    )
+    assert result["status"] == "completed" and result["model_calls"] == 4
+    assert len(result["knowledge_used"]) == 2
+    assert all(service.list_domains()[0][key] == text for key, text in fields.items())
+
+
+def test_domain_browse_omits_whole_definitions_and_their_dependent_relations(corpus):
+    repository, add, _ = corpus
+    job = add("bounded-domain")
+    service = DomainKnowledgeService(repository)
+    text = "Python" + "限" * 3994
+    large = service.propose_domain(
+        "whole_boundary", "Python Python", text, inclusion=text, exclusion=text
+    )
+    service.review_domain(large["id"], "accept", "合成最大定义")
+    large_relation = reviewed_relation(repository, large, job)
+    small = active_domain(repository)
+    small_relation = reviewed_relation(repository, small, job)
+    result = service.browse_for_research(["Python"], job_ids=[job], public_document_ids=[])
+    assert result["omitted_domain_ids"] == [small["id"]]
+    assert result["truncated"] and result["matching_relations"] == 2
+    assert [row["id"] for row in result["relations"]] == [large_relation["id"]]
+    assert all(
+        result["domains"][0][key] == text for key in ("definition", "inclusion", "exclusion")
+    )
+    dependencies = {row["id"] for row in result["dependencies"]}
+    assert dependencies == {large["id"], large_relation["id"]}
+    assert small_relation["id"] not in dependencies
+    assert result["source_run_ids"] == []
+    stored = {row["id"]: row for row in service.list_domains()}
+    assert stored[small["id"]]["status"] == "active"
+    assert stored[large["id"]]["exclusion"] == text
+
+
+def test_domain_browse_marks_matching_definitions_beyond_the_display_limit(corpus):
+    repository, _, _ = corpus
+    service = DomainKnowledgeService(repository)
+    for index in range(7):
+        domain = service.propose_domain(f"definition_{index}", "Python交付", "业务交付边界")
+        service.review_domain(domain["id"], "accept", "合成定义上限测试")
+    result = service.browse_for_research(["Python"], job_ids=[], public_document_ids=[])
+    assert result["matching_domains"] == 7 and len(result["domains"]) == 6
+    assert result["truncated"] and not result["omitted_domain_ids"]
+    assert result["matching_relations"] == 0
 
 
 def test_domain_agent_records_derived_dependency_and_requires_original_reread(corpus, tmp_path):

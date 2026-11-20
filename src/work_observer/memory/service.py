@@ -26,6 +26,7 @@ from work_observer.storage.models import (
     MemoryRecord,
     SourceDocument,
 )
+from work_observer.text_match import match_text
 
 KINDS = {"preference", "correction", "knowledge", "hypothesis", "method"}
 REVIEWED_KINDS = {"knowledge", "hypothesis", "method"}
@@ -69,7 +70,7 @@ def _content(value):
 
 def _tokens(value):
     """英文术语与中文连续二字词；用于有界召回而非推断事实。"""
-    value = value.casefold()
+    value = match_text(value)
     result = set(re.findall(r"[a-z0-9_+#.-]{2,}", value))
     for phrase in re.findall(r"[\u4e00-\u9fff]+", value):
         result.update(phrase[i : i + 2] for i in range(len(phrase) - 1))

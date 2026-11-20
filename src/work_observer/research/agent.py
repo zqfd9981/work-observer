@@ -159,6 +159,7 @@ EXTRA_TOOLS = [
     tool(
         "browse_domain_knowledge",
         "查询最多6个有效领域定义与10条人审关系/反例线索；仅限当前岗位、项目和冻结公开资料。"
+        "定义及纳入/排除条件完整提供，总计最多12000字；放不下的定义与关系整条省略并标示。"
         "派生关系不是新证据，必须重读原文；不能用此工具审核、合并或激活知识。",
         {"terms": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10}},
         ["terms"],
