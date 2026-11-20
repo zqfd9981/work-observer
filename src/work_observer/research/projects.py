@@ -502,6 +502,7 @@ class ProjectService:
         coverage_mode="all",
         reply_to_step_id=None,
         origin="user",
+        evidence_needed=None,
     ):
         if (
             not question.strip()
@@ -514,6 +515,12 @@ class ProjectService:
             or approach not in {"standard", "work_map"}
             or coverage_mode not in {"all", "question"}
             or origin not in {"user", "agent"}
+            or evidence_needed is not None
+            and (
+                not isinstance(evidence_needed, str)
+                or not evidence_needed.strip()
+                or len(evidence_needed) > 600
+            )
         ):
             raise ProbeError("INVALID_INVESTIGATION_STEP")
         with self.store.lock, self.store.db:
@@ -548,6 +555,7 @@ class ProjectService:
                     origin=origin,
                     kind=kind,
                     completion=completion.strip(),
+                    **({"evidence_needed": evidence_needed.strip()} if evidence_needed else {}),
                     depends_on=parents,
                     state="queued",
                     scope_version=record["scope_version"],
@@ -1139,6 +1147,7 @@ class ProjectService:
             goal=record["goal"],
             scope_version=step["scope_version"],
             completion=step["completion"],
+            **({"evidence_needed": step["evidence_needed"]} if step.get("evidence_needed") else {}),
             investigation_kind=step["kind"],
             investigation_origin=step.get("origin", "unspecified"),
             previous_findings=[],
@@ -1474,44 +1483,6 @@ async def _execute_project_locked(
                 else "failed"
             )
             service.finish(identity, step["id"], state=next_state, reason=result.get("stop_reason"))
-            if status == "completed":
-                for index, proposal in enumerate(result.get("investigation_proposals", [])[:2]):
-                    current = service.get(identity)
-                    used = service.usage(current)
-                    pending = [
-                        s
-                        for s in current["steps"]
-                        if s["state"] == "queued" and not s["run_id"] and not s["offline"]
-                    ]
-                    planned_calls = used["reserved_calls"] + sum(s["max_calls"] for s in pending)
-                    planned_seconds = used["reserved_seconds"] + sum(s["timeout"] for s in pending)
-                    calls = min(8, current["budget"]["max_calls"] - planned_calls)
-                    seconds = min(120, current["budget"]["max_seconds"] - planned_seconds)
-                    if (
-                        len(current["steps"]) >= current["budget"]["max_rounds"]
-                        or calls < 3
-                        or seconds < 30
-                    ):
-                        break
-                    question = proposal["question"].strip()
-                    if any(s["question"] == question for s in current["steps"]):
-                        continue
-                    service.add(
-                        identity,
-                        question,
-                        revision=current["revision"],
-                        kind=proposal["kind"],
-                        max_calls=calls,
-                        timeout=seconds,
-                        approach=step.get("approach", "standard"),
-                        coverage_mode=step.get("coverage_mode", "all"),
-                        reply_to_step_id=step["id"],
-                        origin="agent",
-                        completion=(
-                            proposal["completion"] + "；所需证据：" + proposal["evidence_needed"]
-                        )[:1000],
-                        key=f"{run_id}:proposal:{index}",
-                    )
         except asyncio.CancelledError:
             service.store.save(run_id, state="interrupted")
             service.finish(
@@ -1522,6 +1493,11 @@ async def _execute_project_locked(
             code = error_code(exc)
             service.store.save(run_id, state="failed", error_code=code)
             service.finish(identity, step["id"], state="failed", reason=code)
+        else:
+            if status == "completed":
+                from work_observer.research.investigations import arrange_proposals
+
+                arrange_proposals(service, identity, step, result)
     result = service.get(identity)
     if worker_caps is not None:
         result["worker_batch"] = {

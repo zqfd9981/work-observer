@@ -417,6 +417,24 @@ def render(result):
             )
     lines.extend(render_map(result, labels))
     lines.extend(render_revisions(result, labels))
+    if proposals := result.get("investigation_proposals"):
+        lines.extend(
+            [
+                "",
+                "## Agent提出的后续调查",
+                "",
+                "以下是原轮调查建议，不是已经取得的证据；当前安排状态请在所属研究中查看。",
+            ]
+        )
+        for proposal in proposals:
+            lines.extend(
+                [
+                    "",
+                    "### " + escape(proposal["question"]),
+                    "完成条件：" + escape(proposal["completion"]),
+                    "所需证据：" + escape(proposal["evidence_needed"]),
+                ]
+            )
     lines.extend(_render_source_findings(result, labels))
     heading = (
         "样稿判断（开发分析，待核对）"

@@ -978,6 +978,30 @@ async function startResearchConversation(question, options={}) {
 function projectStepOriginLabel(step) {
   return step.origin==="agent"?"Agent提出的补查":step.origin==="user"?"你安排的调查":"历史调查 · 提问来源未记录";
 }
+
+function investigationDraft(proposal) {
+  return proposal.question+"\n完成条件："+proposal.completion+"\n所需证据："+proposal.evidence_needed;
+}
+
+function proposalPlanningStatus(project,step,index) {
+  const outcome=step?.proposal_outcomes?.find(row=>row.proposal_index===index);
+  const planned=project?.steps?.find(row=>row.id===outcome?.step_id||row.key===step?.run_id+":proposal:"+index);
+  const labels={queued:"已安排，等待调查",running:"已安排，正在调查",waiting_review:"本轮回答已生成，待核对",waiting_material:"已调查，仍待资料",completed:"项目内已接受，不等于独立质量审核",failed:"已安排的调查未完成",interrupted:"已安排的调查已暂停",superseded:"原安排已由补查接替"};
+  if(step&&project&&step.scope_version!==project.scope_version)return {state:"historical",label:"原范围建议；使用前须按当前资料重新核实"};
+  if(planned)return {state:planned.state,label:planned.result?.business_review?.status==="rejected"?"后续调查的质量核对未通过，原记录保留":labels[planned.state]||"已有调查安排",step:planned};
+  const reasons={round_limit:"项目轮数已用完，尚未安排",call_budget:"剩余调用额度不足，尚未安排",time_budget:"剩余调查时间不足，尚未安排",scope_changed:"研究范围已调整，尚未安排",PROJECT_CHANGED_REFRESH:"项目同时发生变化，建议尚未安排",PROJECT_ROUND_LIMIT:"项目轮数已用完，尚未安排"};
+  return {state:outcome?.state||"unrecorded",label:reasons[outcome?.reason]||(outcome?.reason?"安排未完成，原回答和建议保留":"尚无安排记录，请结合项目进度核对")};
+}
+
+function renderInvestigationProposals(result,project=null,step=null,allowDraft=false) {
+  if(!result.investigation_proposals?.length)return "";
+  return `<section class="detail-section"><h3>Agent提出的后续调查</h3><p class="form-note">建议说明待解决问题，不是已经取得的证据。安排与执行仍受当前资料范围和项目额度限制。</p>${result.investigation_proposals.map((proposal,index)=>{
+    const status=proposalPlanningStatus(project,step,index);
+    const draft=allowDraft?`<button class="text-button" data-conversation-followup="${e(investigationDraft(proposal))}" data-followup-kind="${e(proposal.kind)}" data-reply-step="${e(step?.id)}">准备这条追问（不开始调查） ↗</button>`:`<a class="text-button" href="#research/${e(project?.id)}">在研究对话准备追问 ↗</a>`;
+    return `<section class="research-context"><h4>${e(proposal.question)}</h4><p><strong>完成条件：</strong>${e(proposal.completion)}</p><p><strong>所需证据：</strong>${e(proposal.evidence_needed)}</p><p class="form-note">${result.status==="completed"?e(status.label):"原调查尚未完成，建议仅供后续核实。"}</p>${status.step?.run_id?`<button class="text-button" data-open-run="${e(status.step.run_id)}">查看后续调查及原文 ↗</button>`:step&&project&&result.status==="completed"&&!status.step?draft:""}</section>`;
+  }).join("")}</section>`;
+}
+
 function conversationAllocation(project, offline, allowPublic=false) {
   const budget=project.budget||{},usage=project.usage||{};
   const pending=(project.steps||[]).filter(step=>step.state==="queued"&&!step.run_id&&!step.offline);
@@ -1116,6 +1140,10 @@ function projectUnderstanding(project) {
     claims.push({...row,index,claim,evidence,unresolved:unresolved.has(key)});
   }
   const questions=[];
+  for(const row of included.slice().reverse())for(const [index,proposal] of (row.result.investigation_proposals||[]).entries()) {
+    if(proposalPlanningStatus(project,row.step,index).step)continue;
+    if(!questions.some(q=>q.text===proposal.question))questions.push({...row,text:proposal.question,prompt:investigationDraft(proposal),kind:proposal.kind});
+  }
   for(const row of latestDecisions.values())for(const part of row.revision.aspects||[]) {
     if(part.decision!=="unresolved")continue;
     const text="核实旧判断中的「"+part.previous_excerpt+"」："+part.reason;
@@ -1261,6 +1289,13 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
   lines.push("## 下一步需要核实","");
   if(!view.questions.length)lines.push("最近有效回答未提供可直接带入的核实问题；不表示所有问题已经解决。","");
   for(const row of view.questions)lines.push("- "+line(row.text)+"（来自第 "+row.round+" 轮）");
+  const proposed=view.rounds.filter(row=>row.result.investigation_proposals?.length);
+  if(proposed.length)lines.push("","## Agent提出的后续调查","","建议与安排状态不表示已经获得证据或完成语义核对。","");
+  for(const row of proposed)for(const [index,proposal] of row.result.investigation_proposals.entries()) {
+    lines.push("### 第 "+row.round+" 轮建议 · "+line(proposal.question),
+      "完成条件："+line(proposal.completion),"所需证据："+line(proposal.evidence_needed),
+      "安排状态："+line(proposalPlanningStatus(project,row.step,index).label),"");
+  }
   lines.push("","## 未纳入当前认识的历史轮次","");
   if(!view.excluded.length)lines.push("没有被当前整理规则排除的已存回答。","");
   for(const {step,reason} of view.excluded){
@@ -1357,7 +1392,7 @@ function renderProjectUnderstanding(project,knowledge=[]) {
   if(!(project.steps||[]).some(step=>step.result))return "";
   const view=projectUnderstanding(project);
   const claimCard=row=>`<section class="claim">${badge(row.unresolved?"后续仍有疑问":row.result.business_review?.status==="approved"&&row.result.business_review?.reviewer_kind==="human"?"人工核对通过":"待核对",row.unresolved?"amber":"muted")} ${badge(claimBasisLabel(row.claim),"muted")} ${badge(requirementLabels[row.claim.requirement]||"性质待核","muted")} ${row.evidence.some(ev=>ev.historical_cutoffs?.length)?badge("含历史时点依据","muted"):""}<p>${e(row.claim.text)}</p><p class="form-note">第 ${row.round} 轮 · ${e(row.step.question)}</p><details class="research-context"><summary>核对这一判断的原文依据 · ${row.evidence.length} 个片段</summary>${row.evidence.map(ev=>`<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p>${historicalEvidenceNote(ev)}<blockquote>${e(ev.quote||"")}</blockquote><p class="form-note">取得 ${e(when(ev.observed_at))} · 字符 ${e(ev.start)}–${e(ev.end)}</p>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`).join("")}</details><button class="text-button" data-conversation-claim="${e(row.claim.text)}" data-reply-step="${e(row.step.id)}">针对这条认识继续核实 ↗</button><button class="text-button" data-open-run="${e(row.step.run_id)}">查看本轮完整回答 ↗</button>${claimCorrectionButton(row.step.id,row.index)}${renderClaimKnowledge(row.step.run_id,row.claim,row.index,new Map(row.evidence.map(ev=>[ev.id,ev])),knowledge)}</section>`;
-  const questionLink=row=>`<p><button class="text-button" data-conversation-followup="${e(row.text)}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`;
+  const questionLink=row=>`<p><button class="text-button" data-conversation-followup="${e(row.prompt||row.text)}" data-followup-kind="${e(row.kind||"investigate")}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`;
   const changeCard=({revision,step,round})=>`<section class="detail-section"><strong>第 ${round} 轮 · ${e(({retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"})[revision.decision]||"后续判断")}</strong><p><strong>旧判断：</strong>${e(revision.previous_statement)}</p>${(revision.new_statements||[]).map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(revision.reason)}</p>${renderRevisionAspects(revision)}${renderRevisionScope(revision)}<p class="form-note">${revision.evidence_relation==="reread"?"重读原材料":"含旧轮未读的引用；不表示新发布资料"}</p><button class="text-button" data-open-run="${e(revision.previous_run_id)}">查看旧研究 ↗</button><button class="text-button" data-open-run="${e(step.run_id)}">查看这次修正及依据 ↗</button></section>`;
   return `<article class="panel result-card"><h2>本研究当前认识</h2><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>导出整项研究成果 ↧</button><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length).map(row=>`<details class="detail-section" open><summary>第 ${row.round} 轮研究需要回看其沿用依据</summary>${renderUpstreamRevisionNotices(row.result)}</details>`).join("")}${renderProjectMaps(view)}${renderScopeHistory(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>仍需核实的问题</h3>${view.questions.slice(0,5).map(questionLink).join("")}${view.questions.length>5?`<details><summary>其余 ${view.questions.length-5} 个问题</summary>${view.questions.slice(5).map(questionLink).join("")}</details>`:""}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
 }
@@ -1574,7 +1609,8 @@ async function openResearchConversation(id, navigate=true) {
       if(questions.length)target.insertAdjacentHTML("beforeend",`<div class="panel"><h4>沿着这些疑问继续查</h4>${questions.map(text=>`<button class="secondary small" data-conversation-followup="${e(text)}" data-reply-step="${e(step.id)}">${e(text)}</button>`).join(" ")}</div>`);
     }
     else target.innerHTML=`<p class="form-note">${({queued:"等待查阅资料",running:"正在调查…",interrupted:"已暂停，进度已保留",failed:"本轮未完成，可查看全部调查记录中的原因"})[step.state]||"资料与进度已保留"}</p>`;
-    target.insertAdjacentHTML("beforeend",renderStepContinuation(project,step));
+    if(step.evidence_needed)target.insertAdjacentHTML("afterbegin",`<section class="research-context"><p><strong>本轮完成条件：</strong>${e(step.completion)}</p><p><strong>本轮所需证据：</strong>${e(step.evidence_needed)}</p></section>`);
+    target.insertAdjacentHTML("beforeend",renderInvestigationProposals(step.result||{},project,step,true)+renderStepContinuation(project,step));
   }
   renderConversationReply();
   if(active){const input=$("#"+active);input.focus();input.setSelectionRange(...selection);}
@@ -1735,7 +1771,7 @@ function renderConversationReply() {
 
 function prefillConversationFollowup(button) {
   conversation.replyToStepId=button.dataset.replyStep;
-  const kind=$("#conversation-kind");if(kind)kind.value=button.dataset.conversationClaim?"counterexample":"investigate";
+  const kind=$("#conversation-kind");if(kind)kind.value=button.dataset.conversationClaim?"counterexample":button.dataset.followupKind==="counterexample"?"counterexample":"investigate";
   renderConversationReply();
   const input=$("#conversation-question");
   input.value=button.dataset.conversationClaim

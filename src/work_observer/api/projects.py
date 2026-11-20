@@ -56,6 +56,7 @@ class StepInput(BaseModel):
     completion: str = Field(
         default="形成带原文引用的回答，并明确未知项", min_length=1, max_length=1000
     )
+    evidence_needed: str | None = Field(default=None, min_length=1, max_length=600)
     kind: str = Field(default="investigate", pattern="^(investigate|counterexample|synthesis)$")
     depends_on: list[str] = Field(default_factory=list, max_length=6)
     reply_to_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")

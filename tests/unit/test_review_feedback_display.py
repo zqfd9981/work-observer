@@ -21,6 +21,7 @@ import pytest
         "action_feedback.cjs",
         "research_history.cjs",
         "public_versions.cjs",
+        "investigation_proposals.cjs",
     ],
 )
 def test_review_repair_submit_and_diagnostic_display(harness):
