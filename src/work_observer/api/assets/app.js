@@ -6,7 +6,7 @@ const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"
 const e = escapeHTML;
 const token = $('meta[name="wo-token"]').content;
 const state = {importAsset:null,csvRows:[],operations:null, filters:{}, offset:0, limit:20, jobs:new Map(), selected:new Map(), researchIds:null,
-  activeRun:null, lastRun:null, lastResult:null, memories:new Map(), overview:null, page:"jobs", querySerial:0};
+  activeRun:null, lastRun:null, lastResult:null, memories:new Map(), overview:null, page:"research", querySerial:0};
 const statusLabels = {analysis_draft:"开发分析样稿（待核对）",completed:"回答已生成", partial:"已保留部分结果", evidence_only:"原文证据包", failed:"研究未完成", incomplete:"达到研究上限", insufficient_evidence:"正文不足"};
 const originLabels = {website:"网站响应", unknown:"新鲜度未知", cache:"缓存资料", replay:"回放资料", manual:"人工资料", test:"测试资料", client_error:"获取失败"};
 const requirementLabels = {required:"必备", preferred:"加分", unspecified:"未明确性质"};
@@ -362,7 +362,7 @@ try {
 
 function renderSelectedResearchDocuments() {
   const root=$("#research-document-selection");if(!root)return;
-  root.innerHTML=selectedResearchDocuments.size ? `<p class="form-note">归档原文限定为所选 ${selectedResearchDocuments.size} 份；后续轮次沿用此选择。</p>${[...selectedResearchDocuments].map(([id,title])=>`<button type="button" class="secondary small" data-remove-research-document="${e(id)}">${e(title)} ×</button>`).join(" ")}<button type="button" class="text-button" data-clear-research-documents>改用全部归档资料</button>` : '<p class="form-note">未限定归档原文：研究可从本机全部归档资料中查找。</p>';
+  root.innerHTML=selectedResearchDocuments.size ? `<p class="form-note">已选 ${selectedResearchDocuments.size} 份资料，后续追问会沿用。</p><div class="research-sources">${[...selectedResearchDocuments].map(([id,title])=>`<div class="research-source"><strong>${e(title)}</strong><span><button type="button" class="text-button" data-public-source="${e(id)}">查看原文</button><button type="button" class="text-button" data-remove-research-document="${e(id)}">移出 ×</button></span></div>`).join("")}</div><button type="button" class="text-button" data-clear-research-documents>取消限定，从资料库查找</button>` : '<p class="form-note">还没有单独选择文档，可以先添加资料，或从资料库查找。</p>';
 }
 
 function selectResearchDocument(id,title) {
@@ -904,8 +904,10 @@ function pendingResearch(id) {
 async function startResearch(event) {
   event.preventDefault();
   if (state.activeRun) return;
+  if (materialImporting) { notify("资料正在保存，请稍等。",true); return; }
   const question = $("#question").value.trim();
   if (!question) { notify("请先写下研究问题。",true); return; }
+  if ($("#work-material-text").value.trim() && !await saveWorkMaterial()) return;
   updateResearchApproach();
   if (["standard","work_map"].includes($("#research-approach").value)) {
     await startResearchConversation(question,{approach:$("#research-approach").value});return;
@@ -2021,18 +2023,64 @@ async function archiveConversationDocument(url) {
   return result;
 }
 
+let materialImporting=false;
+
+function useSelectedMaterials() {
+  $("#research-source-mode").value="public";
+  updateResearchScope();updateResearchApproach();
+}
+
+async function importResearchFiles(fileList) {
+  if(materialImporting)return;
+  const files=Array.from(fileList||[]),status=$("#research-file-status");
+  if(!files.length)return;
+  if(files.length>10){status.textContent="一次最多上传10份资料，请分批选择。";return;}
+  materialImporting=true;$("#research-material-files").disabled=true;$("#start-research").disabled=true;
+  const messages=[],saved=[],failed=[];
+  try {
+    for(const file of files) {
+      status.textContent=`正在保存 ${saved.length+failed.length+1}/${files.length}：${file.name}`;
+      try {
+        if(!/\.(txt|md|markdown)$/i.test(file.name))throw new Error("请使用TXT或Markdown文件");
+        if(file.size>400000)throw new Error("文件过大，请保留10万字以内的相关内容");
+        if(selectedResearchDocuments.size>=20)throw new Error("本次已选满20份资料，请先移出不需要的资料");
+        const text=(await file.text()).replace(/^\uFEFF/,"");
+        if(!text.trim())throw new Error("文件没有正文");
+        if(text.length>100000)throw new Error("正文超过10万字，请拆分文件");
+        const result=await api("work-materials",{method:"POST",body:JSON.stringify({title:file.name.slice(0,300),text,source_name:"用户上传文件："+file.name.slice(0,300)})});
+        selectResearchDocument(result.document.id,result.document.title);saved.push(result.document);
+        messages.push(`<p>✓ ${e(file.name)} · ${e(result.document.full_text_length)}字符 <button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看原文 ↗</button></p>`);
+      } catch(error) {failed.push(file.name);messages.push(`<p>未保存 ${e(file.name)}：${e(error.message)}</p>`);}
+    }
+    if(saved.length){useSelectedMaterials();await loadPublicLibrary();$("#question").focus();}
+    status.innerHTML=`<strong>已保存并选入 ${saved.length} 份${failed.length?`，${failed.length} 份未保存`:""}。</strong>${messages.join("")}<p>可继续添加资料，或在下方提问。保存不调用模型。</p>`;
+    return {saved,failed};
+  } finally {materialImporting=false;$("#research-material-files").disabled=false;$("#research-material-files").value="";$("#start-research").disabled=Boolean(state.activeRun||conversationStarting);}
+}
+
+$("#research-material-files").addEventListener("change",event=>importResearchFiles(event.target.files));
+const materialDrop=$("#research-file-drop");
+materialDrop.addEventListener("dragover",event=>{event.preventDefault();materialDrop.classList.add("dragging");});
+materialDrop.addEventListener("dragleave",()=>materialDrop.classList.remove("dragging"));
+materialDrop.addEventListener("drop",event=>{event.preventDefault();materialDrop.classList.remove("dragging");importResearchFiles(event.dataTransfer.files);});
+
 async function saveWorkMaterial() {
-  const title=$("#work-material-title").value.trim(),text=$("#work-material-text").value,source_name=$("#work-material-source").value.trim();
-  if(!title||!text.trim()){notify("请填写资料标题和原文。",true);return;}
+  if(materialImporting)return null;
+  const text=$("#work-material-text").value,source_name=$("#work-material-source").value.trim();
+  const title=$("#work-material-title").value.trim()||text.split(/\r?\n/).find(line=>line.trim())?.trim().slice(0,300);
+  if(!text.trim()){notify("请粘贴资料原文。",true);return null;}
+  if(selectedResearchDocuments.size>=20){notify("本次已选满20份资料，请先移出不需要的资料。",true);return null;}
   const button=$("#save-work-material"),status=$("#work-material-status");
-  button.disabled=true;status.textContent="正在保存原文…";
+  materialImporting=true;button.disabled=true;status.textContent="正在保存原文…";
   try{
     const result=await api("work-materials",{method:"POST",body:JSON.stringify({title,text,source_name})});
     const selected=selectResearchDocument(result.document.id,result.document.title);
-    status.innerHTML=`已保存《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看原文 ↗</button> ${selected?"已选入下次研究；可选择“只研究已归档资料”再提问。":"当前已选满20份，请先调整研究范围。"} 保存未调用模型。`;
+    if(selected){useSelectedMaterials();$("#work-material-title").value="";$("#work-material-text").value="";$("#work-material-source").value="";}
+    status.innerHTML=`已保存《${e(result.document.title)}》 · ${e(result.document.full_text_length)}字符。<button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看原文 ↗</button> ${selected?"已选入研究，可直接提问。":"当前已选满20份，请先调整研究范围。"} 保存未调用模型。`;
     await loadPublicLibrary();
-  }catch(error){status.textContent=error.message;}
-  finally{button.disabled=false;}
+    return selected?result:null;
+  }catch(error){status.textContent=error.message;return null;}
+  finally{button.disabled=false;materialImporting=false;}
 }
 $("#save-work-material").addEventListener("click",saveWorkMaterial);
 
@@ -2609,8 +2657,8 @@ function showArchivedImage(id) {
 }
 
 async function route() {
-  const page = location.hash.slice(1).split("/")[0] || "jobs";
-  state.page = titles[page] ? page : "jobs";
+  const page = location.hash.slice(1).split("/")[0] || "research";
+  state.page = titles[page] ? page : "research";
   $$(".page").forEach(element=>{element.hidden = element.id !== "page-" + state.page;});
   $$("nav [data-page]").forEach(link=>{
     link.classList.toggle("active",link.dataset.page === state.page);

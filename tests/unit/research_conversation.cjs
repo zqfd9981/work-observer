@@ -105,7 +105,7 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.equal(node("#research-source-mode").value,"public");
  assert.equal(context.calls.length,callsBeforeQuestion); // Selecting a document only drafts a question.
  assert.equal(JSON.parse(storage.get("wo-document-selection"))[0].id,"d".repeat(32));
- assert.ok(node("#research-document-selection").innerHTML.includes("限定为所选 1 份"));
+ assert.ok(node("#research-document-selection").innerHTML.includes("已选 1 份资料"));
  vm.runInContext('selectResearchDocument("c".repeat(32),"<script>第二份</script>")',context);
  assert.ok(node("#research-document-selection").innerHTML.includes("&lt;script&gt;第二份"));
  vm.runInContext('api=async(path,options)=>{calls.push({path,options});return path==="projects"?{id:"project-1"}:{id:"project-1",revision:3,worker_running:false};}',context);
@@ -131,7 +131,7 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.equal(pasted.text,"\n保留的原文与空行。\n");assert.equal(pasted.source_name,"合成来源说明");
  assert.ok(node("#work-material-status").innerHTML.includes("&lt;script&gt;合成SOP"));
  assert.ok(node("#public-library-list").innerHTML.includes("粘贴工作资料"));
- assert.equal(node("#research-source-mode").value,"jobs");
+ assert.equal(node("#research-source-mode").value,"public"); // Pasted material is ready for a focused question.
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,runsBeforeMaterial);
 
  const runCountBeforePaste=context.calls.filter(c=>c.path.endsWith("/run")).length;

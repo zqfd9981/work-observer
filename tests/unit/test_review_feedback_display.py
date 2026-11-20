@@ -24,6 +24,7 @@ import pytest
         "investigation_proposals.cjs",
         "update_cohort.cjs",
         "domain_lineage.cjs",
+        "research_intake.cjs",
     ],
 )
 def test_review_repair_submit_and_diagnostic_display(harness):
@@ -39,5 +40,6 @@ def test_review_repair_submit_and_diagnostic_display(harness):
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert outcome.returncode == 0, outcome.stdout + outcome.stderr
