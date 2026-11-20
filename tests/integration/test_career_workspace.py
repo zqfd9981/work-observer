@@ -846,12 +846,32 @@ def test_career_learning_can_be_shelved_rechecked_and_replaced(tmp_path):
         assert context()["learning_notes"] == []
         assert context()["selected_learning_note"] is None
 
+        material = client.post(
+            base + "/materials",
+            headers=auth,
+            json={
+                "title": "合成新增并发反例",
+                "text": "合成新记录：相同请求标识重复提交后产生两条写入，仍未核对线上情况。",
+                "source_name": "本地虚构观察",
+            },
+        ).json()["materials"][0]
         checked = run_stage(
-            client, identity, auth, "ask", question="重查旧理解的反例。", insight_id=old_id
+            client,
+            identity,
+            auth,
+            "ask",
+            question="用新记录重查旧理解的反例。",
+            insight_id=old_id,
+            material_id=material["id"],
         )
         selected = context()["selected_learning_note"]
         assert selected["current_user_view"] == note_data["current_view"]
         assert selected["use_for_research"] is False
+        assert context()["selected_material"]["document_id"] == material["id"]
+        assert any(
+            row.get("public_document_id") == material["id"]
+            for row in checked["results"][0]["result"]["evidence"]
+        )
         assert context()["learning_notes"] == []
         assert checked["results"][0]["insight_id"] == old_id
         assert checked["insights"][0]["use_for_research"] is False
