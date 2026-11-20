@@ -2,7 +2,12 @@
 
 from copy import deepcopy
 
-from work_observer.research.reading import reading_guide
+import pytest
+from jsonschema import Draft202012Validator, ValidationError
+
+from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.research.agent import TOOLS
+from work_observer.research.reading import job_window, reading_guide
 
 
 def receipts():
@@ -24,6 +29,50 @@ def receipts():
         )
         for i, (start, end) in enumerate(((0, boundary), (boundary, len(text))), 1)
     ]
+
+
+def test_job_windows_continue_without_changing_original_fragments():
+    text = "合成岗位说明。" * 1300 + "末尾限制：业务背景只作为加分项。"
+    rows = [
+        {
+            "id": f"f:{start}",
+            "start": start,
+            "end": min(start + 700, len(text)),
+            "quote": text[start : start + 700],
+            "full_text_length": len(text),
+        }
+        for start in range(0, len(text), 700)
+    ]
+    before = deepcopy(rows)
+    first = job_window(rows)
+    assert first["start"] == 0 and first["end"] == 5600
+    assert first["has_more"] and first["next_start"] == 5600
+    second = job_window(rows, first["next_start"])
+    assert second["start"] == first["end"] and second["next_start"] is None
+    assert second["end"] == len(text) and "末尾限制" in second["evidence"][-1]["quote"]
+    middle = job_window(rows, 5650)
+    assert middle["start"] == 5600  # Keep the complete original citation around the position.
+    assert middle["evidence"][0]["id"] == rows[8]["id"]
+    assert job_window(rows, len(text) + 100)["evidence"] == []
+    assert job_window([], 0)["full_text_length"] == 0
+    assert rows == before
+    for row in [*first["evidence"], *second["evidence"]]:
+        assert row["quote"] == text[row["start"] : row["end"]]
+    for invalid in (-1, True, "5600"):
+        with pytest.raises(ProbeError, match="INVALID_JOB_SOURCE_WINDOW"):
+            job_window(rows, invalid)
+
+
+def test_read_job_contract_exposes_a_valid_nullable_position():
+    contract = next(row for row in TOOLS if row["name"] == "read_job")["parameters"]
+    Draft202012Validator.check_schema(contract)
+    validator = Draft202012Validator(contract)
+    assert set(contract["required"]) == set(contract["properties"])
+    for start in (None, 0, 5600):
+        validator.validate({"job_id": "synthetic-job", "start": start})
+    for start in (-1, True, "5600"):
+        with pytest.raises(ValidationError):
+            validator.validate({"job_id": "synthetic-job", "start": start})
 
 
 def test_qualifier_across_citations_keeps_whole_literal_condition_and_section():

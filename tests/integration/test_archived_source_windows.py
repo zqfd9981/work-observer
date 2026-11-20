@@ -34,7 +34,7 @@ class WindowModel:
         scope = context["fixed_scope"]
         if not outputs and scope["jobs"]:
             name, args = "read_job", {"job_id": scope["jobs"][0]["id"]}
-        elif not any("next_start" in row for row in outputs):
+        elif not any("document" in row for row in outputs):
             document = scope["public_document_titles"][0]
             assert document["title_not_evidence"] is True
             name, args = "read_archived_document", {"document_id": document["id"], "start": 0}

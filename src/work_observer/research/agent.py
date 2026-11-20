@@ -136,9 +136,13 @@ TOOLS = [
     ),
     tool(
         "read_job",
-        "按内部 ID 读取一个候选岗位的原文片段；正文缺失时返回空证据。",
-        {"job_id": {"type": "string"}},
-        ["job_id"],
+        "按内部ID分段读取岗位原文。start传null或0从头读，也可按字符位置定位；"
+        "返回next_start时可继续向后读。正文缺失或到达末尾时返回空证据。",
+        {
+            "job_id": {"type": "string"},
+            "start": {"type": ["integer", "null"], "minimum": 0},
+        },
+        ["job_id", "start"],
     ),
     tool(
         "finish_research",
@@ -336,6 +340,7 @@ investigation_kind=counterexample时主动查找相反或不支持的材料，�
 不强行提出候选；固定模拟评测通过不证明真实研究质量提升，不可自行启用。
 结论中写岗位标题或公司名，避免只写无法定位的“岗位1”。正文短不代表抓取被截断。
 字符范围未覆盖 full_text_length 时，只能说未读到，不能说整份 JD 没有该内容。
+问题需要后文时，可把read_job返回的next_start传入start继续读取，在原预算内查阅长JD而不必猜关键词。
 不编造缺失字段、发布时间、公司主体或当前招聘状态，不将少量样本推断成全市场。
 company_identity_status等业务库核验状态、归档完整性和未披露合同/时间，只在范围或gaps说明；
 这些状态不是JD逐字原文，不要引用JD片段把它们列作direct判断。原文明确写出的未知可据实引用。
@@ -1887,11 +1892,15 @@ async def _research(
                         "match_note": "检索比较统一大小写和同形部首，片段与字符位置保持原文。",
                     }
                     entry["terms"] = arguments["terms"]
-                elif name == "read_job" and set(arguments) == {"job_id"}:
+                elif name == "read_job" and set(arguments) in (
+                    {"job_id"}, {"job_id", "start"}
+                ):
                     if arguments["job_id"] not in candidates:
                         raise ProbeError("RESEARCH_SCOPE_VIOLATION")
-                    data = {"evidence": pool[arguments["job_id"]][:8]}
-                    entry["job_id"] = arguments["job_id"]
+                    from work_observer.research.reading import job_window
+
+                    data = job_window(pool[arguments["job_id"]], arguments.get("start"))
+                    entry.update(job_id=arguments["job_id"], start=data["start"], end=data["end"])
                 elif name == "read_source_window" and approach == "source_first":
                     if (
                         set(arguments) != {"job_id", "start"}

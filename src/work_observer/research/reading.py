@@ -3,7 +3,31 @@
 import json
 from collections import defaultdict
 
+from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.research.source_views import build_source_views
+
+
+def job_window(evidence, start=None):
+    """Read existing frozen fragments around a character position without changing citations."""
+    start = 0 if start is None else start
+    if type(start) is not int or start < 0:
+        raise ProbeError("INVALID_JOB_SOURCE_WINDOW")
+    ordered = sorted(evidence, key=lambda row: row["start"])
+    length = max((row.get("full_text_length", row["end"]) for row in ordered), default=0)
+    available_end = max((row["end"] for row in ordered), default=0)
+    selected = [row for row in ordered if row["end"] > start][:8]
+    first = selected[0]["start"] if selected else min(start, length)
+    end = selected[-1]["end"] if selected else first
+    return {
+        "start": first,
+        "end": end,
+        "full_text_length": length,
+        "next_start": end if selected and end < available_end else None,
+        "has_more": bool(selected and end < available_end),
+        "evidence": selected,
+        "note": "按定位位置所在片段返回原文，引用与字符位置保持不变。"
+        "next_start可继续读取后面的片段；正文未读到的范围仍保留未知，不能当作没有要求。",
+    }
 
 
 def reading_guide(evidence, returned_ids):
