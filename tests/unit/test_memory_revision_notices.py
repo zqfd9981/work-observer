@@ -13,7 +13,7 @@ from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.unified import UnifiedRetrieval
 
 
-def case(workspace, *, project_id=None, decision="revise"):
+def case(workspace, *, project_id=None, decision="revise", uses_memory=True):
     repo, store, memory, jobs, _ = workspace
     first = source(repo, store, jobs[:1], project_id=project_id)
     saved = memory.create(
@@ -24,7 +24,9 @@ def case(workspace, *, project_id=None, decision="revise"):
         origin="agent",
     )
     saved = memory.activate(saved["id"])
-    second = source(repo, store, jobs[:1], memories=[saved], project_id=project_id)
+    second = source(
+        repo, store, jobs[:1], memories=[saved] if uses_memory else [], project_id=project_id
+    )
     second["claims"][0]["text"] = "RAG 任务不等于个人独立交付权限。"
     second["cognition_revisions"] = [
         {
@@ -94,6 +96,87 @@ def test_later_retention_is_recalled_with_earlier_challenge_without_deciding_tru
     assert (
         memory.recall("RAG", jobs[:1])[0]["revision_notices"][0]["run_id"] == challenged["run_id"]
     )
+
+
+def test_rewritten_memory_keeps_source_claim_leads_with_an_explicit_historical_match(dependencies):
+    repo, store, memory, jobs, _ = dependencies
+    original, saved, later = case(dependencies, uses_memory=False)
+    before = deepcopy(store.get(original["run_id"]))
+    revised = memory.activate(memory.revise(saved["id"], "合成 RAG 评估任务，个人权限待核实")["id"])
+    revised = memory.activate(
+        memory.revise(revised["id"], "合成 RAG 评估工作，仅保留已披露任务")["id"]
+    )
+    assert memory.derived_eligibility(later["run_id"])["eligible"]
+    recalled = memory.recall("RAG", jobs[:1])[0]
+    assert recalled["id"] == revised["id"] and recalled["content"] == revised["content"]
+    notice = recalled["revision_notices"][0]
+    assert notice["run_id"] == later["run_id"]
+    assert notice["previous_statement"] == saved["content"]
+    assert notice["memory_match"] == {"id": saved["id"], "version": 1}
+    assert "当前表述已经改写" in notice["memory_match_note"]
+    assert "是否仍受影响" in notice["memory_match_note"]
+    retrieved = UnifiedRetrieval(repo).search(["RAG"], job_ids=jobs[:1], public_document_ids=[])
+    assert (
+        retrieved["knowledge"][0]["revision_notices"][0]["memory_match"] == notice["memory_match"]
+    )
+    assert memory.list()[0] == revised
+    assert store.get(original["run_id"]) == before
+    assert memory.recall("RAG", jobs[:1], excluded_runs=[later["run_id"]]) == [revised]
+
+
+def test_exact_current_claim_match_wins_over_old_version_and_unbound_notes_stay_unbound(
+    dependencies,
+):
+    _, store, memory, jobs, _ = dependencies
+    original, saved, _ = case(dependencies, uses_memory=False)
+    original["claims"].append({**original["claims"][0], "text": "合成 RAG Python 开发任务"})
+    store.save(original["run_id"], result=original)
+    revised = memory.activate(memory.revise(saved["id"], original["claims"][1]["text"])["id"])
+    # The old correction targets claim 0, not the explicitly selected claim 1.
+    assert memory.recall("RAG", jobs[:1]) == [revised]
+    unbound = memory.create(
+        "knowledge",
+        "合成 RAG 汇总，未绑定某条原判断",
+        source_run_id=original["run_id"],
+        evidence=original["evidence"],
+        origin="agent",
+    )
+    unbound = memory.activate(unbound["id"])
+    rewritten = memory.activate(
+        memory.revise(unbound["id"], "合成 RAG 汇总，仍是未绑定的改写")["id"]
+    )
+    assert not memory.validity(rewritten["id"])["revision_notices"]
+
+
+def test_old_version_matching_does_not_revive_a_stale_correction(dependencies):
+    _, _, memory, jobs, _ = dependencies
+    _, saved, later = case(dependencies)
+    revised = memory.activate(memory.revise(saved["id"], "合成 RAG 评估的新表述")["id"])
+    # This later run depended on the superseded memory itself, so it remains
+    # ineligible; finding an old wording must not bypass that dependency.
+    assert not memory.derived_eligibility(later["run_id"])["eligible"]
+    assert memory.recall("RAG", jobs[:1]) == [revised]
+
+
+def test_old_version_matching_keeps_revision_material_scope(dependencies):
+    repo, store, memory, jobs, _ = dependencies
+    _, saved, later = case(dependencies, uses_memory=False)
+    extra = Catalog(repo).evidence(jobs[1])
+    later["scope"] = Catalog(repo).query(job_ids=jobs)
+    later["evidence"].extend(extra)
+    later["claims"][0]["evidence_ids"].append(extra[0]["id"])
+    later["cognition_revisions"][0].update(
+        new_claim_indices=[0], reason="SYNTHETIC_OUTSIDE_SCOPE_REASON"
+    )
+    store.save(later["run_id"], result=later)
+    revised = memory.activate(memory.revise(saved["id"], "合成 RAG 评估的新表述")["id"])
+    narrow = memory.recall("RAG", jobs[:1])[0]
+    notice = narrow["revision_notices"][0]
+    assert narrow["id"] == revised["id"] and notice["scope_limited"]
+    assert "SYNTHETIC_OUTSIDE_SCOPE_REASON" not in str(notice)
+    assert notice["memory_match"]["id"] == saved["id"]
+    broad = memory.recall("RAG", jobs)[0]
+    assert broad["revision_notices"][0]["reason"] == "SYNTHETIC_OUTSIDE_SCOPE_REASON"
 
 
 def test_exact_claim_time_and_excluded_run_boundaries(dependencies):

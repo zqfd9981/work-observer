@@ -3,7 +3,10 @@
 import json
 import sqlite3
 
+from sqlalchemy.orm import Session
+
 from work_observer.memory.dependencies import DependencyAudit
+from work_observer.storage.models import MemoryRecord
 
 
 def revision_notices(
@@ -25,7 +28,34 @@ def revision_notices(
     original = auditor._read("research_checkpoints", memory["source_run_id"])
     claims = ((original or {}).get("result") or {}).get("claims", [])
     indices = {i for i, claim in enumerate(claims) if claim.get("text") == memory["content"]}
-    return claim_revision_notices(
+    matched = None
+    if not indices and memory.get("previous_id"):
+        current, visited = memory, {memory["id"]}
+        with Session(repository.engine) as session:
+            while current.get("previous_id") and current["previous_id"] not in visited:
+                previous = session.get(MemoryRecord, current["previous_id"])
+                if (
+                    previous is None
+                    or previous.root_id != memory["root_id"]
+                    or previous.kind != memory["kind"]
+                    or previous.source_run_id != memory["source_run_id"]
+                    or previous.version >= current["version"]
+                    or previous.status == "forgotten"
+                    or previous.created_at > auditor.at
+                ):
+                    break
+                visited.add(previous.id)
+                indices = {
+                    i for i, claim in enumerate(claims) if claim.get("text") == previous.content
+                }
+                if indices:
+                    matched = {"id": previous.id, "version": previous.version}
+                    break
+                current = {
+                    "previous_id": previous.previous_id,
+                    "version": previous.version,
+                }
+    notices = claim_revision_notices(
         repository,
         memory["source_run_id"],
         indices,
@@ -36,6 +66,14 @@ def revision_notices(
         job_ids=job_ids,
         public_document_ids=public_document_ids,
     )
+    if matched:
+        for notice in notices:
+            notice["memory_match"] = matched
+            notice["memory_match_note"] = (
+                f"此提示涉及第{matched['version']}版记忆采用的原判断。当前表述已经改写，"
+                "是否仍受影响须对照当前内容和原文核对；不自动认定已解决或仍有错误。"
+            )
+    return notices
 
 
 def claim_revision_notices(

@@ -48,6 +48,11 @@ const notice=vm.runInContext("renderMemoryRevisionNotices(notices)",context);
 assert.ok(notice.includes("涉及原判断 3")&&notice.includes("&lt;script&gt;原任务"));
 assert.ok(notice.includes('data-open-run="later"')&&notice.includes("已保存内容保留"));
 assert.ok(!notice.includes("<script>")&&!notice.includes("<img>"));
+context.notices[0].memory_match={id:"old-memory",version:1};
+context.notices[0].memory_match_note="<b>第1版</b>记忆的原判断；当前表述已经改写，是否仍受影响须核对";
+const rewrittenNotice=vm.runInContext("renderMemoryRevisionNotices(notices)",context);
+assert.ok(rewrittenNotice.includes("&lt;b&gt;第1版&lt;/b&gt;")&&rewrittenNotice.includes("当前表述已经改写"));
+assert.ok(rewrittenNotice.includes("是否仍受影响须核对")&&!rewrittenNotice.includes("<b>第1版</b>"));
 
 context.support=[{claim_index:4,text:"精通<script>平台系统</script>",category:"ability",basis:"direct",requirement:"preferred",source_references:[{id:"one",job_id:"j",document_id:"original",title:"<img>原岗位",company:"原公司"}]}];
 const supportHtml=vm.runInContext("renderKnowledgeSupport(support)",context);
