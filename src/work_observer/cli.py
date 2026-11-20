@@ -749,6 +749,7 @@ def serve(
     reports_dir: Path = Path("reports"),
     env_file: Path = Path(".env"),
     host: str = typer.Option("127.0.0.1", help="默认本机；0.0.0.0需显式部署访问配置"),
+    demo: bool = typer.Option(False, help="用临时数据打开虚构示例，不读取服务密钥"),
 ):
     """启动仅本机访问的中文页面；Ctrl+C 停止，不启动招聘采集。"""
     import uvicorn
@@ -759,6 +760,28 @@ def serve(
 
     logging.disable(logging.CRITICAL)
     try:
+        if demo:
+            from tempfile import TemporaryDirectory
+
+            from work_observer.career_demo import create_demo_app
+
+            if host not in {"127.0.0.1", "::1"} or db is not None:
+                raise typer.BadParameter("示例入口仅在本机运行，使用临时数据，无需指定数据库。")
+            with TemporaryDirectory(prefix="work-observer-demo-") as directory:
+                typer.echo("正在准备虚构示例，不连接模型或招聘平台…")
+                example = create_demo_app(Path(directory))
+                address = f"http://[::1]:{port}" if host == "::1" else f"http://127.0.0.1:{port}"
+                typer.echo(f"虚构示例：{address}")
+                typer.echo("使用预置脚本，不调用真实模型；Ctrl+C 关闭，可在页面导出准备包。")
+                uvicorn.run(
+                    example,
+                    host=host,
+                    port=port,
+                    access_log=False,
+                    proxy_headers=False,
+                    log_level="critical",
+                )
+            return
         settings = Settings.load(env_file)
         if host not in {"127.0.0.1", "::1", "0.0.0.0"}:
             raise ProbeError("INVALID_BIND_HOST")

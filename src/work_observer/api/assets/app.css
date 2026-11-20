@@ -126,3 +126,7 @@
 .career-carried-understanding>summary{font-weight:600;cursor:pointer}
 .career-carried-understanding h4{font-size:13px;margin:18px 0 6px;color:#47614d}
 .career-carried-understanding p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.9}
+
+.career-demo-banner{padding:20px 24px;background:#eaf1e3;border:1px solid #cbd9c1;border-radius:12px;margin:0 0 24px;color:#35543e}
+.career-demo-banner>strong{font-size:16px}.career-demo-banner p{font-size:13px;line-height:1.8;margin:10px 0}
+.career-demo-banner nav{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px}.career-demo-banner a{padding:7px 12px;background:white;border:1px solid #cbd9c1;border-radius:8px;font-size:13px;color:#31563e;text-decoration:none}

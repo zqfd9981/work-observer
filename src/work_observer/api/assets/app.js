@@ -5,6 +5,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const e = escapeHTML;
 const token = $('meta[name="wo-token"]').content;
+const demoMode = $('meta[name="wo-demo"]')?.content === "true";
 const state = {importAsset:null,csvRows:[],operations:null, filters:{}, offset:0, limit:20, jobs:new Map(), selected:new Map(), researchIds:null,
   activeRun:null, lastRun:null, lastResult:null, memories:new Map(), overview:null, page:"career", querySerial:0};
 const statusLabels = {analysis_draft:"开发分析样稿（待核对）",completed:"回答已生成", partial:"已保留部分结果", evidence_only:"原文证据包", failed:"研究未完成", incomplete:"达到研究上限", insufficient_evidence:"正文不足"};
@@ -120,10 +121,10 @@ async function loadOverview() {
       `<div class="stat"><span>${e(label)}</span><i aria-hidden="true">${icon}</i><strong>${e(count)}</strong><small>${e(note)}</small></div>`).join("");
   $("#sidebar-source").textContent = data.source.state === "paused" ? "招聘来源已暂停" : data.source.state === "unknown" ? "来源状态尚未确认" : "仅查看本地资料";
   $(".top-right .quiet-tag").textContent = data.source.state === "paused" ? "来源已暂停" : "本地资料";
-  $("#model-status").textContent = data.model_configured ? "● 研究服务已配置" : "○ 可使用原文证据模式";
+  $("#model-status").textContent = demoMode ? "预置脚本演示" : data.model_configured ? "● 研究服务已配置" : "○ 可使用原文证据模式";
   if (!data.model_configured) {
     $("#offline").checked = true;
-    $("#research-config-note").textContent = "尚未配置模型。可先使用原文证据模式；模型调用失败会明确显示，不会冒充已完成。";
+    $("#research-config-note").textContent = demoMode ? "此入口使用固定演示脚本，不调用真实模型；示例不代表模型效果。" : "尚未配置模型。可先使用原文证据模式；模型调用失败会明确显示，不会冒充已完成。";
   }
   return data;
 }
