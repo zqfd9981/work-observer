@@ -1518,10 +1518,12 @@ class ProjectService:
             )
             if selected_inquiry:
                 earlier = []
+                comparison_steps = step.get("career_comparison_steps", [])
                 for entry in career["runs"]:
                     if (
                         entry.get("question_id") != selected_inquiry["id"]
                         or entry["step_id"] == step["id"]
+                        or (comparison_steps and entry["step_id"] not in comparison_steps)
                     ):
                         continue
                     previous_step = next(
@@ -1540,17 +1542,48 @@ class ProjectService:
                         continue
                     earlier.append(
                         {
+                            "step_id": entry["step_id"],
                             "question": entry.get("user_question"),
                             "recorded_at": entry["created_at"],
                             "claims_to_recheck": [
                                 claim["text"] for claim in result.get("claims", [])
                             ],
+                            "claim_details_to_recheck": [
+                                {
+                                    key: claim.get(key)
+                                    for key in ("text", "category", "basis", "requirement")
+                                }
+                                for claim in result.get("claims", [])
+                            ]
+                            if comparison_steps
+                            else [],
                             "unresolved_then": result.get("gaps", []),
                             "same_job_scope": previous_step["scope_version"]
                             == record["scope_version"],
+                            "source_references_to_reread": [
+                                {
+                                    key: source.get(key)
+                                    for key in (
+                                        "title",
+                                        "evidence_kind",
+                                        "job_id",
+                                        "public_document_id",
+                                        "start",
+                                        "end",
+                                    )
+                                }
+                                for source in result.get("evidence", [])
+                            ]
+                            if comparison_steps
+                            else [],
                         }
                     )
-                selected_inquiry["earlier_discussions"] = earlier[-2:]
+                selected_inquiry["earlier_discussions"] = (
+                    sorted(earlier, key=lambda item: comparison_steps.index(item["step_id"]))
+                    if comparison_steps
+                    else earlier[-2:]
+                )
+                selected_inquiry["comparison_requested"] = bool(comparison_steps)
                 selected_inquiry["history_notice"] = (
                     "先前分析只供对照问题如何推进，不是新证据。"
                     "须重读本轮可用原文；指出新材料改变或未能改变哪些判断，不能直接沿用旧结论。"

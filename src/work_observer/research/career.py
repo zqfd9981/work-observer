@@ -1004,6 +1004,7 @@ class CareerService:
         insight_id=None,
         question_id=None,
         requirement_key="",
+        comparison_step_ids=None,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -1048,6 +1049,22 @@ class CareerService:
                 )
                 if not saved_question or kind != "ask":
                     raise ValueError("请选择一条已保存的调查问题，并通过提问继续研究。")
+            comparison_step_ids = comparison_step_ids or []
+            if comparison_step_ids:
+                candidates = {
+                    row["step_id"]: row
+                    for row in self.get(identity)["results"]
+                    if row.get("question_id") == question_id
+                    and row.get("result")
+                    and row["result"]["status"] == "completed"
+                    and row["state"] != "abandoned"
+                }
+                if (
+                    not question_id
+                    or len(set(comparison_step_ids)) != 2
+                    or not all(step_id in candidates for step_id in comparison_step_ids)
+                ):
+                    raise ValueError("请选择同一调查问题下两次已完整形成的回答进行对照。")
             if insight_id:
                 insight = next(
                     (
@@ -1278,6 +1295,15 @@ class CareerService:
                     "用户原先写的相关性和缺口不是独立事实，旧讨论也不是新增证据。"
                     "若资料已不在本轮可读范围，明确指出，不补造或假装已经读取。"
                 )
+            if comparison_step_ids:
+                question += (
+                    "用户本次明确对照的两次研究在selected_inquiry.earlier_discussions，"
+                    "按所选顺序比较两次提问、判断和来源。说明哪些差异可能来自问题或材料变化，"
+                    "保留claim_details_to_recheck中的必备、加分与未说明强度，以及明示、归纳和推断区别。"
+                    "哪些还不能解释；句子不同不等于矛盾，引用更多也不自动意味着更可靠。"
+                    "旧研究和旧引用只是回查线索，请读取本轮可用原文再作判断；"
+                    "若原资料不在本轮范围，保留未知，不把较新的一次当作正确答案。"
+                )
             used = self.projects.usage(project)
             allow_public = bool(allow_public and not offline)
             if allow_public:
@@ -1366,6 +1392,7 @@ class CareerService:
                     "story_id": story_id if kind == "pitch" else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "question_id": question_id,
+                    "comparison_step_ids": comparison_step_ids,
                     "requirement_key": requirement_key if kind == "evidence" else "",
                     "requirement_text": selected_requirement["text"]
                     if selected_requirement
@@ -1381,6 +1408,8 @@ class CareerService:
                 project["steps"][-1]["career_insight_id"] = insight_id
             if question_id:
                 project["steps"][-1]["career_question_id"] = question_id
+                if comparison_step_ids:
+                    project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
             if selected_requirement:
                 project["steps"][-1]["career_requirement"] = {
                     **{

@@ -1,6 +1,6 @@
 """Job-seeker workspace routes; research execution reuses the existing project worker."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
@@ -136,6 +136,9 @@ class CareerResearchInput(BaseModel):
     insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     requirement_key: str = Field(default="", max_length=100)
+    comparison_step_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] = Field(
+        default_factory=list, max_length=2
+    )
 
 
 class PitchInput(BaseModel):

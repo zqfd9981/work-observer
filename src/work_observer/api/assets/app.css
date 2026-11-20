@@ -92,3 +92,14 @@
 .career-proof-relevance,.career-proof-missing{font-size:13px;line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere;margin:18px 0 0}
 .career-proof-missing{background:#f6f4e9;padding:12px;border-radius:8px}
 @media(max-width:680px){.career-proof-editor{padding:16px}.career-proof-editor .form-grid{grid-template-columns:1fr}}
+
+.career-question-comparison{padding:16px;border:1px solid #dce4d6;border-radius:10px;margin:18px 0;background:#fbfcf9}
+.career-question-comparison>summary{font-weight:600;cursor:pointer}
+.career-research-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:18px 0}
+.career-research-column{min-width:0;background:white;border:1px solid #e3e8df;border-radius:10px;padding:18px;overflow-wrap:anywhere}
+.career-research-column h4{font-size:13px;margin:22px 0 10px;color:#42634d}
+.career-research-column p,.career-research-column li{font-size:13px;line-height:1.9;white-space:pre-wrap}
+.career-comparison-claim{border-top:1px solid #e8ece4;padding:12px 0}
+.career-comparison-quote{font-size:12px;margin:10px 0}
+.career-comparison-quote blockquote{white-space:pre-wrap;background:#f3f6ee;border-left:2px solid #95aa89;padding:12px;margin:12px 0;overflow-wrap:anywhere}
+@media(max-width:800px){.career-research-pair{grid-template-columns:1fr}.career-question-comparison{padding:12px}.career-research-column{padding:14px}}

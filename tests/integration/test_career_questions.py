@@ -120,11 +120,42 @@ def test_question_tracks_investigations_and_user_conclusion(tmp_path):
         assert any(row["kind"] == "question" and row["id"] == qid for row in found["records"])
         # Rechecking an answered question retains the user's decision and full limitation.
         rechecked = run_stage(
-            client, identity, auth, "ask", question="重新核实这个口径。", question_id=qid
+            client,
+            identity,
+            auth,
+            "ask",
+            question="对照我选的两次研究，重新核实这个口径。",
+            question_id=qid,
+            comparison_step_ids=[second_step, first_step],
         )
         context = model.contexts[-1]["project_context"]["career_evidence"]["selected_inquiry"]
         assert context["conclusion"] == conclusion and len(context["earlier_discussions"]) == 2
+        assert context["comparison_requested"] is True
+        assert [row["step_id"] for row in context["earlier_discussions"]] == [
+            second_step,
+            first_step,
+        ]
+        assert all(row["source_references_to_reread"] for row in context["earlier_discussions"])
+        assert all(
+            row["claim_details_to_recheck"][0]["requirement"] == "required"
+            for row in context["earlier_discussions"]
+        )
+        assert rechecked["results"][0]["comparison_step_ids"] == [second_step, first_step]
         assert rechecked["questions"][0]["state"] == "answered"
+        calls = len(model.contexts)
+        for selected in ([first_step], [first_step, first_step], [first_step, source_id]):
+            invalid_comparison = client.post(
+                base + "/prepare",
+                headers=auth,
+                json={
+                    "kind": "ask",
+                    "question": "对照两次。",
+                    "question_id": qid,
+                    "comparison_step_ids": selected,
+                },
+            )
+            assert invalid_comparison.status_code == 422, invalid_comparison.text
+        assert len(model.contexts) == calls
         parked = client.patch(
             base + f"/questions/{qid}",
             headers=auth,
