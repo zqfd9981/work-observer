@@ -23,7 +23,11 @@ class CareerModel:
             for row in history
             if row.get("type") == "function_call_output"
         ]
-        selected_artifact = next(
+        selected_artifact = (
+            (context.get("project_context") or {})
+            .get("career_evidence", {})
+            .get("selected_material")
+        ) or next(
             (
                 row["artifact_document"]
                 for row in (context.get("project_context") or {})
@@ -565,6 +569,57 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             f"/api/career/{identity}/prepare", json={"kind": "role"}, headers=auth
         )
         assert continued.status_code == 201, continued.text
+        calls_before_material = len(model.contexts)
+        added_material = client.post(
+            f"/api/career/{other['id']}/materials",
+            json={
+                "title": "合成平台业务说明",
+                "text": "合成业务说明：平台只提供执行记录与失败定位线索，"
+                "业务人员负责决定验收方式。",
+                "source_name": "用户粘贴的合成技术说明，未独立核实",
+            },
+            headers=auth,
+        )
+        assert added_material.status_code == 201, added_material.text
+        additional_id = added_material.json()["materials"][0]["id"]
+        assert len(model.contexts) == calls_before_material
+        material_answer = run_stage(
+            client,
+            other["id"],
+            auth,
+            "ask",
+            material_id=additional_id,
+            question="这份平台说明能否证明开发者有业务验收决定权？",
+        )
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["selected_material"][
+                "document_id"
+            ]
+            == additional_id
+        )
+        assert any(
+            row.get("public_document_id") == additional_id
+            for row in material_answer["results"][0]["result"]["evidence"]
+        )
+        removed_material = client.delete(
+            f"/api/career/{other['id']}/materials/{additional_id}", headers=auth
+        )
+        assert removed_material.status_code == 200 and not removed_material.json()["materials"]
+        assert "失败定位" in client.get("/api/public-documents/" + additional_id).json()["text"]
+        for _ in range(2):
+            attached = client.post(
+                f"/api/career/{other['id']}/materials/attach",
+                json={"document_id": additional_id},
+                headers=auth,
+            )
+            assert attached.status_code == 200, attached.text
+        assert len(attached.json()["materials"]) == 1
+        assert (
+            client.delete(
+                f"/api/career/{other['id']}/materials/{material_id}", headers=auth
+            ).status_code
+            == 422
+        )
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         data = client.get(f"/api/career/{identity}").json()
         assert len(data["stories"]) == 1 and len(data["tasks"]) == 2

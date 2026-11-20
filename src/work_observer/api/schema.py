@@ -11,8 +11,10 @@ def openapi(routes):
     from work_observer import __version__
     from work_observer.analysis.profiles import PersonalPreferences
     from work_observer.api.career import (
+        AttachMaterialInput,
         CareerGoalInput,
         CareerInput,
+        CareerMaterialInput,
         CareerResearchInput,
         CareerSearchQuery,
         ExperimentInput,
@@ -89,6 +91,8 @@ def openapi(routes):
         ("/api/career/{id}/prepare", "POST"): CareerResearchInput,
         ("/api/career/{id}/resume", "PATCH"): ResumeInput,
         ("/api/career/{id}/reuse", "POST"): ReuseInput,
+        ("/api/career/{id}/materials", "POST"): CareerMaterialInput,
+        ("/api/career/{id}/materials/attach", "POST"): AttachMaterialInput,
         ("/api/career/{id}/insights", "POST"): InsightInput,
         ("/api/career/{id}/insights/{insight_id}", "PATCH"): InsightInput,
         ("/api/career/{id}/experiments", "POST"): ExperimentInput,

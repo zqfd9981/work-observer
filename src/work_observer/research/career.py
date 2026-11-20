@@ -10,6 +10,7 @@ from work_observer.quality.reviews import QualityReviewService
 from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
+from work_observer.research.archived_sources import catalog as archive_catalog
 from work_observer.research.projects import ProjectService
 from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.text_match import match_text
@@ -62,6 +63,14 @@ QUESTIONS = {
         "不要在用户回答前替其回答，不生成行动计划，不安排额外调查。"
     ),
 }
+
+
+def personal_documents(career):
+    return {
+        career.get("resume_document_id"),
+        *(row["document_id"] for row in career["stories"]),
+        *(row.get("artifact_document_id") for row in career["tasks"]),
+    } - {None}
 
 
 class CareerService:
@@ -410,6 +419,15 @@ class CareerService:
             "stories": career["stories"],
             "tasks": career["tasks"],
             "insights": career.get("insights", []),
+            "document_ids": project.get("public_document_ids", []),
+            "materials": archive_catalog(
+                self.repository,
+                [
+                    key
+                    for key in (project.get("public_document_ids") or [])
+                    if key not in personal_documents(career)
+                ],
+            ),
             "requirements": requirements,
             "results": results,
             "usage": self.projects.usage(project),
@@ -436,6 +454,52 @@ class CareerService:
             project["public_document_ids"] = [
                 key for key in (project.get("public_document_ids") or []) if key != previous
             ] + [document["id"]]
+            self.projects._write(project)
+        return self.get(identity)
+
+    def add_material(self, identity, *, title, text, source_name=""):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再补充资料，输入仍保留。")
+            documents = list(project.get("public_document_ids") or [])
+            if len(documents) >= 20:
+                raise ValueError("当前目标已有20份材料，请先移除暂时不需要的资料。")
+            document = PublicDocumentService(
+                self.repository, self.raw_directory / "public"
+            ).archive_text(title, text, source_name)["document"]
+            project["public_document_ids"] = [*documents, document["id"]]
+            self.projects._write(project)
+        return self.get(identity)
+
+    def attach_material(self, identity, *, document_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再加入材料。")
+            documents = list(project.get("public_document_ids") or [])
+            if document_id not in documents:
+                if len(documents) >= 20:
+                    raise ValueError("当前目标已有20份材料，请先移除暂时不需要的资料。")
+                document = PublicDocumentService(
+                    self.repository, self.raw_directory / "public"
+                ).document(document_id)
+                if document["integrity"] != "verified":
+                    raise ValueError("这份归档资料暂时无法完整读取，请先检查原文。")
+                project["public_document_ids"] = [*documents, document_id]
+                self.projects._write(project)
+        return self.get(identity)
+
+    def remove_material(self, identity, document_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if document_id in personal_documents(project["career"]):
+                raise ValueError("这是简历、经历或作品材料，请在相应记录中调整。")
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再调整资料。")
+            project["public_document_ids"] = [
+                key for key in (project.get("public_document_ids") or []) if key != document_id
+            ]
             self.projects._write(project)
         return self.get(identity)
 
@@ -608,6 +672,7 @@ class CareerService:
         section="requirements",
         hypothesis_a="",
         hypothesis_b="",
+        material_id=None,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -626,6 +691,8 @@ class CareerService:
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
             user_question = question.strip() if kind == "ask" else ""
+            if material_id and material_id not in (project.get("public_document_ids") or []):
+                raise ValueError("这份资料已不在当前目标中，请重新选择或先加入资料。")
             if kind in {"answer", "followup", "ask"}:
                 sources = [
                     row
@@ -696,6 +763,12 @@ class CareerService:
                     "优先解释工作为什么这样做、取舍是什么、对求职者下一步有什么具体影响。"
                     "不泛讲学习路线，不给虚假匹配分，不安排额外调查；确有必要时最多建议一个验证动作。"
                 )
+                if material_id:
+                    question += (
+                        "本次用户已选定一份资料，优先按career_evidence.selected_material中的"
+                        "document_id读取归档正文，再结合岗位原文回答；不能把标题当证据，"
+                        "也不能把业务或技术说明推成所选岗位个人职责。"
+                    )
                 reply = previous["step_id"] if previous else None
             elif kind == "followup":
                 previous = next(
@@ -787,6 +860,7 @@ class CareerService:
                     "section": section if kind in {"ask", "challenge"} else None,
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
+                    "material_id": material_id if kind == "ask" else None,
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if kind in {"reflect", "challenge"} else None,
                     "created_at": now(),
@@ -795,6 +869,8 @@ class CareerService:
             if kind in {"reflect", "challenge"} and task_id:
                 project["steps"][-1]["career_task_id"] = task_id
             project["steps"][-1]["career_action"] = kind
+            if kind == "ask" and material_id:
+                project["steps"][-1]["career_material_id"] = material_id
             self.projects._write(project)
             return {"project_id": identity, "step_id": project["steps"][-1]["id"]}
 

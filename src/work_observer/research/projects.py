@@ -1472,6 +1472,12 @@ class ProjectService:
             if selected_task := step.get("career_task_id"):
                 observations = [row for row in observations if row["id"] == selected_task]
             context["career_evidence"] = {
+                "selected_material": {
+                    "document_id": step["career_material_id"],
+                    "notice": "用户明确选中的归档资料，需读取正文后回答；标题不是证据。",
+                }
+                if step.get("career_material_id")
+                else None,
                 "resume": {
                     "document_id": career["resume_document_id"],
                     "title": career["resume_title"],

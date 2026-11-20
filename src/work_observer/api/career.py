@@ -52,6 +52,18 @@ class ReuseInput(BaseModel):
     record_id: str = Field(pattern="^[a-f0-9]{32}$")
 
 
+class CareerMaterialInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=150)
+    text: str = Field(min_length=1, max_length=20_000)
+    source_name: str = Field(default="", max_length=500)
+
+
+class AttachMaterialInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    document_id: str = Field(pattern="^[a-f0-9]{32}$")
+
+
 class InsightInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     previous_view: str = Field(min_length=1, max_length=1500)
@@ -85,6 +97,7 @@ class CareerResearchInput(BaseModel):
     section: Literal["requirements", "stories", "experiments", "interview"] = "requirements"
     hypothesis_a: str = Field(default="", max_length=700)
     hypothesis_b: str = Field(default="", max_length=700)
+    material_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class TaskImport(BaseModel):
@@ -203,6 +216,31 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         data = ReuseInput.model_validate(await read_json(request))
         return change(lambda: service().reuse(request.path_params["id"], **data.model_dump()))
 
+    async def add_material(request):
+        if busy():
+            return response({"message": "请等本轮研究结束后再补充资料，输入仍保留。"}, 409)
+        data = CareerMaterialInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().add_material(request.path_params["id"], **data.model_dump()), 201
+        )
+
+    async def attach_material(request):
+        if busy():
+            return response({"message": "请等本轮研究结束后再加入材料。"}, 409)
+        data = AttachMaterialInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().attach_material(request.path_params["id"], **data.model_dump())
+        )
+
+    async def remove_material(request):
+        if busy():
+            return response({"message": "请等本轮研究结束后再调整资料。"}, 409)
+        return change(
+            lambda: service().remove_material(
+                request.path_params["id"], request.path_params["document_id"]
+            )
+        )
+
     async def remove_story(request):
         if busy():
             return response({"message": "请等当前研究结束后再移出经历。"}, 409)
@@ -238,6 +276,9 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}", get),
         Route("/api/career/{id}/search", search),
         Route("/api/career/{id}/reuse", reuse, methods=["POST"]),
+        Route("/api/career/{id}/materials", add_material, methods=["POST"]),
+        Route("/api/career/{id}/materials/attach", attach_material, methods=["POST"]),
+        Route("/api/career/{id}/materials/{document_id}", remove_material, methods=["DELETE"]),
         Route("/api/career/{id}", update_goal, methods=["PATCH"]),
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
         Route("/api/career/{id}/insights", insight, methods=["POST"]),
