@@ -22,6 +22,12 @@ vm.runInContext('state.serviceContract={paths:{"/api/research-history":{get:{}}}
  node("#research-history-query").value="新查询";
  context.data.offset=0;await vm.runInContext('loadResearchHistory(20)',context);
  assert.equal(new URLSearchParams(context.calls.at(-1).path.split("?")[1]).get("offset"),"0");
+ for(const [field,label] of [["work_map","工作地图（历史分析）"],["cognition_revision","认识修订（仍须核对）"],["application_plan","行动建议（不表示已执行）"]]){
+  context.data.items[0].match={field,excerpt:"<b>仅为历史线索</b>"};
+  await vm.runInContext('loadResearchHistory()',context);
+  const content=node("#research-history-list").innerHTML;
+  assert.ok(content.includes(label));assert.ok(content.includes("&lt;b&gt;仅为历史线索&lt;/b&gt;"));
+ }
  vm.runInContext('globalThis.pending=[];api=path=>new Promise(resolve=>pending.push(resolve))',context);
  node("#research-history-query").value="旧的私密查询";const old=vm.runInContext('loadResearchHistory()',context);
  node("#research-history-query").value="新的公开查询";const current=vm.runInContext('loadResearchHistory()',context);

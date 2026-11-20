@@ -64,6 +64,73 @@ def test_scope_titles_read_titles_gaps_and_literal_terms_are_distinguished(histo
     assert store.get(scope["id"]) == before
 
 
+def test_reopened_history_finds_map_boundaries_comparisons_and_revision_reasons(history_store):
+    store, _ = history_store
+    run = saved(
+        store,
+        work_map={
+            "scope_note": "合成两个岗位，不外推行业",
+            "work_types": [{"boundary": "提供尽调依据不代表拥有投决权"}],
+            "work_relations": [{"transfer_limit": "先核实组织授权才能迁移"}],
+            "comparisons": [{"transfer_conditions": "须分别验证回放机制与产品验证能力"}],
+            "unknowns": ["尚缺实际交付周期"],
+        },
+        cognition_revisions=[
+            {
+                "previous_statement": "内部培训与种子产品孵化都属于岗位任务",
+                "reason": "新判断只覆盖内部培训，孵化尚未重查",
+                "aspects": [{"reason": "产品市场匹配不是普通工具推广"}],
+            }
+        ],
+    )
+    before = deepcopy(store.get(run["id"]))
+    reopened = ResearchStore(store.path, store.namespace)
+    try:
+        for query, field in [
+            ("行业", "work_map"),
+            ("尽调 投决权", "work_map"),
+            ("组织授权", "work_map"),
+            ("回放机制 产品验证", "work_map"),
+            ("交付周期", "work_map"),
+            ("种子产品 内部培训", "cognition_revision"),
+            ("孵化 尚未重查", "cognition_revision"),
+            ("产品市场匹配", "cognition_revision"),
+        ]:
+            found = search_history(reopened, q=query)
+            assert found["total"] == 1, query
+            assert found["items"][0]["match"]["field"] == field
+        assert reopened.get(run["id"]) == before
+        reopened.invalidate_runs([run["id"]])
+        assert search_history(reopened, q="组织授权")["total"] == 0
+        assert search_history(reopened, q="产品市场匹配")["total"] == 0
+    finally:
+        reopened.close()
+
+
+def test_history_finds_application_deliverables_and_matches_original_glyphs(history_store):
+    store, _ = history_store
+    run = saved(
+        store,
+        application_plan={
+            "actions": [
+                {
+                    "title": "合成验证任务",
+                    "deliverable": "编写⼯作流回放记录",
+                    "completion_check": "由业务同事核对失败恢复过程",
+                    "assumptions": ["可取得脱敏样本"],
+                }
+            ],
+            "open_questions": ["是否允许访问评估集"],
+        },
+    )
+    for query in ["工作流", "业务同事", "脱敏样本", "评估集"]:
+        found = search_history(store, q=query)
+        assert found["total"] == 1
+        assert found["items"][0]["id"] == run["id"]
+        assert found["items"][0]["match"]["field"] == "application_plan"
+    assert "⼯作流" in search_history(store, q="工作流")["items"][0]["match"]["excerpt"]
+
+
 def test_erased_projects_runs_namespaces_and_private_checkpoint_are_not_returned(history_store):
     store, _ = history_store
     hidden = saved(store, question="合成已忘记内容")
@@ -89,13 +156,21 @@ def test_erased_projects_runs_namespaces_and_private_checkpoint_are_not_returned
 
 def test_http_cli_and_contract_share_paginated_history(history_store, tmp_path):
     store, db = history_store
-    run = saved(store, question="合成C++研究", claims=[{"text": "合成Agent结论"}])
+    run = saved(
+        store,
+        question="合成C++研究",
+        claims=[{"text": "合成Agent结论"}],
+        work_map={"comparisons": [{"transfer_conditions": "须验证故障回放再考虑迁移"}]},
+    )
     settings = Settings(database_path=db, raw_directory=tmp_path / "raw")
     with TestClient(
         create_app(settings, reports_dir=tmp_path / "reports"), base_url="http://127.0.0.1"
     ) as client:
         response = client.get("/api/research-history", params={"q": "AGENT", "limit": 1})
         assert response.status_code == 200 and response.json()["items"][0]["id"] == run["id"]
+        found = client.get("/api/research-history", params={"q": "故障回放"}).json()
+        assert found["items"][0]["match"]["field"] == "work_map"
+        assert found["items"][0]["id"] == run["id"]
         assert isinstance(client.get("/api/research").json(), list)
         params = client.get("/api/openapi.json").json()["paths"]["/api/research-history"]["get"][
             "parameters"

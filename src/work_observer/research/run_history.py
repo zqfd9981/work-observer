@@ -4,12 +4,21 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from work_observer.research.relevance import map_content
+from work_observer.text_match import match_text
+
 
 class HistoryQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     q: str = Field(default="", max_length=200)
     limit: int = Field(default=20, ge=1, le=50)
     offset: int = Field(default=0, ge=0)
+
+
+def _texts(row, names):
+    for name in names:
+        value = row.get(name, "")
+        yield from value if isinstance(value, list) else [value]
 
 
 def _fields(record):
@@ -19,6 +28,29 @@ def _fields(record):
         question = "研究记录"
     fields = [("question", question)]
     fields.extend(("claim", row.get("text", "")) for row in result.get("claims", []))
+    work_map = result.get("work_map") or {}
+    fields.extend(("work_map", text) for text in _texts(work_map, ("scope_note", "unknowns")))
+    fields.extend(("work_map", text) for _, _, _, text in map_content(result))
+    for revision in result.get("cognition_revisions", []):
+        fields.extend(
+            ("cognition_revision", text)
+            for text in _texts(revision, ("previous_statement", "new_statements", "reason"))
+        )
+        for aspect in revision.get("aspects", []):
+            fields.extend(
+                ("cognition_revision", text)
+                for text in _texts(aspect, ("previous_excerpt", "new_statements", "reason"))
+            )
+    plan = result.get("application_plan") or {}
+    for action in plan.get("actions", []):
+        fields.extend(
+            ("application_plan", text)
+            for text in _texts(
+                action,
+                ("title", "task_or_ability", "deliverable", "completion_check", "assumptions"),
+            )
+        )
+    fields.extend(("application_plan", text) for text in plan.get("open_questions", []))
     fields.extend(("read_source", row.get("title", "")) for row in result.get("evidence", []))
     scope = result.get("scope") or {}
     for row in [*scope.get("jobs", []), *scope.get("public_document_titles", [])]:
@@ -28,7 +60,7 @@ def _fields(record):
 
 
 def _excerpt(text, terms):
-    folded = text.casefold()
+    folded = match_text(text)
     position = min((folded.find(term) for term in terms if term in folded), default=0)
     start = max(0, position - 60)
     return (
@@ -40,7 +72,7 @@ def _excerpt(text, terms):
 
 def search_history(store, *, q="", limit=20, offset=0):
     query = HistoryQuery(q=q, limit=limit, offset=offset)
-    terms = query.q.casefold().split()
+    terms = match_text(query.q).split()
     total, items = 0, []
     with store.lock:
         erased_projects = set()
@@ -66,14 +98,18 @@ def search_history(store, *, q="", limit=20, offset=0):
             if record.get("state") == "invalidated" or project_id in erased_projects:
                 continue
             fields = _fields(record)
-            searchable = "\n".join(text for _, text in fields).casefold()
+            searchable = match_text("\n".join(text for _, text in fields))
             if not all(term in searchable for term in terms):
                 continue
             total += 1
             if not query.offset < total <= query.offset + query.limit:
                 continue
             match = next(
-                ((kind, text) for kind, text in fields if any(t in text.casefold() for t in terms)),
+                (
+                    (kind, text)
+                    for kind, text in fields
+                    if any(t in match_text(text) for t in terms)
+                ),
                 None,
             )
             items.append(
@@ -97,7 +133,7 @@ def search_history(store, *, q="", limit=20, offset=0):
         "limit": query.limit,
         "offset": query.offset,
         "notice": (
-            "搜索已保留的问题、判断、缺口和资料标题；多个词同时匹配。"
+            "搜索已保留的问题、判断、工作地图、认识修订、行动建议、缺口和资料标题；多个词同时匹配。"
             "范围含某资料不表示已读全文，历史匹配不表示结论已核对或仍有效。"
         ),
     }

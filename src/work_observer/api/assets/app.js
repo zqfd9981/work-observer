@@ -834,7 +834,7 @@ async function loadResearchHistory(offset=0) {
     $("#research-history-count").textContent=supported?`共 ${data.total} 条研究${data.total?" · 显示 "+(data.offset+1)+"～"+Math.min(data.offset+data.limit,data.total):""}`:"当前服务仅能列出最近的研究，尚不支持历史搜索。";
     $("#research-history-prev").disabled=!supported||data.offset===0;
     $("#research-history-next").disabled=!supported||data.offset+data.limit>=data.total;
-    const fields={question:"问题",claim:"回答判断",gap:"资料缺口",read_source:"已读片段的资料标题",scope_source:"研究范围内的资料标题（不表示已读）"};
+    const fields={question:"问题",claim:"回答判断",work_map:"工作地图（历史分析）",cognition_revision:"认识修订（仍须核对）",application_plan:"行动建议（不表示已执行）",gap:"资料缺口",read_source:"已读片段的资料标题",scope_source:"研究范围内的资料标题（不表示已读）"};
     root.innerHTML=runs.length?runs.map(run=>`<div class="panel report-row"><div><h3>${e(run.question.slice(0,160))}${run.question.length>160?"…":""}</h3><p>${e(when(run.created_at))} · ${e(runLabels[run.state]||run.state)}${run.status?" · "+e(statusLabels[run.status]||run.status):""}</p>${run.match?`<p class="form-note">匹配${e(fields[run.match.field]||"历史内容")}：${e(run.match.excerpt)}</p>`:""}</div><button class="secondary small" data-open-run="${e(run.id)}">${run.state==="running"?"查看进度":"打开研究"} ↗</button></div>`).join(""):empty(query?"没有找到匹配的研究":"还没有研究记录",query?"可以换个词，或清空条件查看全部保留记录。":"提交问题后，过程会自动留在这里。");
   }catch(error){if(request===researchHistory.request){root.innerHTML=errorBox(error);$("#research-history-count").textContent="";}}
 }
