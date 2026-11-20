@@ -12,7 +12,9 @@ VERSION = "work-map-v3-work-relations"
 REVISION_POLICY = """
 先核对旧判断的主体、适用材料、任务/交付物、责任边界和资格性质，再写本轮回答。
 每条revision用aspects逐项对照旧判断中与本题有关的不同内容；previous_excerpt逐字摘取旧判断，
-不能由你改写原话。每项单独说明保留、修订、撤回或未解决，连接真正表达该内容的新判断与本轮原文。
+只能从所指derived_claims.text复制，不能用JD原文、用户问题或自己改写的句子代替。
+只对本题需要对照的旧判断写revision；其余旧判断不必逐条生成记录。
+每项单独说明保留、修订、撤回或未解决，连接真正表达该内容的新判断与本轮原文。
 新判断只重述了旧判断的一部分时，不能据此声称整条保留；旧判断其他内容须补查，
 或用unresolved项明确哪些未复查及原因，整条decision相应使用unresolved或revise。
 旧判断已有followup_decisions时，按先旧后新的顺序核对最后一次处理及其逐项内容；
@@ -37,8 +39,10 @@ finish_research同时提交claims、gaps、work_map和revisions。work_map.versi
 每个分组写问题、任务、交付物、边界/反例与下一步验证。work_relations按本题需要连接business业务问题、
 task任务、deliverable交付物、responsibility责任、ability能力、tool工具；两端用source_claim_index、
 target_claim_index定位本次claims，程序保留完整原判断及category，不再重复抄写或缩写节点。
-写关系方向、
-为什么相关以及适用/迁移边界。predicate可为supports支撑、requires需要、produces产出、contradicts反驳；
+先确定要解释的同一工作线，在claims中分别写具体任务与其交付物，再连接对应两端。
+内部工具建设不能因同属一个岗位就连到产品孵化MVP；综合比较整句不能充当其中一方的交付物节点。
+若现有判断无法组成准确关系，可减少关系、留unknowns，不为完成比较而凑连线。
+写关系方向、为什么相关以及适用/迁移边界。predicate可为supports支撑、requires需要、produces产出、contradicts反驳；
 requires表示本条工作关系的条件，不自动表示招聘必备资格，任职要求强度仍以claims.requirement为准。
 不要强行凑齐六维或把工具提及改写为个人能力。分组claim_indices和关系两端都是本次claims零起始下标，必须实际存在。
 解释工作时先串联有依据的业务问题、实际任务与交付物，再说明能力/工具如何支持该任务，
@@ -201,7 +205,13 @@ def validate_revisions(answer, evidence, context):
         aspects = []
         for aspect in revision.aspects:
             if aspect.previous_excerpt not in old["text"]:
-                raise ValueError("逐项对照必须逐字摘取所指旧判断，不能改写旧原话")
+                raise ValueError(
+                    "逐项对照必须逐字摘取所指旧判断，不能改写旧原话。"
+                    f"本项指向旧判断 {revision.previous_claim_index}（零起始下标），"
+                    f"其完整原话是：{old['text']}\n"
+                    f"你提交的摘录是：{aspect.previous_excerpt}\n"
+                    "请从这条旧判断原话复制要对照的片段；JD原文与用户问题不能代替旧判断。"
+                )
             if not set(aspect.new_claim_indices) <= set(revision.new_claim_indices):
                 raise ValueError("逐项对照只能指向本条修正所列的新判断")
             if not set(aspect.evidence_ids) <= set(revision.evidence_ids):
