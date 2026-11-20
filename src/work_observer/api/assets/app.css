@@ -103,3 +103,15 @@
 .career-comparison-quote{font-size:12px;margin:10px 0}
 .career-comparison-quote blockquote{white-space:pre-wrap;background:#f3f6ee;border-left:2px solid #95aa89;padding:12px;margin:12px 0;overflow-wrap:anywhere}
 @media(max-width:800px){.career-research-pair{grid-template-columns:1fr}.career-question-comparison{padding:12px}.career-research-column{padding:14px}}
+
+.source-reader-toolbar{padding:14px;background:#f3f6ef;border-radius:10px;margin:14px 0}
+.source-reader-toolbar label{display:block;font-size:13px;color:#49624c}
+.source-reader-toolbar input{width:100%;margin-top:6px}
+.source-reader-toolbar .result-actions{margin-top:10px;flex-wrap:wrap}
+.source-reader-toolbar [data-reader-status]{margin:10px 0 0}
+.source-reader-text{max-height:52vh;overflow:auto;padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #dfe6da;border-radius:10px;scroll-margin-top:14px}
+.source-reader-text mark{border-radius:3px;padding:1px 0;color:inherit}
+.source-reader-text .source-citation-hit{background:#dcebd6;outline:1px solid #adc39d}
+.source-reader-text .source-search-hit{background:#ffe49a;outline:1px solid #d9ab3e}
+.source-reader-notice{padding:10px 12px;background:#edf4e7;border-radius:8px}
+@media(max-width:600px){.source-reader-text{padding:12px;max-height:48vh}.source-reader-toolbar{padding:12px}}

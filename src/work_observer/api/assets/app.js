@@ -230,24 +230,103 @@ async function showCompany(id) {
   } catch (error) { $("#detail-content").innerHTML = errorBox(error); }
 }
 
-async function showSource(id) {
-  $("#source-content").innerHTML = `<div class="empty">正在核对资料…</div>`;
+const sourceReaders = new Map();
+let sourceReaderSerial = 0;
+
+function sourceContextButton(source, label="核对引用与前后文 ↗", query="") {
+  const focus={start:source.start,end:source.end,quote:source.quote,snapshot_id:source.snapshot_id,query:query.trim().split(/\s+/)[0]||source.retrieval?.matched_terms?.[0]||""};
+  const data=source.public_document_id?`data-public-source="${e(source.public_document_id)}"`:source.document_id?`data-source="${e(source.document_id)}"`:"";
+  return data?`<button type="button" class="text-button" ${data} data-reader-focus="${e(JSON.stringify(focus))}">${e(label)}</button>`:"";
+}
+function sourceFocus(element) {
+  try{return JSON.parse(element.dataset.readerFocus||"null");}catch{return null;}
+}
+function renderSourceReader(text, title, focus=null) {
+  text=String(text||"");const chars=Array.from(text),id="source-reader-"+(++sourceReaderSerial);
+  let citation=null,notice="";
+  if(focus?.quote){
+    const start=Number(focus.start),end=Number(focus.end);
+    if(Number.isInteger(start)&&Number.isInteger(end)&&start>=0&&end>start&&end<=chars.length&&chars.slice(start,end).join("")===focus.quote){
+      citation={start,end};notice="已定位本次引用，可核对前后文。";
+    }else{
+      const found=text.indexOf(focus.quote);
+      if(found>=0&&text.indexOf(focus.quote,found+1)<0){citation={start:Array.from(text.slice(0,found)).length,end:Array.from(text.slice(0,found+focus.quote.length)).length};notice="已按引用文字定位，请结合前后文核对。";}
+      else notice=found<0?"这段引用未在当前正文中找到，请核对来源或搜索原文。":"这段引用在正文中多次出现，位置未能确认；请搜索并核对上下文。";
+    }
+  }
+  const offsets=new Map();let utf16=0;chars.forEach((char,index)=>{offsets.set(utf16,index);utf16+=char.length;});offsets.set(text.length,chars.length);
+  const reader={id,text,chars,offsets,citation,notice,matches:[],index:0};sourceReaders.set(id,reader);
+  const query=String(focus?.query||"");searchSourceReader(reader,query);if(citation){const near=reader.matches.findIndex(match=>match.start>=citation.start&&match.end<=citation.end);if(near>=0)reader.index=near;}
+  return `<section class="detail-section source-reader" data-source-reader="${id}"><h3>${e(title)}</h3>${notice?`<p class="form-note source-reader-notice">${e(notice)}</p>`:""}<div class="source-reader-toolbar"><label>在这份原文里查找<input type="search" data-reader-query value="${e(query)}" maxlength="200" placeholder="输入字词，如：加分、验收、并发"></label><div class="result-actions"><button type="button" class="secondary small" data-reader-move="-1" ${reader.matches.length?"":"disabled"}>上一处</button><button type="button" class="secondary small" data-reader-move="1" ${reader.matches.length?"":"disabled"}>下一处</button>${citation?'<button type="button" class="text-button" data-reader-citation>回到本次引用</button>':""}</div><p class="form-note" data-reader-status role="status">${reader.matches.length?`${reader.index+1} / ${reader.matches.length} 处匹配`:"查找只在本机保存的全文中进行。"}</p></div><div class="body-text source-reader-text" tabindex="0" aria-label="可滚动的原文正文">${sourceReaderText(reader)}</div></section>`;
+}
+function sourceReaderText(reader) {
+  const current=reader.matches[reader.index],citation=reader.citation;
+  const boundaries=[...new Set([0,reader.chars.length,...[current,citation].filter(Boolean).flatMap(row=>[row.start,row.end])])].sort((a,b)=>a-b);
+  return boundaries.slice(0,-1).map((start,index)=>{
+    const end=boundaries[index+1],hit=current&&start>=current.start&&end<=current.end,cited=citation&&start>=citation.start&&end<=citation.end;
+    const value=e(reader.chars.slice(start,end).join(""));
+    return hit||cited?`<mark class="${[hit?"source-search-hit":"",cited?"source-citation-hit":""].filter(Boolean).join(" ")}" ${hit&&start===current.start?"data-reader-current":""} ${cited&&start===citation.start?"data-reader-anchor":""}>${value}</mark>`:value;
+  }).join("");
+}
+function scrollSourceReader(root, selector) {
+  const target=$(selector,root);if(target)target.scrollIntoView({block:"center",behavior:"instant"});
+}
+function focusSourceReaders() {
+  const target=$("#source-content [data-reader-current]")||$("#source-content [data-reader-anchor]");if(target)target.scrollIntoView({block:"center",behavior:"instant"});
+}
+document.addEventListener("input",event=>{
+  if(!event.target.matches?.("[data-reader-query]"))return;
+  const root=event.target.closest("[data-source-reader]"),reader=sourceReaders.get(root.dataset.sourceReader),query=event.target.value;
+  if(!reader)return;
+  searchSourceReader(reader,query);
+  reader.index=0;updateSourceReader(root,reader);
+});
+function searchSourceReader(reader,query){
+  const escaped=query.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  reader.matches=query?[...reader.text.matchAll(new RegExp(escaped,"giu"))].map(match=>({start:reader.offsets.get(match.index),end:reader.offsets.get(match.index+match[0].length)})):[];
+}
+function updateSourceReader(root,reader){
+  $(".source-reader-text",root).innerHTML=sourceReaderText(reader);
+  $("[data-reader-status]",root).textContent=reader.matches.length?`${reader.index+1} / ${reader.matches.length} 处匹配`:$("[data-reader-query]",root).value?"这份原文中没有找到该字词。":"查找只在本机保存的全文中进行。";
+  for(const button of $$("[data-reader-move]",root))button.disabled=!reader.matches.length;
+  scrollSourceReader(root,"[data-reader-current]");
+}
+document.addEventListener("click",event=>{
+  const button=event.target.closest("[data-reader-move],[data-reader-citation]");if(!button)return;
+  const root=button.closest("[data-source-reader]"),reader=sourceReaders.get(root.dataset.sourceReader);if(!reader)return;
+  if(button.hasAttribute("data-reader-citation")){scrollSourceReader(root,"[data-reader-anchor]");return;}
+  if(reader.matches.length){reader.index=(reader.index+Number(button.dataset.readerMove)+reader.matches.length)%reader.matches.length;updateSourceReader(root,reader);}
+});
+document.addEventListener("keydown",event=>{
+  if(event.key!=="Enter"||!event.target.matches?.("[data-reader-query]"))return;
+  event.preventDefault();const root=event.target.closest("[data-source-reader]");$(event.shiftKey?'[data-reader-move="-1"]':'[data-reader-move="1"]',root).click();
+});
+
+async function showSource(id, focus=null) {
+  const request=state.publicSourceRequest=(state.publicSourceRequest||0)+1;
+  sourceReaders.clear();$("#source-content").innerHTML = `<div class="empty">正在读取保存的原文…</div>`;
   openDialog("source-dialog");
   try {
-    const data = await api("sources/" + encodeURIComponent(id));
-    $("#source-content").innerHTML = `<h2>原始资料核对</h2>${data.import_asset_id ? `<button class="secondary" data-import-image="${e(data.import_asset_id)}">核对人工来源的截图原图 ↗</button>` : ""}<p class="form-note">通过文件指纹检查已存档资料；不重新访问招聘网站。</p>${badge(data.integrity === "verified" ? "原始文件完整性已核对" : "原始文件缺失或已改变",data.integrity === "verified" ? "" : "error")}<dl class="detail-grid">${detailData("来源类型",sourceLabel(data))}${detailData("资料取得",when(data.observed_at))}${detailData("本地归档",when(data.archived_at))}${detailData("来源首次获取",when(data.source_fetched_at))}</dl><div class="detail-time">文档编号：${e(data.document_id)}<br>文件指纹：${e(data.sha256)}</div>${data.related_job_id ? `<p class="form-note">这份人工资料关联了一个原岗位：<button class="text-button" data-job="${e(data.related_job_id)}">查看原岗位 ↗</button></p>` : ""}${data.versions.map(item=>`<section class="detail-section"><h3>${e(item.payload.title || "岗位内容版本")} · ${item.kind === "detail" ? "详情" : "摘要"}</h3><div class="detail-time">内容版本：${e(item.snapshot_id)}</div><div class="body-text">${e(item.payload.description || [item.payload.title,item.payload.company,item.payload.salary,item.payload.city].filter(Boolean).join(" · "))}</div></section>`).join("")}`;
-  } catch (error) { $("#source-content").innerHTML = errorBox(error); }
+    const data = await api("sources/" + encodeURIComponent(id));if(request!==state.publicSourceRequest)return;
+    const metadata=`${badge(data.integrity === "verified" ? "原始文件完整性已核对" : "原始文件缺失或已改变",data.integrity === "verified" ? "" : "error")}<dl class="detail-grid">${detailData("来源类型",sourceLabel(data))}${detailData("资料取得",when(data.observed_at))}${detailData("本地归档",when(data.archived_at))}${detailData("来源首次获取",when(data.source_fetched_at))}</dl><div class="detail-time">文档编号：${e(data.document_id)}<br>文件指纹：${e(data.sha256)}</div>`;
+    $("#source-content").innerHTML = `<h2>已保存的岗位原文</h2>${data.import_asset_id ? `<button class="secondary" data-import-image="${e(data.import_asset_id)}">核对人工来源的截图原图 ↗</button>` : ""}<p class="form-note">正在读取本机已保存的资料，不重新访问招聘网站。</p>${state.page==="career"?`<details><summary>查看来源记录</summary>${metadata}</details>`:metadata}${data.related_job_id ? `<p class="form-note">这份人工资料关联了一个原岗位：<button class="text-button" data-job="${e(data.related_job_id)}">查看原岗位 ↗</button></p>` : ""}${data.versions.map(item=>renderSourceReader(item.payload.description || [item.payload.title,item.payload.company,item.payload.salary,item.payload.city].filter(Boolean).join(" · "),(item.payload.title || "岗位资料")+" · "+(item.kind==="detail"?"正文":"摘要"),focus?.snapshot_id&&focus.snapshot_id!==item.snapshot_id?null:focus)).join("")}`;
+    focusSourceReaders();
+  } catch (error) {if(request===state.publicSourceRequest)$("#source-content").innerHTML = errorBox(error);}
 }
 
-async function showPublicSource(id) {
+async function showPublicSource(id, focus=null) {
   const request=state.publicSourceRequest=(state.publicSourceRequest||0)+1;
-  $("#source-content").innerHTML = `<div class="empty">正在核对公开资料归档…</div>`;
+  sourceReaders.clear();$("#source-content").innerHTML = `<div class="empty">正在读取保存的资料…</div>`;
   openDialog("source-dialog");
   try {
     const data=await api("public-documents/"+encodeURIComponent(id));
     if(request!==state.publicSourceRequest)return;
     state.currentPublicDocument=data;
-    $("#source-content").innerHTML=`<h2>${e(data.title)}</h2>${badge(data.integrity === "verified" ? "归档文件指纹已核对" : "归档文件缺失或已变化",data.integrity === "verified" ? "" : "amber")} ${badge(data.evidence_kind==="work_material"?"粘贴工作资料":"公开网页","muted")}<p class="form-note">${e(data.source_note || "已归档公开网页正文，不能直接证明岗位个人职责。")}</p><dl class="detail-grid">${detailData(data.evidence_kind==="work_material"?"来源说明":"出处",data.publisher)}${detailData(data.evidence_kind==="work_material"?"保存时间":"取得时间",when(data.observed_at))}${detailData("正文长度",data.full_text_length)}${detailData("来源发布时间",data.source_published_at ? when(data.source_published_at) : "未知")}</dl>${safeURL(data.final_url || data.url) ? `<a class="secondary button-link" href="${e(safeURL(data.final_url || data.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}${renderPublicVersionTools(data)}<section class="detail-section"><h3>归档全文（纯文本）</h3><div class="body-text">${e(data.text)}</div></section>`;
+    const searchLead=["search_answer","search_excerpt"].includes(data.evidence_kind);
+    const kind=searchLead?"搜索线索，未核网页正文":data.evidence_kind==="work_material"?"用户提供资料":"公开网页正文";
+    const metadata=`${badge(data.integrity === "verified" ? "归档文件完整" : "归档文件缺失或已变化",data.integrity === "verified" ? "" : "amber")}<dl class="detail-grid">${detailData(data.evidence_kind==="work_material"?"来源说明":"出处",data.publisher)}${detailData("保存时间",when(data.observed_at))}${detailData("正文长度",data.full_text_length)}${detailData("来源发布时间",data.source_published_at ? when(data.source_published_at) : "未知")}</dl>`;
+    $("#source-content").innerHTML=`<h2>${e(data.title)}</h2>${badge(kind,"muted")}<p class="form-note">${e(data.source_note || "已保存资料，具体判断需结合正文核对。")}</p>${state.page==="career"?`<details><summary>查看来源记录</summary>${metadata}</details>`:metadata}${safeURL(data.final_url || data.url) ? `<a class="secondary button-link" href="${e(safeURL(data.final_url || data.url))}" target="_blank" rel="noopener noreferrer">打开公开出处 ↗</a>` : ""}${state.page==="career"?"":renderPublicVersionTools(data)}${renderSourceReader(data.text,searchLead?"保存的搜索线索（未核网页正文）":"已保存的完整文字",focus)}`;
+    focusSourceReaders();
   } catch (error) {if(request===state.publicSourceRequest)$("#source-content").innerHTML=errorBox(error);}
 }
 
@@ -3074,8 +3153,8 @@ document.addEventListener("click",async event=>{
   if (element.dataset.compareHistory) await compareJobHistory(element.dataset.compareHistory);
   if (element.dataset.profile) await showProfile(element.dataset.profile);
   if (element.dataset.analyzeProfile) await analyzeProfile(element.dataset.analyzeProfile,element.dataset.offline === "true");
-  if (element.dataset.source) await showSource(element.dataset.source);
-  if (element.dataset.publicSource) await showPublicSource(element.dataset.publicSource);
+  if (element.dataset.source) await showSource(element.dataset.source,sourceFocus(element));
+  if (element.dataset.publicSource) await showPublicSource(element.dataset.publicSource,sourceFocus(element));
   if (element.dataset.importImage) showArchivedImage(element.dataset.importImage);
   if (element.dataset.supplement) showImport(element.dataset.supplement);
   if (element.dataset.addCompare) {
