@@ -20,6 +20,7 @@ const titles = {jobs:"岗位资料", companies:"公司档案", research:"研究�
 let toastTimer, pollTimer;
 const conversation = {id:null, timer:null, reports:new Map(), drafts:new Map(), notes:[], knowledge:[], notesFor:null, renderedId:null};
 Object.assign(reasonLabels,{
+  STEP_NOT_READY:"这一步目前不可执行。请刷新研究进度，核对是否仍在等待前置调查。",
   RESEARCH_HISTORY_TIME_OUT_OF_SCOPE:"历史读取时点必须明确，且不能晚于本轮研究开始。",
   INVALID_HISTORICAL_JOB_WINDOW:"历史正文读取位置无效，本次没有取得新证据。",
   EVIDENCE_DOCUMENT_INTEGRITY_FAILED:"该版本原始文档已缺失或改变，不能用现文替代历史依据。",
@@ -1316,7 +1317,10 @@ function captureConversationDraft() {
   const id=conversation.renderedId;
   if(!id||!$("#conversation-question")||conversation.project?.id!==id)return;
   const value=selector=>$(selector)?.value||"";
+  const turns=$("#conversation-turns")?$$("[data-conversation-step]",$("#conversation-turns")):[];
   conversation.drafts.set(id,{
+    openTurns:turns.filter(turn=>turn.open).map(turn=>turn.dataset.conversationStep),
+    knownTurns:turns.map(turn=>turn.dataset.conversationStep),
     question:value("#conversation-question"),context:value("#conversation-context-content"),
     publicUrl:value("#conversation-public-url"),contextKind:value("#conversation-context [name=kind]")||"preference",
     contextOpen:$("#conversation-context")?.closest?.("details")?.open||false,
@@ -1386,7 +1390,8 @@ async function openResearchConversation(id, navigate=true) {
   const turns=$("#conversation-turns");
   for(const step of project.steps){
     const item=document.createElement("details");item.className="detail-section";
-    item.open=step===project.steps.at(-1);
+    item.open=savedDraft.knownTurns?.includes(step.id)?savedDraft.openTurns.includes(step.id):step===project.steps.at(-1);
+    item.dataset.conversationStep=step.id;
     item.dataset.conversationRun=step.run_id||"";
     item.innerHTML=`<summary>${e(step.question)} <small>${e(projectStepOriginLabel(step))}</small></summary><div></div>`;turns.append(item);
     const target=item.querySelector("div");
@@ -1396,6 +1401,7 @@ async function openResearchConversation(id, navigate=true) {
       if(questions.length)target.insertAdjacentHTML("beforeend",`<div class="panel"><h4>沿着这些疑问继续查</h4>${questions.map(text=>`<button class="secondary small" data-conversation-followup="${e(text)}" data-reply-step="${e(step.id)}">${e(text)}</button>`).join(" ")}</div>`);
     }
     else target.innerHTML=`<p class="form-note">${({queued:"等待查阅资料",running:"正在调查…",interrupted:"已暂停，进度已保留",failed:"本轮未完成，可查看全部调查记录中的原因"})[step.state]||"资料与进度已保留"}</p>`;
+    target.insertAdjacentHTML("beforeend",renderStepContinuation(project,step));
   }
   renderConversationReply();
   if(active){const input=$("#"+active);input.focus();input.setSelectionRange(...selection);}
@@ -1412,6 +1418,34 @@ document.addEventListener("submit",async event=>{
 function defaultConversationReply(project) {
   return project.steps?.slice().reverse().find(step=>!["queued","running","interrupted"].includes(step.state))?.id || null;
 }
+
+const continuationReasons={calls_exhausted:"本轮调用次数已用完，保留原记录；继续按钮不会重新开放额度。",time_exhausted:"本轮调查时间已用完，原进度和消耗保留。",no_checkpoint:"没有可继续的检查点，已有原文和记录仍保留。",scope_changed:"范围或目标已调整，需在当前范围安排新一轮核实。",material_changed:"原资料或背景已改变，请按当前资料补查，不沿旧快照继续。",answer_completed:"本轮已有生成的回答，可直接查看。",unavailable:"相关记录已不可继续。"};
+function renderStepContinuation(project,step) {
+  const continuation=step.continuation;if(!continuation)return "";
+  if(!continuation.available)return `<p class="form-note">${e(continuationReasons[continuation.reason]||"当前不能继续原检查点。")}</p>`;
+  return `<section class="research-context"><p>本轮仍有至多 ${e(continuation.remaining_calls)} 次调用、${e(continuation.remaining_seconds)} 秒，可沿原检查点接着调查。保持原范围与总预算。</p><button type="button" class="secondary" data-continue-conversation-step="${e(step.id)}" ${project.worker_running||conversationSending.has(project.id)?"disabled":""}>继续本轮剩余调查 ↗</button></section>`;
+}
+async function continueConversationStep(stepId) {
+  const id=conversation.id;
+  if(conversationSending.has(id))throw new Error("本研究的请求正在处理，请稍候。");
+  conversationSending.add(id);
+  try {
+    const project=await api("projects/"+encodeURIComponent(id));
+    if(conversation.id!==id)throw new Error("研究已切换，未启动原调查。");
+    const step=project.steps.find(row=>row.id===stepId);
+    if(project.worker_running)throw new Error("本研究正在调查，请等待进度。");
+    if(!step?.continuation?.available)throw new Error(continuationReasons[step?.continuation?.reason]||"本轮当前无法沿原检查点继续。");
+    if(step.state==="failed")await api("projects/"+id+"/steps/"+stepId+"/review",{method:"POST",body:JSON.stringify({revision:project.revision,action:"retry",note:"在研究工作台明确继续原检查点；不改变原范围、原预算或质量状态。"})});
+    await api("projects/"+id+"/run",{method:"POST",body:JSON.stringify({step_id:stepId})});
+    if(conversation.id===id)await openResearchConversation(id,false);
+  } finally {conversationSending.delete(id);}
+}
+document.addEventListener("click",async event=>{
+  const button=event.target.closest("[data-continue-conversation-step]");if(!button||button.disabled)return;
+  button.disabled=true;
+  try{await continueConversationStep(button.dataset.continueConversationStep);}catch(error){notify(error.message,true);}
+  finally{if(button.isConnected)button.disabled=false;}
+});
 
 const APPLICATION_PREFIX="个人应用背景（用户自述，结构化）：\n";
 const APPLICATION_UNAVAILABLE="已保存背景目前不可用于研究。请在知识与偏好查看当前状态或有效期；当前输入保留。";

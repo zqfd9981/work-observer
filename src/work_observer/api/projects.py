@@ -73,6 +73,11 @@ class StepReview(BaseModel):
     note: str = Field(min_length=1, max_length=1000)
 
 
+class ProjectRunInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
 class StepRefresh(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
@@ -156,6 +161,7 @@ def project_routes(
     def detail(identity):
         from work_observer.quality.reviews import QualityReviewService
         from work_observer.research.project_feedback import repair_preview
+        from work_observer.research.projects import step_continuation
 
         svc = service()
         project = svc.get(identity)
@@ -165,14 +171,18 @@ def project_routes(
             if step.get("run_id"):
                 run = store().get(step["run_id"])
                 result = run.get("result")
+                checkpoint = (
+                    store().load_checkpoint(step["run_id"])
+                    if step["state"] in {"failed", "interrupted"}
+                    or (result or {}).get("status") in {"incomplete", "failed"}
+                    else None
+                )
                 if result and run["state"] != "invalidated":
                     from work_observer.research.answer_feedback import with_submission_feedback
 
                     result = with_submission_feedback(
                         result,
-                        store().load_checkpoint(step["run_id"])
-                        if result.get("status") in {"incomplete", "failed"}
-                        else None,
+                        checkpoint if result.get("status") in {"incomplete", "failed"} else None,
                     )
                 step["result"] = (
                     {**result, "audit": audit_result(result, repository())} if result else None
@@ -188,6 +198,14 @@ def project_routes(
                         else {"status": "pending"}
                     )
                 step["run_state"] = run["state"]
+                if continuation := step_continuation(
+                    project,
+                    step,
+                    run,
+                    checkpoint,
+                    (step.get("result") or {}).get("audit", {}),
+                ):
+                    step["continuation"] = continuation
         from work_observer.research.projects import upstream_revision_notices
 
         findings = []
@@ -324,7 +342,19 @@ def project_routes(
 
     async def run(request):
         identity = request.path_params["id"]
-        service().get(identity)
+        data = ProjectRunInput.model_validate(
+            await read_json(request) if await request.body() else {}
+        )
+        project = service().get(identity)
+        if data.step_id:
+            completed = completed_steps(project, service().rejected_steps(project))
+            if data.step_id not in {
+                step["id"]
+                for step in project["steps"]
+                if step["state"] in {"queued", "interrupted"}
+                and set(step["depends_on"]) <= completed
+            }:
+                raise ProbeError("STEP_NOT_READY")
         if busy():
             return response(
                 {"error_code": "RESEARCH_BUSY", "message": "已有任务正在进行，请等待或先暂停。"},
@@ -346,7 +376,15 @@ def project_routes(
                 409,
             )
         tasks["project:" + identity] = asyncio.create_task(
-            execute_project(service(), identity, repository(), settings, model=model, max_steps=3)
+            execute_project(
+                service(),
+                identity,
+                repository(),
+                settings,
+                model=model,
+                max_steps=3,
+                preferred_step_id=data.step_id,
+            )
         )
         return response({"id": identity, "state": "running", "max_steps": 3}, 202)
 

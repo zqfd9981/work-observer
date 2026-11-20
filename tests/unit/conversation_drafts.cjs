@@ -2,7 +2,7 @@
 const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
 const nodes=new Map(),storage=new Map(),calls=[];
 const node=key=>{if(!nodes.has(key))nodes.set(key,{value:"",checked:false,disabled:false,innerHTML:"",open:false,children:[],dataset:{},
-  append(child){this.children.push(child);},focus(){},scrollIntoView(){},setSelectionRange(){},replaceChildren(){this.innerHTML="";},
+  append(child){this.children.push(child);},insertAdjacentHTML(position,html){this.innerHTML+=html;},focus(){},scrollIntoView(){},setSelectionRange(){},replaceChildren(){this.innerHTML="";},
   closest(){return node(key+"-panel");},querySelector:node,querySelectorAll:()=>[],addEventListener(){},classList:{toggle(){},add(){},remove(){}}});return nodes.get(key);};
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],createElement:node,addEventListener(){}},window:{addEventListener(){}},
   location:{hash:"#research"},sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
@@ -30,6 +30,7 @@ const clearFields=()=>{for(const id of textFields)node("#"+id).value="";node("#c
  node("#conversation-offline").checked=true;node("#conversation-allow-public").checked=false;
  node("#conversation-kind").value="counterexample";node("#conversation-approach").value="work_map";
  vm.runInContext('conversation.replyToStepId="step-a";conversation.correctionTarget={projectId:"a",stepId:"step-a",runId:"run-a",index:0,statement:"合成旧判断",question:"合成旧问题"}',ctx);
+ node("#conversation-turns").querySelectorAll=()=>[{dataset:{conversationStep:"step-a"},open:false}];
  await vm.runInContext('openResearchConversation("b")',ctx);
  assert.ok(!node("#research-output").innerHTML.includes("A的纠正理由"));
  clearFields();node("#conversation-question").value="B的未发问题";
@@ -40,6 +41,7 @@ const clearFields=()=>{for(const id of textFields)node("#"+id).value="";node("#c
  assert.ok(!html.includes("A的未发问题<script>"));
  assert.equal(vm.runInContext('conversation.replyToStepId',ctx),"step-a");
  assert.equal(vm.runInContext('conversation.correctionTarget.statement',ctx),"合成旧判断");
+ assert.equal(node("details").open,false); // User-collapsed turns stay collapsed after navigation/polling.
  assert.ok(html.includes('value="counterexample" selected')&&html.includes('value="work_map" selected'));
  assert.equal(vm.runInContext('conversation.drafts.get("b").question',ctx),"B的未发问题");
  assert.ok(calls.every(row=>!row.options)); // No saves, investigation, quota or provider calls.

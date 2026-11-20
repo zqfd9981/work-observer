@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from datetime import datetime
 from uuid import uuid4
 
 from work_observer.collection.contracts import now
@@ -97,6 +98,60 @@ def upstream_revision_notices(findings):
                 "后续意见未自动改写本轮回答或已采纳知识。",
             }
     return notices
+
+
+def step_continuation(project, step, run, checkpoint, audit, *, at=None):
+    """Describe an existing checkpoint's remaining limits, without changing them."""
+    if step["state"] not in {"failed", "interrupted"}:
+        return None
+    info = {"available": False, "remaining_calls": 0, "remaining_seconds": 0}
+    if run["state"] == "invalidated" or project["state"] != "active":
+        return {**info, "reason": "unavailable"}
+    if (run.get("result") or {}).get("status") == "completed":
+        return {**info, "reason": "answer_completed"}
+    if step["scope_version"] != project["scope_version"]:
+        return {**info, "reason": "scope_changed"}
+    if not checkpoint:
+        return {**info, "reason": "no_checkpoint"}
+    used = max(
+        (checkpoint.get("result") or {}).get("model_calls", 0),
+        (run.get("result") or {}).get("model_calls", 0),
+    )
+    elapsed = checkpoint.get("elapsed", 0)
+    if checkpoint.get("pending_since"):
+        elapsed += min(
+            55,
+            max(
+                0,
+                (
+                    datetime.fromisoformat(at or now())
+                    - datetime.fromisoformat(checkpoint["pending_since"])
+                ).total_seconds(),
+            ),
+        )
+    info.update(
+        remaining_calls=max(0, checkpoint["max_calls"] - used),
+        remaining_seconds=max(0, int(checkpoint["timeout"] - elapsed)),
+    )
+    reason = (
+        "calls_exhausted"
+        if not info["remaining_calls"]
+        else "time_exhausted"
+        if not info["remaining_seconds"]
+        else None
+    )
+    if not reason and any(
+        audit.get(key)
+        for key in (
+            "stale_memory",
+            "stale_knowledge",
+            "stale_dependencies",
+            "changed_sources",
+            "affected_strategy",
+        )
+    ):
+        reason = "material_changed"
+    return {**info, "reason": reason, "available": reason is None}
 
 
 def _map_context(context, item, result):
@@ -707,7 +762,7 @@ class ProjectService:
             used["reserved_seconds"] += step["timeout"] if not step["offline"] else 0
         return used
 
-    def claim(self, identity, *, worker_caps=None, claim_outcome=None):
+    def claim(self, identity, *, worker_caps=None, claim_outcome=None, preferred_step_id=None):
         if worker_caps is not None and (
             not isinstance(worker_caps, dict)
             or set(worker_caps) != {"calls", "seconds", "public"}
@@ -730,6 +785,10 @@ class ProjectService:
                 for s in record["steps"]
                 if s["state"] in {"queued", "interrupted"} and set(s["depends_on"]) <= completed
             ]
+            if preferred_step_id is not None:
+                ready = [step for step in ready if step["id"] == preferred_step_id]
+                if not ready:
+                    raise ProbeError("STEP_NOT_READY")
             if not ready:
                 if claim_outcome is not None:
                     claim_outcome["stop_reason"] = "no_ready_steps"
@@ -1305,6 +1364,7 @@ async def execute_project(
     max_steps=3,
     _lock_held=False,
     worker_caps=None,
+    preferred_step_id=None,
 ):
     """领取前持有跨进程研究锁，防止活跃执行被其他入口恢复或重复领取。"""
     from work_observer.storage.locks import exclusive
@@ -1318,6 +1378,7 @@ async def execute_project(
             model=model,
             max_steps=max_steps,
             worker_caps=worker_caps,
+            preferred_step_id=preferred_step_id,
         )
     with exclusive(repository.engine.url.database):
         return await _execute_project_locked(
@@ -1328,11 +1389,20 @@ async def execute_project(
             model=model,
             max_steps=max_steps,
             worker_caps=worker_caps,
+            preferred_step_id=preferred_step_id,
         )
 
 
 async def _execute_project_locked(
-    service, identity, repository, settings, *, model=None, max_steps=3, worker_caps=None
+    service,
+    identity,
+    repository,
+    settings,
+    *,
+    model=None,
+    max_steps=3,
+    worker_caps=None,
+    preferred_step_id=None,
 ):
     """串行领取并释放步骤；等待资料或人审不占用worker，无子任务自等待。"""
     import asyncio
@@ -1345,9 +1415,14 @@ async def _execute_project_locked(
     remaining = dict(worker_caps) if worker_caps is not None else None
     reserved = {"calls": 0, "seconds": 0, "public": 0}
     worker_run_ids, worker_stop_reason = [], "step_limit"
-    for _ in range(max_steps):
+    for index in range(max_steps):
         outcome = {}
-        step = service.claim(identity, worker_caps=remaining, claim_outcome=outcome)
+        step = service.claim(
+            identity,
+            worker_caps=remaining,
+            claim_outcome=outcome,
+            preferred_step_id=preferred_step_id if index == 0 else None,
+        )
         if step is None:
             worker_stop_reason = outcome.get("stop_reason", "no_ready_steps")
             break

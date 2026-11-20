@@ -43,6 +43,7 @@ def openapi(routes):
     from work_observer.api.projects import (
         ProjectInput,
         ProjectRevision,
+        ProjectRunInput,
         StepInput,
         StepRefresh,
         StepReview,
@@ -91,6 +92,7 @@ def openapi(routes):
         ("/api/projects", "POST"): ProjectInput,
         ("/api/projects/{id}", "PATCH"): ProjectRevision,
         ("/api/projects/{id}/steps", "POST"): StepInput,
+        ("/api/projects/{id}/run", "POST"): ProjectRunInput,
         ("/api/projects/{id}/steps/{step_id}/review", "POST"): StepReview,
         ("/api/imports/csv/preview", "POST"): CSVPreviewInput,
         ("/api/imports/csv/commit", "POST"): CSVCommitInput,
@@ -323,7 +325,8 @@ def openapi(routes):
                 schemas.update(schema.pop("$defs", {}))
                 schemas[model.__name__] = schema
                 operation["requestBody"] = {
-                    "required": "{action}" not in route.path,
+                    "required": "{action}" not in route.path
+                    and route.path != "/api/projects/{id}/run",
                     "description": "revise修订需要content；activate采纳、withdraw撤回、"
                     "accept选择冲突值、reject否决冲突值均无需请求体。"
                     if "{action}" in route.path
