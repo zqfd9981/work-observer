@@ -238,6 +238,17 @@ def openapi(routes):
                         "schema": {"type": "string", "enum": ["0", "1"]},
                     }
                 )
+            if route.path == "/api/reports" and method == "GET":
+                parameters.extend(
+                    [
+                        {
+                            "in": "query",
+                            "name": "q",
+                            "schema": {"type": "string", "maxLength": 200},
+                        },
+                        {"in": "query", "name": "status", "schema": {"type": "string"}},
+                    ]
+                )
             response_schema = {"type": "object", "additionalProperties": True}
             if (
                 route.path
@@ -358,6 +369,24 @@ def openapi(routes):
                     "content": {
                         mime: {"schema": {"type": "string", "format": "binary"}}
                         for mime in ("image/png", "image/jpeg", "image/webp")
+                    },
+                }
+            if route.path == "/api/imports/documents/extract" and method == "POST":
+                operation["parameters"].append(
+                    {
+                        "in": "query",
+                        "name": "filename",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                )
+                operation["requestBody"] = {
+                    "required": True,
+                    "description": "最多8MB的DOCX/PDF字节；仅在本地提取正文，不保存、不调用模型。",
+                    "content": {
+                        "application/octet-stream": {
+                            "schema": {"type": "string", "format": "binary"}
+                        }
                     },
                 }
             if route.path == "/api/import-assets/{id}/image":

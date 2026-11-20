@@ -700,13 +700,70 @@ function renderMapComparisons(result,refs,claims,basis) {
   const map=result.work_map;if(!map.comparisons?.length)return "";
   return `<h2>共用、差异与迁移比较</h2><p class="form-note">依据来自所连接关系的两端判断；这些引用帮助回查，比较解释仍需核对。</p>${map.comparisons.map((row,index)=>`<article class="panel"><h3>关系比较 ${index+1} ${basis(row)}</h3>${renderComparisonDetails(row)}${refs(row)}<details><summary>查看比较对象与双方判断</summary>${row.relation_indices.map(i=>{const r=map.work_relations[i];return `<p>关系 ${i+1}：${e(r.source_text)} → ${e(r.target_text)}</p>`;}).join("")}${claims(row)}</details>${mapInvestigationButton(result,"comparison",index,"查证这个比较与迁移条件")}</article>`).join("")}`;
 }
+let workGraphSerial=0;
+function renderWorkRelationGraph(result,refs,claims,basis) {
+  const map=result.work_map;if(!map)return "";
+  const relations=[...(map.work_relations||[]).map((row,index)=>({...row,index,kind:"relation",label:workPredicateLabels[row.predicate]||row.predicate})),...(map.ability_relations||[]).map((row,index)=>({...row,index,kind:"ability",source_kind:"task",target_kind:"ability",source_text:row.task,target_text:row.ability,label:"关联能力"}))];
+  if(!relations.length)return "";
+  const nodes=new Map(),groups=new Map(),order=["business","task","deliverable","responsibility","ability","tool","unspecified"];
+  const nodeFor=(kind,text)=>{
+    kind=order.includes(kind)?kind:"unspecified";const key=kind+":"+text;
+    if(!nodes.has(key)){
+      const node={id:nodes.size,kind,text:String(text||"未命名内容")};nodes.set(key,node);
+      if(!groups.has(kind))groups.set(kind,[]);groups.get(kind).push(node);
+    }
+    return nodes.get(key);
+  };
+  relations.forEach(row=>{row.source=nodeFor(row.source_kind,row.source_text);row.target=nodeFor(row.target_kind,row.target_text);});
+  const columns=order.filter(kind=>groups.has(kind)),width=Math.max(460,columns.length*210+30),height=Math.max(...[...groups.values()].map(rows=>rows.length))*96+215;
+  columns.forEach((kind,column)=>groups.get(kind).forEach((node,index)=>{node.x=column*210+25;node.y=index*96+180;}));
+  const marker="work-arrow-"+(++workGraphSerial);
+  const edges=relations.map((row,index)=>{
+    const from=row.source,to=row.target,forward=to.x>from.x,same=to.x===from.x;
+    const x1=from.x+(forward||same?170:0),y1=from.y+33,x2=to.x+(forward?0:170),y2=to.y+33;
+    const bend=same?Math.max(x1,x2)+45:(x1+x2)/2;
+    const direction=forward?1:-1,lane=Math.min(y1,y2)-95-(index%4)*18;
+    const path=same?`M${x1},${y1} C${bend},${y1-28} ${bend},${y2+28} ${x2},${y2}`:Math.abs(to.x-from.x)>210?`M${x1},${y1} C${x1+direction*25},${lane} ${x2-direction*25},${lane} ${x2},${y2}`:`M${x1},${y1} C${bend},${y1} ${bend},${y2} ${x2},${y2}`;
+    return `<path class="work-graph-edge" data-graph-edge="${index}" data-graph-pick="${index}" role="button" tabindex="0" aria-label="查看关系 ${index+1}：${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}" d="${path}" marker-end="url(#${marker})"><title>${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</title></path>`;
+  }).join("");
+  const wrap=value=>{
+    const lines=[];let line="",size=0;
+    for(const char of Array.from(value)){
+      const next=char.codePointAt(0)>255?13:7;
+      if(size+next>148&&line){lines.push(line);line="";size=0;}
+      line+=char;size+=next;
+    }
+    if(line)lines.push(line);
+    return lines.length>3?[...lines.slice(0,2),lines[2].slice(0,-1)+"…"]:lines;
+  };
+  const boxes=[...nodes.values()].map(node=>`<g class="work-graph-node" data-graph-node="${node.id}" transform="translate(${node.x},${node.y})"><title>${e(workDimensionLabels[node.kind]||"维度未说明")}：${e(node.text)}</title><rect width="170" height="66" rx="9"/><text x="11" y="${wrap(node.text).length===1?38:22}">${wrap(node.text).map((line,index)=>`<tspan x="11" dy="${index?17:0}">${e(line)}</tspan>`).join("")}</text></g>`).join("");
+  return `<details class="work-graph-panel" open data-work-graph><summary>本轮工作关系图 <span>${nodes.size} 个内容节点 · ${relations.length} 条关系</span></summary><p class="form-note">选择一条关系或点击连线，查看解释、边界和原文依据。连线只表示本轮研究的解释，仍需核对。</p><label>查看哪条关系<select data-graph-choice><option value="">显示全部关系</option>${relations.map((row,index)=>`<option value="${index}">${index+1}. ${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</option>`).join("")}</select></label><div class="work-graph-scroll"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="min-width:${Math.min(width,900)}px" role="group" aria-label="本轮工作关系图"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#869d86"/></marker></defs>${columns.map((kind,column)=>`<text class="work-graph-column" x="${column*210+110}" y="30" text-anchor="middle">${e(workDimensionLabels[kind]||"维度未说明")}</text>`).join("")}${edges}${boxes}</svg></div><div class="work-graph-explanations">${relations.map((row,index)=>`<section data-graph-detail="${index}" data-graph-from="${row.source.id}" data-graph-to="${row.target.id}" hidden><h3>${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>适用与迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}${claims(row)}${mapInvestigationButton(result,row.kind,row.index,"继续查证这条关系")}</section>`).join("")}</div></details>`;
+}
+function selectWorkGraphRelation(select) {
+  const root=select.closest("[data-work-graph]"),value=select.value;
+  if(!root)return;
+  const selected=$$("[data-graph-detail]",root).find(item=>item.dataset.graphDetail===value);
+  for(const item of $$("[data-graph-detail]",root))item.hidden=item!==selected;
+  for(const edge of $$("[data-graph-edge]",root)){
+    edge.classList.toggle("is-dimmed",Boolean(selected)&&edge.dataset.graphEdge!==value);
+    edge.classList.toggle("is-selected",Boolean(selected)&&edge.dataset.graphEdge===value);
+  }
+  for(const node of $$("[data-graph-node]",root))node.classList.toggle("is-dimmed",Boolean(selected)&&![selected.dataset.graphFrom,selected.dataset.graphTo].includes(node.dataset.graphNode));
+}
+document.addEventListener("change",event=>{if(event.target.matches?.("[data-graph-choice]"))selectWorkGraphRelation(event.target);});
+function pickWorkGraphEdge(edge) {
+  const root=edge.closest("[data-work-graph]"),select=root?.querySelector("[data-graph-choice]");
+  if(select){select.value=edge.dataset.graphPick;selectWorkGraphRelation(select);}
+}
+document.addEventListener("click",event=>{const edge=event.target.closest("[data-graph-pick]");if(edge)pickWorkGraphEdge(edge);});
+document.addEventListener("keydown",event=>{const edge=event.target.closest?.("[data-graph-pick]");if(edge&&["Enter"," "].includes(event.key)){event.preventDefault();pickWorkGraphEdge(edge);}});
 function renderWorkMap(result, evidence) {
   const map = result.work_map;
   if (!map) return "";
   const refs = row => [...new Set(row.claim_indices.flatMap(index=>result.claims[index]?.evidence_ids || []))].filter(id=>evidence.has(id)).map(id=>`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`).join(" ");
   const claims = row => row.claim_indices.map(index=>`<p class="form-note">判断 ${index+1} · ${e(({direct:"原文明示",synthesis:"归纳",inference:"待验证解释"})[result.claims[index]?.basis] || "性质待核")} · ${e(requirementLabels[result.claims[index]?.requirement] || "性质待核")}：${e(result.claims[index]?.text || "引用失效，需核对")}</p>`).join("");
   const basis = row => badge(({direct:"原文明示",synthesis:"归纳",inference:"待验证解释"})[row.basis || "inference"],"muted");
-  return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${map.work_types.map((row,index)=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details>${mapInvestigationButton(result,"boundary",index,"查证这一边界与其他解释")}</article>`).join("")}${map.ability_relations?.length?'<h2>任务与能力关系</h2>':""}${(map.ability_relations||[]).map((row,index)=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details>${mapInvestigationButton(result,"ability",index,"查证这条能力迁移关系")}</article>`).join("")}${renderWorkRelations(result,refs,claims,basis)}${renderMapComparisons(result,refs,claims,basis)}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map((text,index)=>`<li>${e(text)} ${mapInvestigationButton(result,"unknown",index,"继续查这个未知项")}</li>`).join("")}</ul>${result.run_id&&result.status==="completed"&&state.serviceContract?.paths?.["/api/knowledge/research/{id}"]?`<div data-map-retention="${e(result.run_id)}"><button class="secondary" type="button" data-map-retention-open>保留工作类型与工作关系 ↗</button><div data-map-retention-body></div></div>`:""}</section>`;
+  return `<section class="detail-section"><h2>工作类型地图</h2><p>${e(map.scope_note)}</p><p class="form-note">分析版本 ${e(map.version)} · 类型允许重叠；不是岗位互斥占比，也不是行业全景。原文可核对引用，解释仍需语义审核。</p>${renderWorkRelationGraph(result,refs,claims,basis)}${map.work_types.map((row,index)=>`<article class="panel"><h3>${e(row.name)} ${basis(row)}</h3><dl>${detailData("要解决的问题",row.problem)}${detailData("主要任务",row.tasks)}${detailData("交付物",row.deliverables)}${detailData("边界与反例",row.boundary)}${detailData("下一步验证",row.next_check)}</dl>${refs(row)}<details><summary>查看支撑判断</summary>${claims(row)}</details>${mapInvestigationButton(result,"boundary",index,"查证这一边界与其他解释")}</article>`).join("")}${map.ability_relations?.length?'<h2>任务与能力关系</h2>':""}${(map.ability_relations||[]).map((row,index)=>`<article class="panel"><h3>${e(row.task)} → ${e(row.ability)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}<details><summary>查看要求性质与支撑判断</summary>${claims(row)}</details>${mapInvestigationButton(result,"ability",index,"查证这条能力迁移关系")}</article>`).join("")}${renderWorkRelations(result,refs,claims,basis)}${renderMapComparisons(result,refs,claims,basis)}<h3>混合、未知与未分类</h3><ul>${map.unknowns.map((text,index)=>`<li>${e(text)} ${mapInvestigationButton(result,"unknown",index,"继续查这个未知项")}</li>`).join("")}</ul>${result.run_id&&result.status==="completed"&&state.serviceContract?.paths?.["/api/knowledge/research/{id}"]?`<div data-map-retention="${e(result.run_id)}"><button class="secondary" type="button" data-map-retention-open>保留工作类型与工作关系 ↗</button><div data-map-retention-body></div></div>`:""}</section>`;
 }
 
 function renderApplicationPlan(result,evidence,replyStepId=null) {
@@ -1313,8 +1370,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
       "判断维度："+text(categoryLabels[row.claim.category]||row.claim.category)+"；状态："+status(row)+"；"+text(claimBasisLabel(row.claim))+"；"+text(requirementLabels[row.claim.requirement]||"性质待核"),"",
       line(row.claim.text),"","原文依据："+refs(row,row.claim.evidence_ids),"");
   }
-  lines.push("## 工作地图与关系解释","","逐轮保留原结构；受到后续修正影响的部分标明原因，不自动合并为新的事实。","");
-  if(!view.maps.length)lines.push("当前有效记录中没有工作地图。","");
+  if(view.maps.length)lines.push("## 工作地图与关系解释","","逐轮保留原结构；受到后续修正影响的部分标明原因，不自动合并为新的事实。","");
   for(const row of view.maps){
     const map=row.result.work_map;
     lines.push("### 第 "+row.round+" 轮地图 · "+line(row.step.question),"",line(map.scope_note),"");
@@ -1347,7 +1403,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
       lines.push("");
     }
   }
-  lines.push("## 各轮保留的资料缺口","","以下是原轮次记录；后续可能已进一步核实，请结合修正记录理解。","");
+  if(view.rounds.some(row=>row.result.gaps?.length))lines.push("## 各轮保留的资料缺口","","以下是原轮次记录；后续可能已进一步核实，请结合修正记录理解。","");
   for(const row of view.rounds)for(const gap of row.result.gaps||[])lines.push("- 第 "+row.round+" 轮："+line(gap));
   lines.push("");
   const plans=view.rounds.filter(row=>row.result.application_plan?.actions?.length);
@@ -1362,8 +1418,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
     for(const question of plan.open_questions||[])lines.push("行动前还需明确："+line(question));
     lines.push("");
   }
-  lines.push("## 认识为何保留或改变","");
-  if(!view.changes.length)lines.push("当前有效记录中没有明确修订记录；不等于旧判断已经得到验证。","");
+  if(view.changes.length)lines.push("## 认识为何保留或改变","");
   for(const row of view.changes){const revision=row.revision;
     lines.push("### 第 "+row.round+" 轮 · "+labels[revision.decision],"",
       "旧判断："+line(revision.previous_statement),...revision.new_statements.map(value=>"本轮判断："+line(value)),
@@ -1379,8 +1434,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
     if(notices.omitted)lines.push("另有 "+notices.omitted+" 条相关意见，须在原工作台逐轮核对。");
     lines.push("");
   }
-  lines.push("## 下一步需要核实","");
-  if(!view.questions.length)lines.push("最近有效回答未提供可直接带入的核实问题；不表示所有问题已经解决。","");
+  if(view.questions.length)lines.push("## 下一步需要核实","");
   for(const row of view.questions)lines.push("- "+line(row.text)+"（来自第 "+row.round+" 轮）");
   const proposed=view.rounds.filter(row=>row.result.investigation_proposals?.length);
   if(proposed.length)lines.push("","## Agent提出的后续调查","","建议与安排状态不表示已经获得证据或完成语义核对。","");
@@ -1389,9 +1443,9 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
       "完成条件："+line(proposal.completion),"所需证据："+line(proposal.evidence_needed),
       "安排状态："+line(proposalPlanningStatus(project,row.step,index).label),"");
   }
-  lines.push("","## 未纳入当前认识的历史轮次","");
-  if(!view.excluded.length)lines.push("没有被当前整理规则排除的已存回答。","");
-  for(const {step,reason} of view.excluded){
+  const pending=project.steps.filter(step=>!step.result),excluded=view.excluded.filter(row=>row.step.result?.status!=="evidence_only");
+  if(excluded.length||pending.length)lines.push("","## 未纳入当前认识的历史轮次","");
+  for(const {step,reason} of excluded){
     lines.push("- "+line(step.question)+"："+text(reason));
     const feedback=step.result?.submission_feedback;
     if(feedback){
@@ -1400,8 +1454,19 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
       lines.push("  未通过的提交未纳入当前认识；详细文本与引用在原轮次中保留。");
     }
   }
-  const pending=project.steps.filter(step=>!step.result);
   for(const step of pending)lines.push("- "+line(step.question)+"：尚未形成可整理的回答");
+  const evidenceRounds=project.steps.map((step,index)=>({step,result:step.result,round:index+1})).filter(row=>row.result&&row.result.status!=="completed"&&row.step.run_state!=="invalidated"&&row.result.evidence?.length);
+  if(evidenceRounds.length)lines.push("","## 已整理的原文与未完成调查","","这些轮次尚未形成可采用的研究判断；原文保留供继续分析。","");
+  for(const row of evidenceRounds){
+    const unusable=new Set((row.result.audit?.changed_sources||[]).filter(item=>item.retained_evidence_valid===false).map(item=>item.evidence_id));
+    const ids=row.result.evidence.filter(ev=>!unusable.has(ev.id)).map(ev=>ev.id);
+    lines.push("### 第 "+row.round+" 轮 · "+line(row.step.question),"",
+      row.result.status==="evidence_only"?"本轮仅整理原文，未形成模型研究结论。":"本轮调查未完成，已有资料可继续核对。",
+      row.step.scope_version===project.scope_version?"资料范围：当前研究范围。":"资料范围：调整前的范围，不能直接作为当前判断。",
+      "原文依据："+refs(row,ids),"");
+    for(const gap of row.result.gaps||[])lines.push("- "+line(gap));
+    lines.push("");
+  }
   lines.push("","## 原文依据","");
   for(const {label,ev,row} of sources.values()){
     lines.push("### "+label+" · "+line(ev.title||"原文资料"),"",
@@ -1409,6 +1474,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
       "取得时间："+text(ev.observed_at||"未知")+"；来源发布时间："+text(ev.source_published_at||"未知"),
       "原字符范围："+ev.start+"–"+ev.end+(ev.full_text_length!=null?" / 正文 "+ev.full_text_length+" 字符":""));
     if(ev.historical_cutoffs?.length)lines.push("历史读取截止："+ev.historical_cutoffs.map(text).join("；")+"。截止不是网站发布时间。");
+    if(ev.publisher&&ev.publisher!==ev.company)lines.push("资料出处与导入说明："+line(ev.publisher));
     if(ev.source_note)lines.push("来源说明："+line(ev.source_note));
     lines.push("内容版本："+text(ev.snapshot_id||ev.public_document_id||"未归档搜索材料"),
       "原文文档定位："+text(ev.document_id||ev.public_document_id||"未知"),"",
@@ -1417,20 +1483,71 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
   }
   return lines.join("\n")+"\n";
 }
-async function downloadProjectDossier(id,button) {
+function dossierReadableText(value) {
+  return String(value).replace(/\\([\\`*_{}\[\]()#+!|])/g,"$1").replace(/&(amp|lt|gt|quot|#39);/g,(_,name)=>({amp:"&",lt:"<",gt:">",quot:'"',"#39":"'"})[name]);
+}
+
+function projectDossierHTML(project,exportedAt=new Date().toISOString()) {
+  const markdown=projectDossierMarkdown(project,exportedAt),blocks=[],toc=[];
+  let paragraph=[],quotes=[],list=[],section=0;
+  const inline=value=>String(value).split(/(?<!\\)\[(E\d+)\]/g).map((part,index)=>index%2?`<a class="citation" href="#source-${part}">[${part}]</a>`:e(dossierReadableText(part))).join("");
+  const flush=()=>{
+    if(paragraph.length){blocks.push('<p>'+paragraph.map(inline).join('<br>')+'</p>');paragraph=[];}
+    if(quotes.length){blocks.push('<blockquote>'+quotes.map(inline).join('<br>')+'</blockquote>');quotes=[];}
+    if(list.length){blocks.push('<ul>'+list.map(value=>'<li>'+inline(value)+'</li>').join('')+'</ul>');list=[];}
+  };
+  for(const line of markdown.split(/\r?\n/)){
+    const heading=/^(#{1,4}) (.*)$/.exec(line);
+    if(heading){flush();const level=heading[1].length,label=dossierReadableText(heading[2]),source=/^(E\d+) ·/.exec(label),id=source?'source-'+source[1]:'section-'+(++section);
+      blocks.push(`<h${level} id="${id}">${e(label)}</h${level}>`);if(level===2)toc.push({id,label});
+    }else if(line.startsWith('[返回原工作台研究](')){
+      flush();const url=safeURL(line.slice('[返回原工作台研究]('.length,-1));
+      if(url)blocks.push('<p><a href="'+e(url)+'">返回原工作台研究 ↗</a></p>');
+    }else if(line.startsWith('> ')){if(paragraph.length||list.length)flush();quotes.push(line.slice(2));}
+    else if(line.startsWith('- ')){if(paragraph.length||quotes.length)flush();list.push(line.slice(2));}
+    else if(!line.trim())flush();
+    else {if(quotes.length||list.length)flush();paragraph.push(line);}
+  }
+  flush();
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(project.title)} · 研究成果</title><style>
+  :root{font-family:system-ui,"Microsoft YaHei",sans-serif;color:#25372e;background:#f3f6f2;line-height:1.8}*{box-sizing:border-box}body{margin:0}main{max-width:1000px;margin:36px auto;padding:44px 52px;background:white;border:1px solid #e1e8df;border-radius:18px}header{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid #e1e8df;padding-bottom:18px;color:#41644b}header strong{letter-spacing:2px;font-size:12px}button{font:inherit;background:#315c46;color:white;border:0;padding:9px 16px;border-radius:8px;cursor:pointer}nav{background:#f3f7f1;padding:16px 20px;border-radius:10px;margin:24px 0}nav a{display:inline-block;margin-right:18px;color:#315c46;font-size:13px}h1{font-size:30px;line-height:1.4;margin:28px 0 18px}h2{font-size:21px;border-top:1px solid #e1e8df;padding-top:24px;margin-top:34px}h3{font-size:16px;margin-top:25px}p,li,blockquote{overflow-wrap:anywhere}blockquote{margin:14px 0;padding:15px 20px;background:#f6f8f4;border-left:3px solid #8fa788;font-size:14px}li{margin:7px 0}.citation{font-size:12px;color:#315c46;background:#edf3e9;border-radius:4px;padding:2px 5px;text-decoration:none}footer{border-top:1px solid #e1e8df;margin-top:30px;padding-top:16px;font-size:12px;color:#6f7e73}@media(max-width:650px){main{margin:0;padding:25px 20px;border-radius:0}h1{font-size:24px}header{align-items:flex-start;flex-direction:column}}@media print{:root{background:white}main{margin:0;border:0;padding:0;max-width:none}header button,nav{display:none}h2,h3{break-after:avoid}blockquote{break-inside:avoid}a{color:inherit}}
+  </style></head><body><main><header><strong>WORK OBSERVER / 研究成果</strong><button type="button" onclick="window.print()">打印 / 保存为 PDF</button></header><nav aria-label="报告目录">${toc.map(item=>`<a href="#${item.id}">${e(item.label)}</a>`).join('')}</nav><article>${blocks.join('\n')}</article><footer>此文件由研究记录整理。判断、推断与来源仍需结合原文核对。</footer></main></body></html>`;
+}
+
+function projectSummaryText(project) {
+  if(project.state!=="active")throw new Error("这项研究已不可用。");
+  const view=projectUnderstanding(project),lines=[project.title,"研究目标："+project.goal,""];
+  if(view.claims.length){
+    lines.push("当前认识（最多摘录6条）：");
+    for(const [index,row] of view.claims.slice(0,6).entries())lines.push((index+1)+". "+row.claim.text+"\n   性质："+claimBasisLabel(row.claim)+(row.claim.requirement&&row.claim.requirement!=="unspecified"?"；要求："+requirementLabels[row.claim.requirement]:"")+"；依据："+[...new Set(row.evidence.map(ev=>ev.title||"原文资料"))].join("、"));
+  }else lines.push("当前尚未形成可整理的研究判断，已有原文和调查记录可继续查阅。");
+  if(view.questions.length)lines.push("","仍需核实：",...view.questions.slice(0,5).map(row=>"- "+row.text));
+  lines.push("","摘要是当前成果的摘录，完整原文、范围与修正记录见研究报告。");
+  return lines.join("\n");
+}
+
+async function copyProjectSummary(id,button) {
+  button.disabled=true;
+  try{const project=await api("projects/"+encodeURIComponent(id));await navigator.clipboard.writeText(projectSummaryText(project));notify("研究摘要已复制。");}
+  catch(error){notify(error.message||"复制未完成，可使用导出报告。",true);}
+  finally{button.disabled=false;}
+}
+
+async function downloadProjectDossier(id,button,format="md") {
   button.disabled=true;
   try {
     const project=await api("projects/"+encodeURIComponent(id));
     if(!button.isConnected)return;
-    const content=projectDossierMarkdown(project);
-    const url=URL.createObjectURL(new Blob([content],{type:"text/markdown;charset=utf-8"}));
-    const link=document.createElement("a");link.href=url;link.download="研究成果-"+String(project.title||"研究").replace(/[<>:"/\\|?*\u0000-\u001f]/g,"_").slice(0,70)+".md";
+    const content=format==="html"?projectDossierHTML(project):projectDossierMarkdown(project);
+    const url=URL.createObjectURL(new Blob([content],{type:(format==="html"?"text/html":"text/markdown")+";charset=utf-8"}));
+    const link=document.createElement("a");link.href=url;link.download="研究成果-"+String(project.title||"研究").replace(/[<>:"/\\|?*\u0000-\u001f]/g,"_").slice(0,70)+"."+(format==="html"?"html":"md");
     document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   } catch(error){notify(error.message,true);}
   finally{button.disabled=false;}
 }
 document.addEventListener("click",event=>{
-  const button=event.target.closest("[data-project-dossier]");if(button)downloadProjectDossier(button.dataset.projectDossier,button);
+  const button=event.target.closest("[data-project-dossier]");if(button)downloadProjectDossier(button.dataset.projectDossier,button,button.dataset.exportFormat||"md");
+  const copy=event.target.closest("[data-project-summary]");if(copy)copyProjectSummary(copy.dataset.projectSummary,copy);
 });
 
 function historicalEvidenceNote(ev) {
@@ -1500,7 +1617,7 @@ function renderProjectUnderstanding(project,knowledge=[]) {
   const claimCard=row=>`<section class="claim">${badge(row.unresolved?"后续仍有疑问":row.result.business_review?.status==="approved"&&row.result.business_review?.reviewer_kind==="human"?"人工核对通过":"待核对",row.unresolved?"amber":"muted")} ${badge(claimBasisLabel(row.claim),"muted")} ${badge(requirementLabels[row.claim.requirement]||"性质待核","muted")} ${row.evidence.some(ev=>ev.historical_cutoffs?.length)?badge("含历史时点依据","muted"):""}<p>${e(row.claim.text)}</p><p class="form-note">第 ${row.round} 轮 · ${e(row.step.question)}</p><details class="research-context"><summary>核对这一判断的原文依据 · ${row.evidence.length} 个片段</summary>${row.evidence.map(ev=>`<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p>${historicalEvidenceNote(ev)}<blockquote>${e(ev.quote||"")}</blockquote><p class="form-note">取得 ${e(when(ev.observed_at))} · 字符 ${e(ev.start)}–${e(ev.end)}</p>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`).join("")}</details><button class="text-button" data-conversation-claim="${e(row.claim.text)}" data-reply-step="${e(row.step.id)}">针对这条认识继续核实 ↗</button><button class="text-button" data-open-run="${e(row.step.run_id)}">查看本轮完整回答 ↗</button>${claimCorrectionButton(row.step.id,row.index)}${renderClaimKnowledge(row.step.run_id,row.claim,row.index,new Map(row.evidence.map(ev=>[ev.id,ev])),knowledge,project.id)}</section>`;
   const questionLink=row=>`<p><button class="text-button" data-conversation-followup="${e(row.prompt||row.text)}" data-followup-kind="${e(row.kind||"investigate")}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`;
   const changeCard=({revision,step,round})=>`<section class="detail-section"><strong>第 ${round} 轮 · ${e(({retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"})[revision.decision]||"后续判断")}</strong><p><strong>旧判断：</strong>${e(revision.previous_statement)}</p>${(revision.new_statements||[]).map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(revision.reason)}</p>${renderRevisionAspects(revision)}${renderRevisionScope(revision)}<p class="form-note">${revision.evidence_relation==="reread"?"重读原材料":"含旧轮未读的引用；不表示新发布资料"}</p><button class="text-button" data-open-run="${e(revision.previous_run_id)}">查看旧研究 ↗</button><button class="text-button" data-open-run="${e(step.run_id)}">查看这次修正及依据 ↗</button></section>`;
-  return `<article class="panel result-card"><h2>本研究当前认识</h2><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>导出整项研究成果 ↧</button><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length).map(row=>`<details class="detail-section" open><summary>第 ${row.round} 轮研究需要回看其沿用依据</summary>${renderUpstreamRevisionNotices(row.result)}</details>`).join("")}${renderProjectMaps(view)}${renderScopeHistory(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>仍需核实的问题</h3>${view.questions.slice(0,5).map(questionLink).join("")}${view.questions.length>5?`<details><summary>其余 ${view.questions.length-5} 个问题</summary>${view.questions.slice(5).map(questionLink).join("")}</details>`:""}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
+  return `<article class="panel result-card"><h2>本研究当前认识</h2><div class="result-actions"><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" data-export-format="html" ${project.worker_running?"disabled":""}>导出可阅读报告 ↧</button><button type="button" class="text-button" data-project-summary="${e(project.id)}" ${project.worker_running?"disabled":""}>复制研究摘要</button><button type="button" class="text-button" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>Markdown</button></div><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length).map(row=>`<details class="detail-section" open><summary>第 ${row.round} 轮研究需要回看其沿用依据</summary>${renderUpstreamRevisionNotices(row.result)}</details>`).join("")}${renderProjectMaps(view)}${renderScopeHistory(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>仍需核实的问题</h3>${view.questions.slice(0,5).map(questionLink).join("")}${view.questions.length>5?`<details><summary>其余 ${view.questions.length-5} 个问题</summary>${view.questions.slice(5).map(questionLink).join("")}</details>`:""}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
 }
 
 function captureConversationDraft() {
@@ -2069,7 +2186,7 @@ function renderConversationMaterialReceipts(projectId) {
 }
 
 function renderConversationMaterialForm(project,draft={}) {
-  return `<details id="conversation-material-panel" class="detail-section" ${draft.open?"open":""}><summary>补充工作资料</summary><label class="research-file-drop"><input type="file" id="conversation-material-files" data-conversation-files data-project-id="${e(project.id)}" multiple accept=".txt,.md,.markdown,text/plain,text/markdown" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}><strong>上传文件，加入这项研究</strong><span>TXT / Markdown，可多选；已有回答会保留</span></label><div id="conversation-file-status" class="form-note" role="status"></div><form id="conversation-work-material"><label>资料标题<input id="conversation-material-title" name="title" value="${e(draft.title||"")}" required maxlength="300" placeholder="例如：项目说明、SOP、任务复盘"></label><label>来源说明<input id="conversation-material-source" name="source_name" value="${e(draft.source||"")}" maxlength="500" placeholder="保留资料出处；未知可留空"></label><label>原文内容<textarea id="conversation-material-text" name="text" rows="5" required maxlength="100000">${e(draft.text||"")}</textarea></label><button class="secondary" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}>保存并加入本研究</button><p class="form-note">粘贴资料与岗位、网页来源分别标记，来源说明未经独立核实。保存不调用模型，旧回答保留；下一轮再核对它支持或改变了什么。</p><p id="conversation-material-status" class="form-note" role="status"></p><div id="conversation-material-receipts">${renderConversationMaterialReceipts(project.id)}</div></form></details>`;
+  return `<details id="conversation-material-panel" class="detail-section" ${draft.open?"open":""}><summary>补充工作资料</summary><label class="research-file-drop"><input type="file" id="conversation-material-files" data-conversation-files data-project-id="${e(project.id)}" multiple accept=".txt,.md,.markdown,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}><strong>上传文件，加入这项研究</strong><span>TXT / Markdown / Word / PDF，可多选；已有回答会保留</span></label><div id="conversation-file-status" class="form-note" role="status"></div><form id="conversation-work-material"><label>资料标题<input id="conversation-material-title" name="title" value="${e(draft.title||"")}" required maxlength="300" placeholder="例如：项目说明、SOP、任务复盘"></label><label>来源说明<input id="conversation-material-source" name="source_name" value="${e(draft.source||"")}" maxlength="500" placeholder="保留资料出处；未知可留空"></label><label>原文内容<textarea id="conversation-material-text" name="text" rows="5" required maxlength="100000">${e(draft.text||"")}</textarea></label><button class="secondary" ${project.worker_running||conversation.materialSaving===project.id?"disabled":""}>保存并加入本研究</button><p class="form-note">粘贴资料与岗位、网页来源分别标记，来源说明未经独立核实。保存不调用模型，旧回答保留；下一轮再核对它支持或改变了什么。</p><p id="conversation-material-status" class="form-note" role="status"></p><div id="conversation-material-receipts">${renderConversationMaterialReceipts(project.id)}</div></form></details>`;
 }
 
 async function attachConversationArchivedMaterial(projectId,documentId) {
@@ -2173,18 +2290,24 @@ async function importResearchFiles(fileList,projectId=null) {
     for(const file of files) {
       status.textContent=`正在保存 ${saved.length+failed.length+1}/${files.length}：${file.name}`;
       try {
-        if(!/\.(txt|md|markdown)$/i.test(file.name))throw new Error("请使用TXT或Markdown文件");
-        if(file.size>400000)throw new Error("文件过大，请保留10万字以内的相关内容");
+        const richDocument=/\.(docx|pdf)$/i.test(file.name);
+        if(!/\.(txt|md|markdown|docx|pdf)$/i.test(file.name))throw new Error("支持TXT、Markdown、DOCX和PDF；旧版DOC请先另存为DOCX");
+        if(file.size>(richDocument?8*1024*1024:400000))throw new Error(richDocument?"文件超过8MB，请只保留相关内容":"文件过大，请保留10万字以内的相关内容");
         if(!projectId&&selectedResearchDocuments.size>=20)throw new Error("本次已选满20份资料，请先移出不需要的资料");
         if(projectId&&conversation.project?.id===projectId&&conversation.project.worker_running)throw new Error("请等本轮调查结束后再加入资料");
-        const text=(await file.text()).replace(/^\uFEFF/,"");
+        let text,notice="",sourceName="用户上传文件："+file.name.slice(0,300);
+        if(richDocument){
+          status.textContent=`正在本地提取正文：${file.name}`;
+          const extracted=await api("imports/documents/extract?filename="+encodeURIComponent(file.name),{method:"POST",headers:{"Content-Type":"application/octet-stream"},body:file});
+          text=extracted.text;notice=extracted.notice;sourceName=extracted.source_name;
+        }else text=(await file.text()).replace(/^\uFEFF/,"");
         if(!text.trim())throw new Error("文件没有正文");
         if(text.length>100000)throw new Error("正文超过10万字，请拆分文件");
-        const result=await api("work-materials",{method:"POST",body:JSON.stringify({title:file.name.slice(0,300),text,source_name:"用户上传文件："+file.name.slice(0,300)})});
+        const result=await api("work-materials",{method:"POST",body:JSON.stringify({title:file.name.slice(0,300),text,source_name:sourceName})});
         if(projectId){rememberConversationMaterial(projectId,result.document);await retryConversationMaterial(projectId,result.document.id);}
         else selectResearchDocument(result.document.id,result.document.title);
         saved.push(result.document);
-        messages.push(`<p>✓ ${e(file.name)} · ${e(result.document.full_text_length)}字符 <button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看原文 ↗</button></p>`);
+        messages.push(`<p>✓ ${e(file.name)} · ${e(result.document.full_text_length)}字符 <button type="button" class="text-button" data-public-source="${e(result.document.id)}">查看导入正文 ↗</button>${notice?'<br>'+e(notice):""}</p>`);
       } catch(error) {failed.push(file.name);messages.push(`<p>${projectId?"未完成":"未保存"} ${e(file.name)}：${e(error.message)}</p>`);}
     }
     if(projectId){
@@ -2362,17 +2485,26 @@ document.addEventListener("submit",async event=>{
   finally{button.disabled=false;}
 });
 
+let reportQuerySerial=0;
 async function loadReports() {
+  const serial=++reportQuerySerial;
   $("#report-detail").hidden = true;
+  $("#reports-search").hidden = false;
   $("#reports-list").hidden = false;
   $("#reports-list").innerHTML = empty("正在读取已存研究…");
+  const query=$("#reports-query").value.trim(),status=$("#reports-status").value;
+  const params=new URLSearchParams();if(query)params.set("q",query);if(status)params.set("status",status);
   try {
-    const reports = await api("reports");
-    $("#reports-list").innerHTML = reports.length ? reports.map(report=>`<button class="panel report-row" data-report="${e(report.report_id)}"><div><h3>${e(report.question)}</h3><p>${e(when(report.created_at))} · 依据和范围已随结果保存</p></div>${badge(statusLabels[report.status] || report.status,report.status === "completed" ? "" : "muted")}<span>↗</span></button>`).join("") : empty("还没有保存的研究","完成一次研究后，点击“保存这次研究”，就能在这里再次查看。");
-  } catch (error) { $("#reports-list").innerHTML = errorBox(error); }
+    const reports = await api("reports"+(params.size?"?"+params:""));
+    if(serial!==reportQuerySerial)return;
+    $("#reports-count").textContent=reports.length===100?"展示最近100份匹配研究，可增加关键词缩小范围。":"找到 "+reports.length+" 份"+(query||status?"匹配的":"已存")+"研究";
+    $("#reports-list").innerHTML = reports.length ? reports.map(report=>`<button class="panel report-row" data-report="${e(report.report_id)}"><div><h3>${e(report.question)}</h3><p>${e(when(report.created_at))} · 依据和范围已随结果保存</p>${report.match_excerpt?`<p class="report-match">匹配内容：${e(report.match_excerpt)}</p>`:""}</div>${badge(statusLabels[report.status] || report.status,report.status === "completed" ? "" : "muted")}<span>↗</span></button>`).join("") : query||status?empty("没有找到匹配的研究","试试更短的关键词，或清空条件查看全部研究。"):empty("还没有保存的研究","完成一次研究后，点击“保存这次研究”，就能在这里再次查看。");
+  } catch (error) { if(serial===reportQuerySerial){$("#reports-list").innerHTML=errorBox(error);$("#reports-count").textContent="";} }
 }
 
 async function showReport(id) {
+  ++reportQuerySerial;
+  $("#reports-search").hidden = true;
   $("#reports-list").hidden = true;
   const root = $("#report-detail");
   root.hidden = false;
@@ -2381,8 +2513,11 @@ async function showReport(id) {
     const result = await api("reports/" + encodeURIComponent(id));
     root.innerHTML = `<button class="secondary back-button" data-report-back>← 返回已存研究</button><div id="saved-result"></div>`;
     renderResult(result,$("#saved-result"));
-  } catch (error) { root.innerHTML = errorBox(error); }
+  } catch (error) { root.innerHTML = '<button class="secondary back-button" data-report-back>← 返回已存研究</button>'+errorBox(error); }
 }
+$("#reports-search").addEventListener("submit",event=>{event.preventDefault();loadReports();});
+$("#reports-status").addEventListener("change",()=>loadReports());
+$("#reports-clear").addEventListener("click",()=>{$("#reports-query").value="";$("#reports-status").value="";loadReports();});
 
 function showImport(relatedId = null) {
   state.importConversationId=null;$("#import-submit").textContent="保存人工资料";

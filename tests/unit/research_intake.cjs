@@ -16,7 +16,7 @@ vm.runInContext(`api=async(path,options)=>{
  return {};
 };notify=()=>{};openResearchConversation=async()=>{};`,ctx);
 (async()=>{
- ctx.files=[{name:"工作说明.md",size:30,text:async()=>"\uFEFF合成资料：交付接口并与平台团队协作。"},{name:"失败记录.txt",size:16,text:async()=>"合成资料：恢复过程需要回放核对。"},{name:"暂不支持.pdf",size:20}];
+ ctx.files=[{name:"工作说明.md",size:30,text:async()=>"\uFEFF合成资料：交付接口并与平台团队协作。"},{name:"失败记录.txt",size:16,text:async()=>"合成资料：恢复过程需要回放核对。"},{name:"暂不支持.doc",size:20}];
  const imported=await vm.runInContext("importResearchFiles(files)",ctx);
  assert.equal(imported.saved.length,2);assert.equal(imported.failed.length,1);
  assert.equal(ctx.saved[0].text,"合成资料：交付接口并与平台团队协作。");
@@ -60,5 +60,19 @@ vm.runInContext(`api=async(path,options)=>{
  assert.equal(node("#conversation-question").value,"已经写好的后续问题");
  assert.equal(calls.filter(call=>call.path==="projects"&&call.options?.method==="POST").length,writes);
  assert.equal(calls.filter(call=>call.path.endsWith("/run")).length,1);
+ // Rich documents pass raw bytes to local extraction, then reuse the same save/attach flow.
+ ctx.rich={name:'项目交付.docx',size:200};
+ vm.runInContext(`api=async(path,options)=>{
+  calls.push({path,options});
+  if(path.startsWith('imports/documents/extract?')){assertRaw=options.body===rich;return {text:'合成Word正文：业务同事验收。',notice:'表格已导入，图片不导入。',source_name:'合成文件本地提取'};}
+  if(path==='work-materials'){const data=JSON.parse(options.body);return {document:{id:'e'.repeat(32),title:data.title,full_text_length:data.text.length}};}
+  if(path==='projects')return [project];
+  if(options?.method==='PATCH'){Object.assign(project,JSON.parse(options.body));project.revision++;}
+  return project;
+ };`,ctx);
+ const richResult=await vm.runInContext('importResearchFiles([rich],"project-intake")',ctx);
+ assert.equal(richResult.saved.length,1);assert.equal(ctx.assertRaw,true);
+ assert.ok(node('#conversation-file-status').innerHTML.includes('图片不导入'));
+ assert.equal(calls.filter(call=>call.path.endsWith('/run')).length,1);
  console.log("Research intake: multiple files → automatic paste save → scoped project and first question passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});

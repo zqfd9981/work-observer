@@ -112,6 +112,13 @@ def test_restart_preserves_result_save_id_and_memory_versions(tmp_path):
         assert run["state"] == "finished" and run["saved"] == saved
         assert client.post(f"/api/research/{run_id}/save", headers=auth).json() == saved
         assert len(client.get("/api/reports").json()) == 1
+        found = client.get(
+            "/api/reports", params={"q": "python 接口", "status": "evidence_only"}
+        ).json()
+        assert [item["report_id"] for item in found] == [saved["report_id"]]
+        assert "Python" in found[0]["match_excerpt"]
+        assert client.get("/api/reports", params={"q": "未出现的技术"}).json() == []
+        assert client.get("/api/reports", params={"status": "completed"}).json() == []
         assert client.get("/api/research").json()[0]["question"] == "隔离离线研究"
         revised = client.post(
             f"/api/memories/{memory['id']}/revise",

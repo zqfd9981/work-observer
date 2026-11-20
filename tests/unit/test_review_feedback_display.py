@@ -14,6 +14,8 @@ import pytest
         "result_source_context.cjs",
         "claim_correction.cjs",
         "project_export.cjs",
+        "report_search.cjs",
+        "work_graph.cjs",
         "project_feedback_display.cjs",
         "research_conversation.cjs",
         "conversation_retry.cjs",

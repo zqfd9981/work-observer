@@ -5,6 +5,11 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import Response
 from starlette.routing import Route
 
+from work_observer.connectors.document_text import (
+    MAX_DOCUMENT_BYTES,
+    DocumentTextError,
+    extract_document_text,
+)
 from work_observer.connectors.import_drafts import (
     MAX_IMAGE,
     ImportDraftService,
@@ -67,6 +72,21 @@ def import_routes(
             201,
         )
 
+    async def extract_document(request):
+        size, chunks = 0, []
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_DOCUMENT_BYTES:
+                return response({"message": "请选择8MB以内的Word或PDF文件。"}, 422)
+            chunks.append(chunk)
+        try:
+            result = await run_in_threadpool(
+                extract_document_text, b"".join(chunks), request.query_params.get("filename", "")
+            )
+            return response(result)
+        except DocumentTextError as error:
+            return response({"message": str(error)}, 422)
+
     async def get_image(request):
         metadata, raw = service().read(request.path_params["id"])
         return Response(raw, media_type=metadata["mime"], headers={"Content-Disposition": "inline"})
@@ -88,6 +108,7 @@ def import_routes(
     return [
         Route("/api/imports/csv/preview", preview_csv, methods=["POST"]),
         Route("/api/imports/csv/commit", import_csv, methods=["POST"]),
+        Route("/api/imports/documents/extract", extract_document, methods=["POST"]),
         Route("/api/import-assets", upload_image, methods=["POST"]),
         Route("/api/import-assets/{id}/image", get_image),
         Route("/api/import-assets/{id}/extract", extract_image, methods=["POST"]),

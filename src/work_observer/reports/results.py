@@ -611,16 +611,65 @@ def read_result(identity, directory=Path("reports")):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def list_results(directory=Path("reports"), limit=20):
+def list_results(directory=Path("reports"), limit=20, query="", status=""):
+    terms = query.casefold().split()
+
+    def texts(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for child in value.values():
+                yield from texts(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from texts(child)
+
     results = []
     if directory.exists():
         for path in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
             if not re.fullmatch(r"[a-f0-9]{32}", path.stem):
                 continue
             result = read_result(path.stem, directory)
-            results.append(
-                {key: result[key] for key in ("report_id", "question", "status", "created_at")}
+            if status and result["status"] != status:
+                continue
+            content = list(
+                texts(
+                    {
+                        key: result.get(key)
+                        for key in (
+                            "question",
+                            "claims",
+                            "evidence",
+                            "gaps",
+                            "work_map",
+                            "cognition_revisions",
+                            "application_plan",
+                        )
+                    }
+                )
             )
+            searchable = "\n".join(content).casefold()
+            if not all(term in searchable for term in terms):
+                continue
+            row = {key: result[key] for key in ("report_id", "question", "status", "created_at")}
+            if terms:
+                match = next(
+                    (text for text in content if any(term in text.casefold() for term in terms)), ""
+                )
+                start = max(
+                    0,
+                    min(
+                        (match.casefold().find(term) for term in terms if term in match.casefold()),
+                        default=0,
+                    )
+                    - 45,
+                )
+                row["match_excerpt"] = (
+                    ("…" if start else "")
+                    + match[start : start + 180]
+                    + ("…" if len(match) > start + 180 else "")
+                )
+            results.append(row)
             if len(results) >= limit:
                 break
     return results

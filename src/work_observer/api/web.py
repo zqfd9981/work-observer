@@ -644,7 +644,17 @@ def create_app(
         raise ProbeError("MEMORY_ACTION_DENIED")
 
     async def reports(request):
-        return response(list_results(reports_dir, limit=100))
+        query = request.query_params.get("q", "").strip()
+        if len(query) > 200:
+            raise ValueError("Report query is too long")
+        return response(
+            list_results(
+                reports_dir,
+                limit=100,
+                query=query,
+                status=request.query_params.get("status", ""),
+            )
+        )
 
     async def report(request):
         return response(audited(read_result(request.path_params["id"], reports_dir)))
@@ -713,8 +723,7 @@ def create_app(
                 "UPDATE_ARCHIVE_SCOPE_LIMIT_2000": "归档来源超过2000个，请限定要观察的资料。",
                 "UPDATE_CUTOFF_IN_FUTURE": "历史截止不能晚于现在，请选择已有观察的时间。",
                 "UPDATE_HISTORICAL_DOMAIN_UNAVAILABLE": (
-                    "历史来源面板不使用现在的领域归类缩小范围；"
-                    "请选择全部领域，并按岗位或来源筛选。"
+                    "历史来源面板不使用现在的领域归类缩小范围；请选择全部领域，并按岗位或来源筛选。"
                 ),
                 "UPDATE_PROJECT_BUDGET_EXHAUSTED": (
                     "原研究预留额度已用完；旧问题和预算保留，请另建明确范围的研究。"
