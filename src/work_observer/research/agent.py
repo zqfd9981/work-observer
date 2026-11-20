@@ -2581,6 +2581,14 @@ async def _research(
                         data["source_view"] = model_source_view(
                             build_source_views(list(evidence.values()))
                         )
+                    elif data.get("evidence"):
+                        from work_observer.research.reading import reading_guide
+
+                        guide = reading_guide(
+                            list(evidence.values()), {item["id"] for item in data["evidence"]}
+                        )
+                        if guide is not None:
+                            data["reading_guide"] = guide
                 if len(evidence) > 60:
                     raise ProbeError("RESEARCH_EVIDENCE_LIMIT")
                 history.append(
