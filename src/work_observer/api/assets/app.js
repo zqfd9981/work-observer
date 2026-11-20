@@ -1223,7 +1223,15 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
   for(const row of view.questions)lines.push("- "+line(row.text)+"（来自第 "+row.round+" 轮）");
   lines.push("","## 未纳入当前认识的历史轮次","");
   if(!view.excluded.length)lines.push("没有被当前整理规则排除的已存回答。","");
-  for(const {step,reason} of view.excluded)lines.push("- "+line(step.question)+"："+text(reason));
+  for(const {step,reason} of view.excluded){
+    lines.push("- "+line(step.question)+"："+text(reason));
+    const feedback=step.result?.submission_feedback;
+    if(feedback){
+      lines.push("  最近提交的程序检查提示（可能有误，不作为语义结论）：");
+      for(const issue of feedback.reasons)lines.push("  - "+line(issue.message)+(issue.claim_indices?.length?"（条目 "+issue.claim_indices.map(index=>index+1).join("、")+"）":""));
+      lines.push("  未通过的提交未纳入当前认识；详细文本与引用在原轮次中保留。");
+    }
+  }
   const pending=project.steps.filter(step=>!step.result);
   for(const step of pending)lines.push("- "+line(step.question)+"：尚未形成可整理的回答");
   lines.push("","## 原文依据","");
