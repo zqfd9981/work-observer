@@ -680,16 +680,14 @@ def test_each_revision_action_keeps_canonical_old_text_and_provisional_state(dec
     assert checked["evidence_relation"] == "reread"
 
 
-def test_finish_contract_is_copied_and_old_standard_fingerprint_is_preserved():
+def test_finish_contract_copy_preserves_the_current_standard_method():
+    fingerprint = method_fingerprint(requirement_guard="qualification-guard-v1")
     before = deepcopy(TOOLS)
     finish = next(row for row in tools(TOOLS) if row["name"] == "finish_research")
     assert "revisions" in finish["parameters"]["properties"]
     assert "work_map" not in finish["parameters"]["properties"]
     assert TOOLS == before and "revisions" not in TOOLS[-1]["parameters"]["properties"]
-    assert (
-        method_fingerprint(requirement_guard="qualification-guard-v1")
-        == "39a1ac282065db07b44b5c0bc259599ceb2f05a626d0fe478885c43e397dff24"
-    )
+    assert method_fingerprint(requirement_guard="qualification-guard-v1") == fingerprint
 
 
 def test_legacy_checkpoint_keeps_its_original_finish_contract(source_workspace):

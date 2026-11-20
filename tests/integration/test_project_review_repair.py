@@ -100,7 +100,11 @@ def test_repair_preserves_old_run_reserves_project_budget_and_unblocks_after_acc
     )
     repair = project["steps"][-1]
     result = store.get(repair["run_id"])["result"]
-    assert result["status"] == "completed" and result["research_method_version"] == VERSION
+    from work_observer.research.historical_sources import VERSION as HISTORICAL_VERSION
+
+    assert result["status"] == "completed"
+    assert result["historical_sources_version"] == HISTORICAL_VERSION
+    assert result["research_method_version"] == VERSION + "-" + HISTORICAL_VERSION
     assert result["review_feedback"]["review_id"] == review["id"]
     assert result["feedback_from"] == [source["run_id"]] and result["continued_from"] == []
     assert "旧结论错误标记" not in json.dumps(model.contexts, ensure_ascii=False)

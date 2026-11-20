@@ -4,16 +4,21 @@ import asyncio
 import json
 from copy import deepcopy
 
+import pytest
 from test_dialogue_revisions import ConversationModel
 from test_source_first_research import source_workspace as source_workspace
 from test_work_relations import ComparedJobMap
 
 from work_observer.config import Settings
+from work_observer.research.agent import research
 from work_observer.research.projects import ProjectService, _map_context, execute_project
 from work_observer.research.store import ResearchStore
 
 
-def test_map_then_correction_survives_reopening_and_enters_original_reply_context(source_workspace):
+@pytest.mark.parametrize("explicit_reply", [True, False])
+def test_reopened_question_reuses_map_and_corrections_with_or_without_explicit_reply(
+    source_workspace, explicit_reply
+):
     repo, store, jobs = source_workspace
     service = ProjectService(store)
     project = service.create("合成地图续问", "比较接口工作", jobs[:2], max_calls=12, max_rounds=3)
@@ -61,9 +66,9 @@ def test_map_then_correction_survives_reopening_and_enters_original_reply_contex
         service = ProjectService(reopened)
         project = service.add(
             project["id"],
-            "继续核实原图的迁移条件",
+            "继续核实原图的迁移条件" if explicit_reply else "精通分布式设计的规模适用范围是什么",
             revision=project["revision"],
-            reply_to_step_id=original_step["id"],
+            reply_to_step_id=original_step["id"] if explicit_reply else None,
             approach="work_map",
             max_calls=4,
         )
@@ -83,6 +88,44 @@ def test_map_then_correction_survives_reopening_and_enters_original_reply_contex
         assert len(json.dumps(context, ensure_ascii=False)) <= 14000
         assert reopened.get(original["run_id"])["result"] == original
         assert service.usage(project)["calls"] == 6
+        if not explicit_reply:
+            class ContentAwareMap(ComparedJobMap):
+                async def turn(self, history):
+                    carried = json.loads(history[1]["content"])["project_context"]
+                    source = next(
+                        row for row in carried["previous_findings"]
+                        if row["run_id"] == original["run_id"]
+                    )
+                    assert source["work_map"]["comparisons"][0]["transfer_conditions"] == (
+                        "核实个人分工与规模"
+                    )
+                    preserved = next(
+                        row for row in source["derived_claims"]
+                        if row["previous_claim_index"] == revised_index
+                    )
+                    assert preserved["followup_decisions"][0]["run_id"] == changed["run_id"]
+                    assert preserved["text"] == original["claims"][revised_index]["text"]
+                    return await super().turn(history)
+
+            result = asyncio.run(
+                research(
+                    repo,
+                    step["question"],
+                    Settings(),
+                    job_ids=step["job_ids"],
+                    project_id=project["id"],
+                    approach="work_map",
+                    conversation_context=context,
+                    checkpoint=(reopened, step["run_id"]),
+                    max_calls=4,
+                    model=ContentAwareMap(),
+                )
+            )
+            assert result["status"] == "completed", result
+            assert {original["run_id"], changed["run_id"]} <= set(result["continued_from"])
+            assert len([row for row in result["trace"] if row["tool"] == "read_job"]) == 2
+            assert result["model_calls"] == 4
+            assert reopened.get(original["run_id"])["result"] == original
     finally:
         reopened.close()
 

@@ -264,8 +264,15 @@ def test_explicit_followup_respects_original_scope_after_material_changes(setup,
     context = service.context(project["id"], project["steps"][-1], repo)
     assert context["scope_version"] == 2
     assert context["reply_to"]["source_scope_version"] == 1
-    assert context["reply_to"]["findings_included"] is keep_original
-    assert bool(context["previous_findings"]) is keep_original
+    assert context["reply_to"]["findings_included"] is False
+    assert context["previous_findings"] == []
+    if keep_original:
+        assert context["reply_to"]["historical_findings_included"]
+        assert context["historical_reply"]["run_id"] == first["run_id"]
+        assert context["historical_reply"]["reason"] == "project_scope_changed"
+        assert context["historical_reply"]["source_scope_version"] == 1
+    else:
+        assert "historical_reply" not in context
     assert service.get(project["id"])["steps"][0]["job_ids"] == [job_id]
 
 

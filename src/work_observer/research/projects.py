@@ -991,9 +991,11 @@ class ProjectService:
         from work_observer.memory.dependencies import DependencyAudit
         from work_observer.memory.service import _tokens
         from work_observer.reports.results import audit_result
+        from work_observer.research.relevance import finding_score, ranked_claims
 
         record = self.get(identity)
         self._editable(record)
+        query_tokens = _tokens(step["question"])
         allowed = set(step["job_ids"])
         dependencies = dependency_steps(record, step["depends_on"])
         reply_id = step.get("reply_to_step_id")
@@ -1095,7 +1097,7 @@ class ProjectService:
                     past_followups.append((previous, result))
                 continue
             eligible.append((previous, result))
-            score = len(_tokens(step["question"]) & _tokens(previous["question"]))
+            score = finding_score(query_tokens, previous["question"], result)
             if not is_reply and previous["id"] not in dependencies and not score:
                 continue
             candidates.append(
@@ -1161,7 +1163,8 @@ class ProjectService:
             knowledge_dependencies=[],
             refresh_note=step.get("refresh_note"),
             selection_note=(
-                "仅选择同范围、仍有效的相关研究；omitted_claims是未放入上下文的判断数，"
+                "按旧问题、原判断及地图关系/边界定位同范围、仍有效的相关研究；"
+                "文字相关不证明结论成立。omitted_claims是未放入上下文的判断数，"
                 "work_map_omitted表示整份地图未带入时各类省略数；未展示不能当作不存在。"
                 "origin为agent的问题由Agent提出，不是用户新增偏好或知识采纳。"
                 "范围变化的明确追问只带旧判断作重读对照，不作为当前有效前提。"
@@ -1237,11 +1240,7 @@ class ProjectService:
                     "不表示已绑定专门复核补查或人审通过。"
                 )
             context["historical_reply"] = historical
-            query_tokens = _tokens(step["question"])
-            ranked = sorted(
-                enumerate(result.get("claims", [])),
-                key=lambda pair: -len(query_tokens & _tokens(pair[1]["text"])),
-            )
+            ranked = ranked_claims(result, query_tokens)
             for index, claim in ranked:
                 selected = {**claim, "previous_claim_index": index}
                 if decisions := followups.get((previous["run_id"], index)):
@@ -1270,15 +1269,7 @@ class ProjectService:
                 context.pop("historical_reply")
         upstream_notices = upstream_revision_notices(eligible)
         for _, _, previous, result in candidates[:3]:
-            query_tokens = _tokens(step["question"])
-            ranked = sorted(
-                enumerate(result.get("claims", [])),
-                key=lambda pair: (
-                    -len(query_tokens & _tokens(pair[1]["text"])),
-                    pair[1].get("requirement") not in {"required", "preferred"},
-                    pair[0],
-                ),
-            )
+            ranked = ranked_claims(result, query_tokens)
             item = dict(
                 run_id=previous["run_id"],
                 question=previous["question"][:1000],
