@@ -46,6 +46,49 @@ def _knowledge_rows(rows):
     return [{key: value for key, value in row.items() if key != "revision_notices"} for row in rows]
 
 
+def _membership(row, panel):
+    if row is None:
+        return "not_observed"
+    if row["filter_state"] == "excluded":
+        return "filter_excluded"
+    domain = (row.get("domain") or {}).get("state") if panel["domain_id"] else None
+    if domain == "excluded":
+        return "domain_excluded"
+    if row["filter_state"] == "unknown" or panel["domain_id"] and domain != "matched":
+        return "scope_unknown"
+    return "included"
+
+
+def _comparison_scope(before, after):
+    left = {row["job_id"]: row for row in before["jobs"]}
+    right = {row["job_id"]: row for row in after["jobs"]}
+    members = []
+    for identity in sorted(left.keys() | right.keys()):
+        a, b = left.get(identity), right.get(identity)
+        states = (_membership(a, before), _membership(b, after))
+        if not {"included", "scope_unknown"}.intersection(states):
+            continue
+        members.append(
+            {
+                "job_id": identity,
+                "title": (b or a)["fields"].get("title"),
+                "before": states[0],
+                "after": states[1],
+                "before_document_id": ((a or {}).get("source") or {}).get("document_id"),
+                "after_document_id": ((b or {}).get("source") or {}).get("document_id"),
+            }
+        )
+    return {
+        "job_ids": [row["job_id"] for row in members],
+        "members": members,
+        "note": (
+            "补查覆盖两次面板中曾纳入的岗位，包括离开较晚范围的岗位；"
+            "范围条件未知仍单列，不视为明确符合。未观察到或被范围排除不代表岗位关闭，"
+            "加入面板也不证明首次招聘。两侧原文按各自冻结时点核对。"
+        ),
+    }
+
+
 class DomainUpdateService:
     def __init__(self, store, repository):
         self.store, self.repository = store, repository
@@ -736,6 +779,7 @@ class DomainUpdateService:
         identity = digest({"before": before_id, "after": after_id, "version": "domain-updates-v1"})[
             :32
         ]
+        comparison_scope = _comparison_scope(before, after)
         report = {
             "id": identity,
             "state": "compared",
@@ -812,7 +856,8 @@ class DomainUpdateService:
                     "不推测个人履历、能力或适配分数。"
                 ),
             },
-            "job_ids": sorted(b),
+            "job_ids": comparison_scope["job_ids"],
+            "comparison_scope": comparison_scope,
             "public_document_ids": [
                 row["id"] for row in after.get("archived_scope", {}).get("documents", [])
             ],
@@ -830,14 +875,18 @@ class DomainUpdateService:
         from work_observer.reports.research_impact import research_impact
 
         report = self._get("domain_update_reports", identity)
+        before = self._get("domain_update_captures", report["before_id"])
+        after = self._get("domain_update_captures", report["after_id"])
+        report["comparison_scope"] = _comparison_scope(before, after)
+        report["job_ids"] = report["comparison_scope"]["job_ids"]
         report["current_memory_validity"] = [
             self.memory.validity(ref["id"]) for ref in report.get("memory_refs", [])
         ]
         report["research_impact"] = research_impact(
             self.repository,
             self.store,
-            self._get("domain_update_captures", report["before_id"]),
-            self._get("domain_update_captures", report["after_id"]),
+            before,
+            after,
             report,
         )
         return report
@@ -869,7 +918,8 @@ class DomainUpdateService:
                 + "分别核对上述两个来源截止时点的岗位原文，读取不完整时继续查看后文；"
                 "归档工作资料须核对所选的两版原文。"
                 "当前补查须区分现在读取的材料与报告中的历史版本；未读到对应历史原文时保留未知，"
-                "不能把现在的内容代替过去。样本加入与资料补全不表示新招聘或新增职责。"
+                "不能把现在的内容代替过去。样本加入与资料补全不表示新招聘或新增职责，"
+                "离开较晚观察范围也不代表岗位关闭。分别区分未观察到、筛选排除与条件未知。"
             )
         if run_id:
             from work_observer.research.projects import ProjectService

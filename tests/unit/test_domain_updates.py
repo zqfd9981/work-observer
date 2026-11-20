@@ -1,5 +1,7 @@
 """合成资料验证领域更新分离和个人记忆遗忘，不作为真实趋势证据。"""
 
+from copy import deepcopy
+
 import pytest
 from pydantic import ValidationError
 from starlette.applications import Starlette
@@ -14,6 +16,7 @@ from work_observer.knowledge.service import DomainKnowledgeService
 from work_observer.memory.service import MemoryService
 from work_observer.reports.domain_updates import DomainUpdateService
 from work_observer.reports.inbox import InboxService
+from work_observer.research.historical_sources import read
 from work_observer.research.projects import ProjectService
 from work_observer.research.store import ResearchStore
 from work_observer.storage.archive import RawArchive
@@ -80,6 +83,91 @@ def test_content_sample_and_scope_changes_are_separate(updates):
     assert report["sample_changes"]["added_job_ids"] == [two]
     assert report["sample_changes"]["scope_rule_changed"]
     assert not report["statistics"]["comparable"]
+
+
+def test_followup_keeps_jobs_that_left_the_later_filter_scope(updates):
+    service, add = updates
+    job = add("one", "Python接口职责保持", city="上海")
+    before = service.capture("上海面板前", filters={"city": "上海"})
+    add("one", "Python接口职责保持", city="北京")
+    after = service.capture("上海面板后", filters={"city": "上海"})
+    original = service._get("domain_update_captures", before["id"])
+    report = service.compare(before["id"], after["id"])
+    assert report["sample_changes"]["removed_job_ids"] == [job]
+    prepared = service.followup(report["id"], "核对离开上海观察范围的原因")
+    assert prepared["job_ids"] == [job]
+    assert report["job_ids"] == [job]
+    member = report["comparison_scope"]["members"][0]
+    assert member["before"] == "included" and member["after"] == "filter_excluded"
+    assert member["before_document_id"] == before["jobs"][0]["source"]["document_id"]
+    assert member["after_document_id"] == after["jobs"][0]["source"]["document_id"]
+    assert "岗位关闭" in prepared["question"]
+    projects = ProjectService(service.store)
+    project = projects.create("核对面板离开原因", prepared["question"], prepared["job_ids"])
+    project = projects.add(
+        project["id"], prepared["question"], revision=project["revision"]
+    )
+    assert project["job_ids"] == [job] and project["steps"][0]["state"] == "queued"
+    assert projects.usage(project)["calls"] == 0
+    old = read(service.repository, job, before["created_at"], 0,
+               project["job_ids"], after["created_at"])
+    new = read(service.repository, job, after["created_at"], 0,
+               project["job_ids"], after["created_at"])
+    assert old["job"]["city"] == "上海" and new["job"]["city"] == "北京"
+    assert old["evidence"][0]["quote"] == new["evidence"][0]["quote"] == "Python接口职责保持"
+    assert service._get("domain_update_captures", before["id"]) == original
+    assert service.store.list() == []
+
+
+def test_old_report_recovers_both_panel_scope_on_read_without_rewriting_the_saved_record(updates):
+    service, add = updates
+    job = add("one", city="上海")
+    before = service.capture("以前范围", filters={"city": "上海"})
+    add("one", city="北京")
+    after = service.capture("后来范围", filters={"city": "上海"})
+    report = service.compare(before["id"], after["id"])
+    legacy = deepcopy(report)
+    legacy["id"] = "e" * 32
+    legacy["job_ids"] = []
+    legacy.pop("comparison_scope")
+    service._write("domain_update_reports", legacy)
+    restored = service.report(legacy["id"])
+    assert restored["job_ids"] == [job]
+    assert restored["comparison_scope"]["members"][0]["after"] == "filter_excluded"
+    assert service._get("domain_update_reports", legacy["id"]) == legacy
+
+
+def test_membership_keeps_unknown_distinct_and_omits_jobs_excluded_on_both_sides(updates):
+    service, add = updates
+    removed = add("removed", city="上海")
+    unknown = add("unknown")
+    excluded = add("excluded", city="北京")
+    before = service.capture("原范围", filters={"city": "上海"})
+    added = add("added", city="上海")
+    after = service.capture(
+        "限定后范围", filters={"city": "上海"}, job_ids=[unknown, excluded, added]
+    )
+    scope = service.compare(before["id"], after["id"])["comparison_scope"]
+    assert set(scope["job_ids"]) == {removed, unknown, added}
+    members = {row["job_id"]: row for row in scope["members"]}
+    assert members[removed]["after"] == members[added]["before"] == "not_observed"
+    assert members[unknown]["before"] == members[unknown]["after"] == "scope_unknown"
+    assert excluded not in members
+
+
+def test_domain_range_exclusion_is_not_a_missing_observation(updates):
+    service, add = updates
+    job = add("one")
+    knowledge = DomainKnowledgeService(service.repository)
+    domain = knowledge.propose_domain("application", "合成应用", "业务应用开发")
+    knowledge.review_domain(domain["id"], "accept", "合成范围核对")
+    knowledge.correct_job_domains(job, [domain["id"]], "合成归入工作类型")
+    before = service.capture("原工作类型范围", domain_id=domain["id"])
+    knowledge.correct_job_domains(job, [], "合成明确移出分类")
+    after = service.capture("更正后的范围", domain_id=domain["id"])
+    scope = service.compare(before["id"], after["id"])["comparison_scope"]
+    assert scope["job_ids"] == [job]
+    assert scope["members"][0]["after"] == "domain_excluded"
 
 
 def test_comparison_keeps_each_panels_source_observation_after_a_b_a_b(updates):
