@@ -112,6 +112,8 @@ def claim_revision_notices(
                         "previous_statement": claims[revision["previous_claim_index"]]["text"],
                         "reason": revision["reason"],
                         "new_statements": revision.get("new_statements", []),
+                        "aspects": revision.get("aspects", []),
+                        "comparison_notice": revision.get("comparison_notice"),
                         "evidence_ids": revision.get("evidence_ids", []),
                         "recorded_at": record["updated_at"],
                         "notice": "后续研究提出了不同判断，待核对；未自动改写已保存知识。"

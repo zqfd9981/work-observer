@@ -85,6 +85,8 @@ def upstream_revision_notices(findings):
                 "previous_claim_index": revision["previous_claim_index"],
                 "decision": revision["decision"],
                 "reason": revision["reason"][:400],
+                "aspects": revision.get("aspects", []),
+                "comparison_notice": revision.get("comparison_notice"),
             }
             for correction_index, run_id, revision in corrections
             if correction_index > index and revision["previous_run_id"] in ancestors
@@ -1125,6 +1127,8 @@ class ProjectService:
                         "decision": revision["decision"],
                         "new_claim_indices": revision["new_claim_indices"],
                         "reason": revision["reason"][:400],
+                        "aspects": revision.get("aspects", []),
+                        "comparison_notice": revision.get("comparison_notice"),
                         "review_state": previous["state"],
                         "source_scope_version": previous["scope_version"],
                         "historical_scope": previous["scope_version"] != step["scope_version"],
@@ -1230,7 +1234,7 @@ class ProjectService:
                 key=lambda pair: -len(query_tokens & _tokens(pair[1]["text"])),
             )
             for index, claim in ranked:
-                selected = {"text": claim["text"], "previous_claim_index": index}
+                selected = {**claim, "previous_claim_index": index}
                 if decisions := followups.get((previous["run_id"], index)):
                     selected["followup_decisions"] = decisions[-3:]
                 historical["derived_claims"].append(selected)

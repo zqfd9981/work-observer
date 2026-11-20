@@ -1,7 +1,7 @@
 // Verify the production start/follow-up sequence with isolated API and DOM doubles.
 const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
 const nodes=new Map(),storage=new Map();
-const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{checked:false,value:"",disabled:false,children:[],focus(){},scrollIntoView(){},append(child){this.children.push(child);},insertAdjacentHTML(position,html){this.innerHTML=(this.innerHTML||"")+html;},querySelector:node,querySelectorAll:()=>[],addEventListener(){}});return nodes.get(selector);};
+const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{checked:false,value:"",disabled:false,dataset:{},children:[],focus(){},scrollIntoView(){},append(child){this.children.push(child);},insertAdjacentHTML(position,html){this.innerHTML=(this.innerHTML||"")+html;},querySelector:node,querySelectorAll:()=>[],addEventListener(){}});return nodes.get(selector);};
 const context={document:{createElement:tag=>node("created-"+tag),querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:""},sessionStorage:{setItem:(k,v)=>storage.set(k,v),getItem:k=>storage.get(k)||null,removeItem:k=>storage.delete(k)},crypto:{randomUUID:()=>"synthetic-request"},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),context);

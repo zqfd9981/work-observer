@@ -87,8 +87,73 @@ def test_forged_or_mislabelled_revision_is_rejected(change):
 def test_new_evidence_means_new_to_old_read_receipts_not_new_publication():
     value, context = data()
     value["revisions"][0].update(trigger="new_evidence", evidence_ids=["e2"])
+    value["claims"][0]["evidence_ids"] = ["e2"]
     result = validate_revisions(
         CognitionAnswer.model_validate(value), {"e1": {}, "e2": {}}, context
     )
     assert result[0]["evidence_relation"] == "new_to_prior_run"
     assert "不是外部需求变化" in result[0]["notice"]
+
+
+def partial_recheck():
+    value, context = data()
+    context["previous_findings"][0]["derived_claims"][0]["text"] = (
+        "建设内部工具，孵化产品并支持技术尽调。"
+    )
+    value["claims"][0]["text"] = "这份资料明示建设内部工具。"
+    revision = value["revisions"][0]
+    revision.update(
+        decision="unresolved",
+        aspects=[
+            dict(
+                previous_excerpt="建设内部工具",
+                decision="retain",
+                new_claim_indices=[0],
+                evidence_ids=["e1"],
+                reason="本轮原文支持此任务。",
+            ),
+            dict(
+                previous_excerpt="孵化产品并支持技术尽调",
+                decision="unresolved",
+                new_claim_indices=[],
+                evidence_ids=["e1"],
+                reason="本轮尚未复查这些任务及其交付细节。",
+            ),
+        ],
+    )
+    return value, context
+
+
+def test_partial_recheck_binds_exact_old_parts_and_keeps_unreviewed_work_explicit():
+    value, context = partial_recheck()
+    result = validate_revisions(CognitionAnswer.model_validate(value), {"e1": {}}, context)[0]
+    assert result["decision"] == "unresolved"
+    assert result["aspects"][0]["new_statements"] == [value["claims"][0]["text"]]
+    assert result["aspects"][1]["new_statements"] == []
+    assert "语义已经验证" in result["comparison_notice"]
+
+
+@pytest.mark.parametrize(
+    "mistake", ["whole_retained", "rewritten_quote", "wrong_link", "wrong_source"]
+)
+def test_partial_recheck_cannot_hide_unknowns_or_forge_its_mapping(mistake):
+    value, context = partial_recheck()
+    revision = value["revisions"][0]
+    if mistake == "whole_retained":
+        revision["decision"] = "retain"
+    elif mistake == "rewritten_quote":
+        revision["aspects"][0]["previous_excerpt"] = "独立决定投资"
+    elif mistake == "wrong_link":
+        revision["aspects"][0]["new_claim_indices"] = [1]
+    else:
+        revision["aspects"][0]["evidence_ids"] = ["e2"]
+    with pytest.raises(ValueError):
+        validate_revisions(CognitionAnswer.model_validate(value), {"e1": {}, "e2": {}}, context)
+
+
+def test_legacy_unpartitioned_revision_is_reported_without_rewriting_the_saved_record():
+    value, context = data()
+    before = deepcopy(value)
+    result = validate_revisions(CognitionAnswer.model_validate(value), {"e1": {}}, context)[0]
+    assert result["aspects"] == [] and "未提供逐项对照" in result["comparison_notice"]
+    assert value == before

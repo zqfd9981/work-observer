@@ -34,3 +34,11 @@ assert.equal(vm.runInContext("projectUnderstanding(project).maps.length",ctx),0)
 first.result.audit={};ctx.project.scope_version=2;
 assert.equal(vm.runInContext("projectUnderstanding(project).maps.length",ctx),0);
 console.log("Reopened maps retain original indices and show corrections on dependent structures.");
+
+ctx.project.scope_version=1;
+const later={...second,id:"later",run_id:"later",result:{...second.result,cognition_revisions:[{...revision,decision:"retain",reason:"后续重读确认原限定"}]}};
+ctx.project.steps.push(later);
+const latestView=vm.runInContext("projectUnderstanding(project)",ctx);
+const affectedItem=latestView.maps[0].sections.find(s=>s.key==="work_relations").items[0];
+assert.equal(affectedItem.changes.length,2);
+assert.deepEqual(Array.from(affectedItem.currentChanges,change=>change.revision.decision),["retain"]);

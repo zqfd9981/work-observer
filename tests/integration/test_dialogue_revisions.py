@@ -45,7 +45,8 @@ class ConversationModel:
         else:
             if self.interrupt:
                 raise asyncio.CancelledError()
-            evidence = outputs[0]["evidence"][0]["id"]
+            receipt = outputs[0]["evidence"][0]
+            evidence = receipt.get("citation_key", receipt["id"])
             args = {
                 "claims": [
                     {
@@ -71,6 +72,15 @@ class ConversationModel:
                         "new_claim_indices": [0],
                         "evidence_ids": [evidence],
                         "reason": "同一原文重读，只支持任务和协作，不支持个人上线权推断。",
+                        "aspects": [
+                            {
+                                "previous_excerpt": old["derived_claims"][0]["text"],
+                                "decision": "revise",
+                                "new_claim_indices": [0],
+                                "evidence_ids": [evidence],
+                                "reason": "任务及协作不证明个人拥有最终上线权。",
+                            }
+                        ],
                     }
                 ]
             name = "finish_research"
@@ -151,6 +161,9 @@ def test_targeted_user_correction_is_recalled_before_revision_without_overwritin
     assert revision["previous_run_id"] == step["run_id"]
     assert revision["previous_statement"] == original["claims"][0]["text"]
     assert revision["decision"] == "revise"
+    assert revision["aspects"][0]["previous_excerpt"] == original["claims"][0]["text"]
+    assert revision["aspects"][0]["evidence_ids"] == result["claims"][0]["evidence_ids"]
+    assert revision["aspects"][0]["new_statements"] == [result["claims"][0]["text"]]
     assert store.get(step["run_id"])["result"] == original
     assert correction["status"] == "active" and correction["source_run_id"] is None
     assert not correction["evidence"]  # A user opinion is not original source evidence.
@@ -247,6 +260,7 @@ def test_three_turn_reopened_conversation_carries_pending_revision_without_a_map
         old = next(row for row in context["previous_findings"] if row["run_id"] == first["run_id"])
         decisions = old["derived_claims"][0]["followup_decisions"]
         assert decisions[-1]["decision"] == "revise" and decisions[-1]["run_id"] == second["run_id"]
+        assert decisions[-1]["aspects"] == revision["aspects"]
         assert any(row["run_id"] == second["run_id"] for row in context["previous_findings"])
         assert all(step["state"] == "waiting_review" for step in project["steps"])
         assert service.usage(project)["calls"] == 6

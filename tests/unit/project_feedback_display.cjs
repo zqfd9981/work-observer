@@ -21,7 +21,7 @@ vm.runInContext('api=async(route,options)=>{calls.push({route,options});return r
  assert.ok(html.includes('data-review-id="'+"d".repeat(32)+'"'));
  assert.ok(html.includes("Agent辅助复核，非人审")&&html.includes("保存后需点击项目的继续才执行"));
  assert.ok(html.includes("5 次调用、60 秒"));
- const event={target:{id:"",dataset:{stepRepair:"c".repeat(32),reviewId:"d".repeat(32)},closest:()=>null,elements:{note:{value:"  合成限定补查  "},max_calls:{value:"4"},timeout:{value:"55"},offline:{checked:false}}},preventDefault(){}};
+ const event={target:{id:"",dataset:{stepRepair:"c".repeat(32),reviewId:"d".repeat(32)},matches:()=>false,closest:()=>null,elements:{note:{value:"  合成限定补查  "},max_calls:{value:"4"},timeout:{value:"55"},offline:{checked:false}}},preventDefault(){}};
  for(const handler of handlers.submit)await handler(event);
  const writes=context.calls.filter(row=>row.options?.method==="POST");
  assert.equal(writes.length,1);

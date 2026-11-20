@@ -5,10 +5,11 @@ from copy import deepcopy
 from pydantic import Field
 
 from work_observer.research.agent import Answer
-from work_observer.research.cognition import CognitiveRevision, validate_revisions
+from work_observer.research.cognition import REVISION_POLICY, CognitiveRevision, validate_revisions
 
 VERSION = "standard-dialogue-v2"
-POLICY = """
+POLICY = (
+    """
 本轮是普通持续研究，不需要工作地图。finish_research的revisions可为空列表。
 若与project_context.previous_findings中的旧判断相关，用最少必要记录说明保留、修订、撤回或未解决；
 previous_claim_index使用旧derived_claims里的previous_claim_index，不是展示位置；
@@ -22,6 +23,8 @@ review只用于确有明确复核反馈的修正。不要捏造人审、旧结�
 claims.text、gaps和reason用读者可理解的表述，不写previous_claim_index、run_id等内部字段名；
 需要提旧判断时用其内容说明，精确编号与运行回链交由revisions字段和程序展示。
 """
+    + REVISION_POLICY
+)
 
 
 class DialogueAnswer(Answer):
@@ -64,14 +67,4 @@ def validate(answer, evidence, context, review_feedback=None):
                 not review_feedback or review_feedback.get("run_id") != revision.previous_run_id
             ):
                 raise ValueError("本轮没有该旧判断的明确复核反馈，重读原文应使用recheck")
-    checked = validate_revisions(answer, evidence, context)
-    for revision in answer.revisions:
-        if revision.decision in {"retain", "revise"}:
-            sources = set(revision.evidence_ids)
-            claims = [answer.claims[i] for i in revision.new_claim_indices]
-            bound = {key for claim in claims for key in claim.evidence_ids}
-            if not sources <= bound or any(
-                not sources.intersection(c.evidence_ids) for c in claims
-            ):
-                raise ValueError("修正依据必须实际用于所指的新判断，且每条新判断有相应依据")
-    return checked
+    return validate_revisions(answer, evidence, context)

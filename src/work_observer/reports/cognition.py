@@ -252,6 +252,19 @@ def render_revisions(result, labels):
                 f"旧判断：{row['previous_statement']}",
                 *[f"本轮判断：{statement}" for statement in row["new_statements"]],
                 f"理由：{row['reason']}",
+                row.get("comparison_notice")
+                or ("这条历史记录未提供逐项对照，不能仅凭简写确认整条旧判断已保留。"),
+                *[
+                    f"- {decisions[part['decision']]}：旧内容「{part['previous_excerpt']}」；"
+                    + "；".join(f"对应判断：{text}" for text in part.get("new_statements", []))
+                    + f"；理由：{part['reason']}；依据："
+                    + " ".join(
+                        f"[{labels[k]}](#{labels[k].lower()})"
+                        for k in part["evidence_ids"]
+                        if k in labels
+                    )
+                    for part in row.get("aspects", [])
+                ],
                 "材料关系："
                 + (
                     "重读原材料"

@@ -9,7 +9,24 @@ from work_observer.reports.cognition import ResearchWorkMap, checked_map
 from work_observer.research.agent import Answer
 
 VERSION = "work-map-v3-work-relations"
-POLICY = """
+REVISION_POLICY = """
+先核对旧判断的主体、适用材料、任务/交付物、责任边界和资格性质，再写本轮回答。
+每条revision用aspects逐项对照旧判断中与本题有关的不同内容；previous_excerpt逐字摘取旧判断，
+不能由你改写原话。每项单独说明保留、修订、撤回或未解决，连接真正表达该内容的新判断与本轮原文。
+新判断只重述了旧判断的一部分时，不能据此声称整条保留；旧判断其他内容须补查，
+或用unresolved项明确哪些未复查及原因，整条decision相应使用unresolved或revise。
+旧判断已有followup_decisions时，按先旧后新的顺序核对最后一次处理及其逐项内容；
+早期的疑问可能已被后续调查处理，不能只复制最早疑问，也不能把最后意见自动当作证实。
+例如旧判断同时写了内部工具、产品孵化和技术尽调，新判断只写内部工具：
+内部工具可列retain，另外两项若未查应列unresolved，不能把整条标retain。
+主体或范围扩大、推断改为直接事实、优先改为必备、支持决策改为拥有决定权，均是实质改动，
+不能列retain。没有读到不等于原判断被反驳，withdraw须解释反证或原推理为何不成立。
+reason解释这次核对为何这样处理；aspects.reason解释每个具体对应，不以新增引用数量代替理由。
+aspects不能遗漏会改变原判断含义的限定；只是话题相关或措辞相近不表示语义等价。
+这些逐项解释也是待核对的Agent分析，不代表程序已经判定新旧语义完全一致。
+"""
+POLICY = (
+    """
 本轮成果是工作地图与业务/工作关系，仍由你这个研究Agent选择调查和比较，不是按固定分类填表。
 finish_research同时提交claims、gaps、work_map和revisions。work_map.version填work-map-v3-work-relations。
 先根据业务问题、主要任务和交付物形成可重叠分组，不按职位标题、工具名称或预设五类硬分。
@@ -21,6 +38,10 @@ target_claim_index定位本次claims，程序保留完整原判断及category，
 为什么相关以及适用/迁移边界。predicate可为supports支撑、requires需要、produces产出、contradicts反驳；
 requires表示本条工作关系的条件，不自动表示招聘必备资格，任职要求强度仍以claims.requirement为准。
 不要强行凑齐六维或把工具提及改写为个人能力。分组claim_indices和关系两端都是本次claims零起始下标，必须实际存在。
+解释工作时先串联有依据的业务问题、实际任务与交付物，再说明能力/工具如何支持该任务，
+责任只描述原文明示的分工；协作或为决策提供依据不能推成独立负责或拥有决定权。
+同一岗位既做内部工具、又做产品探索或专业分析时，应保留这些不同任务与交付对象，
+不能因共用Agent或某种框架而合并为一种工作。共同技术栈只支持技术联系，不直接证明职责可迁移。
 单条关系的rationale/transfer_limit只解释所连接判断；跨关系或跨岗位的共用、差异、迁移比较放comparisons，
 每项relation_indices至少选两条不同关系，写common_ground、differences、transfer_conditions和unknowns。
 程序从被比较关系汇集全部两端判断和引用，不再另填一套可能漏侧的比较claim_indices；比较仍需语义核对。
@@ -46,6 +67,17 @@ trigger=recheck表示重新解释同一材料，new_evidence须有旧轮未读�
 旧判断仍待审核时不能称已被人类确认；excluded_prior_findings只说明旧结果被隔离，不是证据。
 理解修订不等于企业或行业变化；重读材料、增加引用与新发布资料分别说明。
 """
+    + REVISION_POLICY
+)
+
+
+class RevisionAspect(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    previous_excerpt: str = Field(min_length=1, max_length=1200)
+    decision: Literal["retain", "revise", "withdraw", "unresolved"]
+    new_claim_indices: list[StrictInt] = Field(max_length=24)
+    evidence_ids: list[str] = Field(min_length=1, max_length=10)
+    reason: str = Field(min_length=1, max_length=800)
 
 
 class CognitiveRevision(BaseModel):
@@ -57,6 +89,7 @@ class CognitiveRevision(BaseModel):
     new_claim_indices: list[StrictInt] = Field(max_length=24)
     evidence_ids: list[str] = Field(min_length=1, max_length=10)
     reason: str = Field(min_length=1, max_length=1200)
+    aspects: list[RevisionAspect] = Field(default_factory=list, min_length=1, max_length=10)
 
 
 class CognitionAnswer(Answer):
@@ -151,9 +184,50 @@ def validate_revisions(answer, evidence, context):
             raise ValueError("保留或修订需要指向本轮有原文支持的判断")
         if not set(revision.evidence_ids) <= set(evidence):
             raise ValueError("修订只能引用本轮已读原文")
+        if revision.decision in {"retain", "revise"}:
+            sources = set(revision.evidence_ids)
+            claims = [answer.claims[i] for i in revision.new_claim_indices]
+            bound = {key for claim in claims for key in claim.evidence_ids}
+            if not sources <= bound or any(
+                not sources.intersection(claim.evidence_ids) for claim in claims
+            ):
+                raise ValueError("修正依据必须实际用于所指的新判断，且每条新判断有相应依据")
         newly_read = set(revision.evidence_ids) - set(row.get("read_evidence_ids", []))
         if revision.trigger == "new_evidence" and not newly_read:
             raise ValueError("同一原文的重读不能标为旧轮未读的新证据，请使用recheck")
+        aspects = []
+        for aspect in revision.aspects:
+            if aspect.previous_excerpt not in old["text"]:
+                raise ValueError("逐项对照必须逐字摘取所指旧判断，不能改写旧原话")
+            if not set(aspect.new_claim_indices) <= set(revision.new_claim_indices):
+                raise ValueError("逐项对照只能指向本条修正所列的新判断")
+            if not set(aspect.evidence_ids) <= set(revision.evidence_ids):
+                raise ValueError("逐项对照只能使用本条修正已列出的本轮依据")
+            if aspect.decision in {"retain", "revise"}:
+                bound = {
+                    key
+                    for i in aspect.new_claim_indices
+                    for key in answer.claims[i].evidence_ids
+                }
+                if (
+                    not aspect.new_claim_indices
+                    or not set(aspect.evidence_ids) <= bound
+                    or any(
+                        not set(aspect.evidence_ids).intersection(answer.claims[i].evidence_ids)
+                        for i in aspect.new_claim_indices
+                    )
+                ):
+                    raise ValueError("逐项保留或修订须连接表达该内容且使用对应依据的新判断")
+            if revision.decision == "retain" and aspect.decision != "retain":
+                raise ValueError("有修订、撤回或未解决的内容时，不能把整条旧判断标为保留")
+            if revision.decision == "withdraw" and aspect.decision in {"retain", "revise"}:
+                raise ValueError("仍有保留或修订的内容时，不能把整条旧判断标为撤回")
+            aspects.append(
+                {
+                    **aspect.model_dump(),
+                    "new_statements": [answer.claims[i].text for i in aspect.new_claim_indices],
+                }
+            )
         checked.append(
             {
                 **revision.model_dump(),
@@ -170,6 +244,15 @@ def validate_revisions(answer, evidence, context):
                     else {}
                 ),
                 "new_statements": [answer.claims[i].text for i in revision.new_claim_indices],
+                "aspects": aspects,
+                "comparison_notice": (
+                    "逐项对应是Agent的解释，仍须核对主体、范围与遗漏，不能视为语义已经验证。"
+                    if aspects
+                    else (
+                        "这条记录未提供逐项对照；新表述可能只覆盖旧判断的一部分，"
+                        "不能据此确认整条含义已保留。"
+                    )
+                ),
                 "evidence_relation": "new_to_prior_run" if newly_read else "reread",
                 "notice": "认识变化记录；不是外部需求变化或独立人审。",
             }

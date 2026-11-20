@@ -540,7 +540,7 @@ function renderCognitiveRevisions(result, evidence) {
   const labels={retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"};
   const reviewLabels={waiting_review:"待核对",completed:"项目内已接受（不等于独立质量审核）"};
   const priorState=row=>(reviewLabels[row.previous_review_state] || row.previous_review_state)+(row.previous_quality_review?.status==="rejected"?" · 原质量核对未通过（"+(row.previous_quality_review.reviewer_kind==="human"?"人工核对":"Agent辅助，非独立人审")+"）":"");
-  return `<section class="detail-section"><h2>认识修正记录</h2><p class="form-note">记录认识为什么保留或改变；不等于外部工作需求变化，也不表示旧判断已获人审。</p>${revisions.map(row=>`<article class="panel"><h3>${e(labels[row.decision])}旧判断 ${e(row.previous_claim_index+1)}</h3><p><strong>原判断：</strong>${e(row.previous_statement)}</p>${row.new_statements.map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(row.reason)}</p>${renderRevisionScope(row)}<p class="form-note">原步骤状态 ${e(priorState(row))} · ${row.evidence_relation === "reread" ? "重读原材料" : "含旧轮未读的引用；不表示新发布资料"}</p>${row.evidence_ids.filter(id=>evidence.has(id)).map(id=>`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`).join(" ")}<button class="text-button" data-open-run="${e(row.previous_run_id)}">查看旧研究 ↗</button></article>`).join("")}</section>`;
+  return `<section class="detail-section"><h2>认识修正记录</h2><p class="form-note">记录认识为什么保留或改变；不等于外部工作需求变化，也不表示旧判断已获人审。</p>${revisions.map(row=>`<article class="panel"><h3>${e(labels[row.decision])}旧判断 ${e(row.previous_claim_index+1)}</h3><p><strong>原判断：</strong>${e(row.previous_statement)}</p>${row.new_statements.map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(row.reason)}</p>${renderRevisionAspects(row,evidence)}${renderRevisionScope(row)}<p class="form-note">原步骤状态 ${e(priorState(row))} · ${row.evidence_relation === "reread" ? "重读原材料" : "含旧轮未读的引用；不表示新发布资料"}</p>${row.evidence_ids.filter(id=>evidence.has(id)).map(id=>`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`).join(" ")}<button class="text-button" data-open-run="${e(row.previous_run_id)}">查看旧研究 ↗</button></article>`).join("")}</section>`;
 }
 
 const workDimensionLabels={business:"业务问题",task:"任务",deliverable:"交付物",responsibility:"责任",ability:"能力",tool:"工具"};
@@ -1052,7 +1052,27 @@ function renderUpstreamRevisionNotices(result) {
   const notices=result.upstream_revision_notices;
   if(!notices?.items?.length)return "";
   const decisions={revise:"修订",withdraw:"撤回",unresolved:"仍有疑问"};
-  return `<section class="research-context"><h3>沿用的旧研究后来出现不同判断</h3><p>${e(notices.notice)}</p>${notices.items.map(row=>`<p>${e(decisions[row.decision]||"后续意见")}：${e(row.reason)} <button class="text-button" data-open-run="${e(row.previous_run_id)}">查看原判断所在研究 ↗</button> <button class="text-button" data-open-run="${e(row.run_id)}">查看后续修正及原文 ↗</button></p>`).join("")}${notices.omitted?`<p class="form-note">另有 ${e(notices.omitted)} 条相关意见，请在逐轮记录中核对。</p>`:""}</section>`;
+  return `<section class="research-context"><h3>沿用的旧研究后来出现不同判断</h3><p>${e(notices.notice)}</p>${notices.items.map(row=>`<section><p>${e(decisions[row.decision]||"后续意见")}：${e(row.reason)} <button class="text-button" data-open-run="${e(row.previous_run_id)}">查看原判断所在研究 ↗</button> <button class="text-button" data-open-run="${e(row.run_id)}">查看后续修正及原文 ↗</button></p>${renderRevisionAspects(row)}</section>`).join("")}${notices.omitted?`<p class="form-note">另有 ${e(notices.omitted)} 条相关意见，请在逐轮记录中核对。</p>`:""}</section>`;
+}
+
+function revisionComparisonNotice(row) {
+  return row.comparison_notice || "这条历史记录未提供逐项对照，不能仅凭简写确认整条旧判断已保留。";
+}
+
+function renderRevisionAspects(row,evidence) {
+  const labels={retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"};
+  return `<p class="form-note">${e(revisionComparisonNotice(row))}</p>${(row.aspects||[]).map(part=>`<section class="research-context"><strong>${e(labels[part.decision]||"待核对")}的具体内容</strong><p>旧内容：${e(part.previous_excerpt)}</p>${(part.new_statements||[]).map(text=>`<p>对应本轮判断：${e(text)}</p>`).join("")}<p>${e(part.reason)}</p>${(part.evidence_ids||[]).filter(id=>evidence?.has(id)).map(id=>`<button class="cite" data-cite="${e(id)}">核对 ${e(evidence.get(id).label||"原文")} ↗</button>`).join(" ")}</section>`).join("")}`;
+}
+
+function revisionAspectLines(row,line,refs=()=>"") {
+  const labels={retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"};
+  return [line(revisionComparisonNotice(row)),...(row.aspects||[]).flatMap(part=>{
+    const citations=refs(part.evidence_ids);
+    return [
+    "- "+labels[part.decision]+"的旧内容："+line(part.previous_excerpt),
+    ...(part.new_statements||[]).map(text=>"  对应本轮判断："+line(text)),
+    "  理由："+line(part.reason),...(citations?["  原文依据："+citations]:[])
+  ];})];
 }
 
 function projectUnderstanding(project) {
@@ -1069,12 +1089,16 @@ function projectUnderstanding(project) {
     if(reason){excluded.push({step,reason,round:position+1});continue;}
     included.push({step,result,round:position+1});
   }
-  const replaced=new Set(),unresolved=new Set(),changes=[];
+  const replaced=new Set(),unresolved=new Set(),changes=[],latestDecisions=new Map();
   for(const row of included)for(const revision of row.result.cognition_revisions||[]) {
     const key=revision.previous_run_id+":"+revision.previous_claim_index;
+    const change={...row,revision};
+    latestDecisions.set(key,change);
+    changes.push(change);
+  }
+  for(const [key,{revision}] of latestDecisions) {
     if(["revise","withdraw"].includes(revision.decision))replaced.add(key);
     if(revision.decision==="unresolved")unresolved.add(key);
-    changes.push({...row,revision});
   }
   const claims=[];
   for(const row of included.slice().reverse())for(const [index,claim] of (row.result.claims||[]).entries()) {
@@ -1084,12 +1108,20 @@ function projectUnderstanding(project) {
     claims.push({...row,index,claim,evidence,unresolved:unresolved.has(key)});
   }
   const questions=[];
+  for(const row of latestDecisions.values())for(const part of row.revision.aspects||[]) {
+    if(part.decision!=="unresolved")continue;
+    const text="核实旧判断中的「"+part.previous_excerpt+"」："+part.reason;
+    if(!questions.some(q=>q.text===text))questions.push({...row,text});
+  }
   for(const row of included.slice(-1))for(const text of row.result.review?.next_questions||row.result.gaps||[]) {
     if(/[？?]|核实|补查/.test(text)&&!questions.some(q=>q.text===text))questions.push({...row,text});
   }
   const maps=included.slice().reverse().filter(row=>row.result.work_map).map(row=>{
     const map=row.result.work_map;
-    const sections=["work_types","work_relations","ability_relations","comparisons"].map(key=>({key,items:(map[key]||[]).map((item,index)=>({item,index,changes:changes.filter(change=>change.revision.previous_run_id===row.step.run_id&&(item.claim_indices||[]).includes(change.revision.previous_claim_index))}))}));
+    const sections=["work_types","work_relations","ability_relations","comparisons"].map(key=>({key,items:(map[key]||[]).map((item,index)=>{
+      const related=changes.filter(change=>change.revision.previous_run_id===row.step.run_id&&(item.claim_indices||[]).includes(change.revision.previous_claim_index));
+      return {item,index,changes:related,currentChanges:related.filter(change=>latestDecisions.get(change.revision.previous_run_id+":"+change.revision.previous_claim_index)===change)};
+    })}));
     return {...row,sections};
   });
   const scopeHistory=excluded.filter(row=>row.reason==="研究范围已调整"&&row.step.result.audit&&
@@ -1157,10 +1189,10 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
   for(const row of view.maps){
     const map=row.result.work_map;
     lines.push("### 第 "+row.round+" 轮地图 · "+line(row.step.question),"",line(map.scope_note),"");
-    for(const section of row.sections)for(const {item,index,changes} of section.items){
+    for(const section of row.sections)for(const {item,index,changes,currentChanges} of section.items){
       const name=section.key==="work_types"?item.name:section.key==="ability_relations"?item.task+" → "+item.ability:section.key==="comparisons"?"关系比较 "+(index+1):item.source_text+" → "+(workPredicateLabels[item.predicate]||item.predicate)+" → "+item.target_text;
-      const affected=changes.some(change=>["revise","withdraw"].includes(change.revision.decision));
-      lines.push("#### "+line(name),"",affected?"状态：受后续修订或撤回影响，保留供对照。":changes.some(change=>change.revision.decision==="unresolved")?"状态：后续仍有疑问。":"状态：原研究解释，待核对。",
+      const affected=currentChanges.some(change=>["revise","withdraw"].includes(change.revision.decision));
+      lines.push("#### "+line(name),"",affected?"状态：受后续修订或撤回影响，保留供对照。":currentChanges.some(change=>change.revision.decision==="unresolved")?"状态：后续仍有疑问。":"状态：原研究解释，待核对。",
         "解释性质："+text(claimBasisLabels[item.basis]||"性质未标注"));
       const fields=section.key==="work_types"?[["要解决的问题",item.problem],["任务",item.tasks],["交付物",item.deliverables],["边界与反例",item.boundary],["下一步验证",item.next_check]]
         :section.key==="comparisons"?[["共用点",item.common_ground],["差异",item.differences],["迁移条件",item.transfer_conditions],["仍待核实",(item.unknowns||[]).join("；")]]
@@ -1206,7 +1238,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
   for(const row of view.changes){const revision=row.revision;
     lines.push("### 第 "+row.round+" 轮 · "+labels[revision.decision],"",
       "旧判断："+line(revision.previous_statement),...revision.new_statements.map(value=>"本轮判断："+line(value)),
-      "理由："+line(revision.reason),revision.evidence_relation==="reread"?"材料关系：重读原材料。":"材料关系：包含旧轮未读的引用，不表示来源新发布。",
+      "理由："+line(revision.reason),...revisionAspectLines(revision,line,ids=>refs(row,ids)),revision.evidence_relation==="reread"?"材料关系：重读原材料。":"材料关系：包含旧轮未读的引用，不表示来源新发布。",
       ...(renderRevisionScope(revision)?["研究范围或目标已经调整；本次是新范围下的重新核对，不表示外部工作变化。"]:[]),
       "原研究定位："+text(revision.previous_run_id),"本轮依据："+refs(row,revision.evidence_ids),"");
   }
@@ -1214,7 +1246,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
   if(affectedRounds.length)lines.push("## 沿用旧认识的下游研究", "");
   for(const row of affectedRounds){const notices=row.result.upstream_revision_notices;
     lines.push("### 第 "+row.round+" 轮 · "+line(row.step.question),"",line(notices.notice));
-    for(const notice of notices.items)lines.push("- 后续"+labels[notice.decision]+"："+line(notice.reason)+"；原研究："+text(notice.previous_run_id)+"；修正研究："+text(notice.run_id));
+    for(const notice of notices.items)lines.push("- 后续"+labels[notice.decision]+"："+line(notice.reason)+"；原研究："+text(notice.previous_run_id)+"；修正研究："+text(notice.run_id),...revisionAspectLines(notice,line));
     if(notices.omitted)lines.push("另有 "+notices.omitted+" 条相关意见，须在原工作台逐轮核对。");
     lines.push("");
   }
@@ -1279,9 +1311,9 @@ function renderProjectMaps(view) {
   const sectionNames={work_types:"boundary",work_relations:"relation",ability_relations:"ability",comparisons:"comparison"};
   return `<section class="detail-section"><h3>工作地图与后续修正</h3><p class="form-note">按原研究逐轮展示，不自动合并为新的结论。受后续修订或撤回影响的部分保留供对照；其余解释仍需核对，引用完整不表示已经成立。</p>${view.maps.map((row,position)=>{
     const map=row.result.work_map;
-    return `<details class="detail-section" ${position===0?"open":""}><summary>第 ${row.round} 轮地图 · ${e(row.step.question)}</summary><p>${e(map.scope_note)}</p>${row.sections.filter(section=>section.items.length).map(section=>`<h4>${e(labels[section.key])}</h4>${section.items.map(({item,index,changes})=>{
-      const affected=changes.some(change=>["revise","withdraw"].includes(change.revision.decision));
-      const uncertain=changes.some(change=>change.revision.decision==="unresolved");
+    return `<details class="detail-section" ${position===0?"open":""}><summary>第 ${row.round} 轮地图 · ${e(row.step.question)}</summary><p>${e(map.scope_note)}</p>${row.sections.filter(section=>section.items.length).map(section=>`<h4>${e(labels[section.key])}</h4>${section.items.map(({item,index,changes,currentChanges})=>{
+      const affected=currentChanges.some(change=>["revise","withdraw"].includes(change.revision.decision));
+      const uncertain=currentChanges.some(change=>change.revision.decision==="unresolved");
       let title,body;
       if(section.key==="work_types"){
         title=item.name;body=`<dl>${detailData("要解决的问题",item.problem)}${detailData("主要任务",item.tasks)}${detailData("交付物",item.deliverables)}${detailData("边界与反例",item.boundary)}${detailData("下一步验证",item.next_check)}</dl>`;
@@ -1317,8 +1349,9 @@ function renderProjectUnderstanding(project,knowledge=[]) {
   if(!(project.steps||[]).some(step=>step.result))return "";
   const view=projectUnderstanding(project);
   const claimCard=row=>`<section class="claim">${badge(row.unresolved?"后续仍有疑问":row.result.business_review?.status==="approved"&&row.result.business_review?.reviewer_kind==="human"?"人工核对通过":"待核对",row.unresolved?"amber":"muted")} ${badge(claimBasisLabel(row.claim),"muted")} ${badge(requirementLabels[row.claim.requirement]||"性质待核","muted")} ${row.evidence.some(ev=>ev.historical_cutoffs?.length)?badge("含历史时点依据","muted"):""}<p>${e(row.claim.text)}</p><p class="form-note">第 ${row.round} 轮 · ${e(row.step.question)}</p><details class="research-context"><summary>核对这一判断的原文依据 · ${row.evidence.length} 个片段</summary>${row.evidence.map(ev=>`<p><strong>${e(ev.title||"原文资料")}</strong> · ${e(sourceLabel(ev))}</p>${historicalEvidenceNote(ev)}<blockquote>${e(ev.quote||"")}</blockquote><p class="form-note">取得 ${e(when(ev.observed_at))} · 字符 ${e(ev.start)}–${e(ev.end)}</p>${ev.document_id?`<button class="text-button" data-source="${e(ev.document_id)}">核对来源版本 ↗</button>`:""}${ev.public_document_id?`<button class="text-button" data-public-source="${e(ev.public_document_id)}">查看归档全文 ↗</button>`:""}`).join("")}</details><button class="text-button" data-conversation-claim="${e(row.claim.text)}" data-reply-step="${e(row.step.id)}">针对这条认识继续核实 ↗</button><button class="text-button" data-open-run="${e(row.step.run_id)}">查看本轮完整回答 ↗</button>${claimCorrectionButton(row.step.id,row.index)}${renderClaimKnowledge(row.step.run_id,row.claim,row.index,new Map(row.evidence.map(ev=>[ev.id,ev])),knowledge)}</section>`;
-  const changeCard=({revision,step,round})=>`<section class="detail-section"><strong>第 ${round} 轮 · ${e(({retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"})[revision.decision]||"后续判断")}</strong><p><strong>旧判断：</strong>${e(revision.previous_statement)}</p>${(revision.new_statements||[]).map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(revision.reason)}</p>${renderRevisionScope(revision)}<p class="form-note">${revision.evidence_relation==="reread"?"重读原材料":"含旧轮未读的引用；不表示新发布资料"}</p><button class="text-button" data-open-run="${e(revision.previous_run_id)}">查看旧研究 ↗</button><button class="text-button" data-open-run="${e(step.run_id)}">查看这次修正及依据 ↗</button></section>`;
-  return `<article class="panel result-card"><h2>本研究当前认识</h2><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>导出整项研究成果 ↧</button><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length).map(row=>`<details class="detail-section" open><summary>第 ${row.round} 轮研究需要回看其沿用依据</summary>${renderUpstreamRevisionNotices(row.result)}</details>`).join("")}${renderProjectMaps(view)}${renderScopeHistory(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>最近有效回答留下的问题</h3>${view.questions.slice(0,5).map(row=>`<p><button class="text-button" data-conversation-followup="${e(row.text)}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`).join("")}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
+  const questionLink=row=>`<p><button class="text-button" data-conversation-followup="${e(row.text)}" data-reply-step="${e(row.step.id)}">${e(row.text)} ↗</button></p>`;
+  const changeCard=({revision,step,round})=>`<section class="detail-section"><strong>第 ${round} 轮 · ${e(({retain:"保留",revise:"修订",withdraw:"撤回",unresolved:"仍待核实"})[revision.decision]||"后续判断")}</strong><p><strong>旧判断：</strong>${e(revision.previous_statement)}</p>${(revision.new_statements||[]).map(text=>`<p><strong>本轮判断：</strong>${e(text)}</p>`).join("")}<p>${e(revision.reason)}</p>${renderRevisionAspects(revision)}${renderRevisionScope(revision)}<p class="form-note">${revision.evidence_relation==="reread"?"重读原材料":"含旧轮未读的引用；不表示新发布资料"}</p><button class="text-button" data-open-run="${e(revision.previous_run_id)}">查看旧研究 ↗</button><button class="text-button" data-open-run="${e(step.run_id)}">查看这次修正及依据 ↗</button></section>`;
+  return `<article class="panel result-card"><h2>本研究当前认识</h2><button type="button" class="secondary small" data-project-dossier="${e(project.id)}" ${project.worker_running?"disabled":""}>导出整项研究成果 ↧</button><p class="form-note">导出包含研究目标与引用原文，下载副本独立保留。</p><p class="form-note">按仍有效的研究记录整理。明确被修订或撤回的旧判断放入修正记录；其余判断仍须核对，没有自动采纳为知识。认识变化不等于外部工作变化。</p>${view.rounds.filter(row=>row.result.upstream_revision_notices?.items?.length).map(row=>`<details class="detail-section" open><summary>第 ${row.round} 轮研究需要回看其沿用依据</summary>${renderUpstreamRevisionNotices(row.result)}</details>`).join("")}${renderProjectMaps(view)}${renderScopeHistory(view)}${view.claims.length?`<div class="claim-list">${view.claims.slice(0,6).map(claimCard).join("")}</div>${view.claims.length>6?`<details class="detail-section"><summary>其余 ${view.claims.length-6} 条认识</summary>${view.claims.slice(6).map(claimCard).join("")}</details>`:""}`:'<p>尚没有可整理的当前判断。已有原文、未完成回答和核对意见保留在下方逐轮记录中。</p>'}${view.changes.length?`<details class="detail-section" open><summary>认识为何保留或改变 · ${view.changes.length} 条</summary>${view.changes.map(changeCard).join("")}</details>`:""}${view.questions.length?`<div class="detail-section"><h3>仍需核实的问题</h3>${view.questions.slice(0,5).map(questionLink).join("")}${view.questions.length>5?`<details><summary>其余 ${view.questions.length-5} 个问题</summary>${view.questions.slice(5).map(questionLink).join("")}</details>`:""}</div>`:""}${view.excluded.length?`<details class="detail-section"><summary>另有 ${view.excluded.length} 轮保留在历史中</summary>${view.excluded.map(({step,reason})=>`<p>${e(reason)} · ${e(step.question)}${step.run_id?` <button class="text-button" data-open-run="${e(step.run_id)}">查看原记录 ↗</button>`:""}</p>`).join("")}</details>`:""}<p class="form-note"><a href="#memory">查看已保存的知识与偏好 ↗</a></p></article>`;
 }
 
 function captureConversationDraft() {
@@ -2274,7 +2307,7 @@ const memoryValidityLabels = {outside_effective_time:"尚未生效或已过有�
 
 function renderMemoryRevisionNotices(notices) {
   const labels = {revise:"提出修订",withdraw:"建议撤回",unresolved:"尚未解决"};
-  return (notices || []).map(item=>`<div class="research-context">${badge("后续研究 · " + (labels[item.decision] || "待核对"),"amber")}${item.previous_statement?`<p><strong>涉及原判断 ${e(item.previous_claim_index+1)}：</strong>${e(item.previous_statement)}</p>`:""}<p>${e(item.reason)}</p>${(item.new_statements || []).map(text=>`<p>${e(text)}</p>`).join("")}<p class="form-note">后续判断待核对，已保存内容保留。请结合原文决定是否修订或撤回。</p><button class="text-button" data-open-run="${e(item.run_id)}">核对后续研究及原文 ↗</button></div>`).join("");
+  return (notices || []).map(item=>`<div class="research-context">${badge("后续研究 · " + (labels[item.decision] || "待核对"),"amber")}${item.previous_statement?`<p><strong>涉及原判断 ${e(item.previous_claim_index+1)}：</strong>${e(item.previous_statement)}</p>`:""}<p>${e(item.reason)}</p>${renderRevisionAspects(item)}${(item.new_statements || []).map(text=>`<p>${e(text)}</p>`).join("")}<p class="form-note">后续判断待核对，已保存内容保留。请结合原文决定是否修订或撤回。</p><button class="text-button" data-open-run="${e(item.run_id)}">核对后续研究及原文 ↗</button></div>`).join("");
 }
 
 function renderMemory(item) {

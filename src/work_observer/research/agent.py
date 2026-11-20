@@ -60,6 +60,12 @@ REQUIREMENT_POLICY = (
     "同一原文各轮采用一致口径；若修订旧判断，说明原判断、修订理由与引用，不能静默改变。"
 )
 ANSWER_DELIVERY_POLICY = (
+    "先按原文章节理解这份工作：服务什么业务问题、具体做什么、交付什么、与谁协作，"
+    "再解释所需能力与工具如何支撑这些任务；标题或工具相同不能直接归为同一种工作。"
+    "读取资格时先定位任职资格与职责段，再逐项识别一般条件、优先条件和条件化例外。"
+    "例如‘掌握Python；有多Agent经验优先’，分别表述为required的Python能力与preferred的多Agent经验；"
+    "不能合写为两项必备，也不能把职责里的‘建设评估集’自动变为招聘必备资格。"
+    "解释责任时区分提供建议、执行实现、协作交付与最终决策；推导产出时说明是推导及适用主体。"
     "按用户问题和指定条数选择最必要的判断，不按category逐类凑条。"
     "同一信息只说一次：比较说明中已提到的背景、任务或技术资格，不再另起一条重复。"
     "可在一条inference判断中先说明有引用的原文任务，再明确标出据此推导的产物与边界，"
@@ -2342,6 +2348,10 @@ async def _research(
                             revision.evidence_ids = [
                                 citation_ids.get(key, key) for key in revision.evidence_ids
                             ]
+                            for aspect in revision.aspects:
+                                aspect.evidence_ids = [
+                                    citation_ids.get(key, key) for key in aspect.evidence_ids
+                                ]
                     if approach == "source_first":
                         answer, resolution_issues = resolve_answer(
                             answer, result.get("source_findings", []), evidence

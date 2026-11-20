@@ -70,3 +70,25 @@ assert.ok(affectedHtml.includes("第 2 轮研究需要回看其沿用依据"));
 assert.ok(affectedHtml.includes('data-open-run="ancestor"')&&affectedHtml.includes('data-open-run="correction"'));
 assert.ok(affectedHtml.includes("&lt;script&gt;边界已改变&lt;/script&gt;")&&!affectedHtml.includes("<script>"));
 assert.ok(affectedHtml.includes("不能断定每条判断错误")&&affectedHtml.includes("另有 1 条相关意见"));
+
+// Partial rechecks expose the exact unreviewed work, then a later full recheck clears it.
+const partial=second.result.cognition_revisions[0];
+partial.decision="unresolved";
+partial.evidence_ids=["e1"];
+partial.aspects=[{previous_excerpt:"个人",decision:"retain",new_claim_indices:[0],new_statements:[second.result.claims[0].text],evidence_ids:["e1"],reason:"仅确认任务主体"},
+ {previous_excerpt:"独立上线",decision:"unresolved",new_claim_indices:[],new_statements:[],evidence_ids:["e1"],reason:"<script>尚缺权限依据</script>"}];
+view=vm.runInContext("projectUnderstanding(project)",context);
+assert.ok(view.claims.find(row=>row.step.id==="first").unresolved);
+assert.ok(view.questions.some(row=>row.text.includes("独立上线")&&row.step.id==="second"));
+const partialHtml=vm.runInContext("renderProjectUnderstanding(project)",context);
+assert.ok(partialHtml.includes("仍待核实的具体内容")&&partialHtml.includes("旧内容：独立上线"));
+assert.ok(partialHtml.includes("&lt;script&gt;尚缺权限依据&lt;/script&gt;")&&!partialHtml.includes("<script>"));
+const exportPartial=vm.runInContext("projectDossierMarkdown(project)",context);
+assert.ok(exportPartial.includes("仍待核实的旧内容：独立上线")&&exportPartial.includes("原文依据：[E"));
+const latest=step("third","已按资料重新核对旧解释");
+latest.result.cognition_revisions=[{...partial,decision:"revise",aspects:[{...partial.aspects[1],decision:"revise",new_claim_indices:[0],new_statements:[latest.result.claims[0].text],reason:"原文只能支持协作任务"}]}];
+context.project.steps.push(latest);
+view=vm.runInContext("projectUnderstanding(project)",context);
+assert.ok(!view.claims.some(row=>row.step.id==="first"));
+assert.ok(!view.questions.some(row=>row.text.includes("尚缺权限依据")));
+assert.equal(view.changes.length,2); // Old uncertainty is still in the historical change log.
