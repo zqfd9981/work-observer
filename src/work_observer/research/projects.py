@@ -1508,7 +1508,56 @@ class ProjectService:
                     "recorded_at": row.get("updated_at") or row["created_at"],
                 }
 
+            selected_inquiry = next(
+                (
+                    dict(row)
+                    for row in career.get("questions", [])
+                    if row["id"] == step.get("career_question_id")
+                ),
+                None,
+            )
+            if selected_inquiry:
+                earlier = []
+                for entry in career["runs"]:
+                    if (
+                        entry.get("question_id") != selected_inquiry["id"]
+                        or entry["step_id"] == step["id"]
+                    ):
+                        continue
+                    previous_step = next(
+                        (item for item in record["steps"] if item["id"] == entry["step_id"]), None
+                    )
+                    previous_run = (
+                        self.store.get(previous_step["run_id"])
+                        if previous_step and previous_step.get("run_id")
+                        else None
+                    )
+                    result = (previous_run or {}).get("result") or {}
+                    if (
+                        result.get("status") != "completed"
+                        or previous_run["state"] == "invalidated"
+                    ):
+                        continue
+                    earlier.append(
+                        {
+                            "question": entry.get("user_question"),
+                            "recorded_at": entry["created_at"],
+                            "claims_to_recheck": [
+                                claim["text"] for claim in result.get("claims", [])
+                            ],
+                            "unresolved_then": result.get("gaps", []),
+                            "same_job_scope": previous_step["scope_version"]
+                            == record["scope_version"],
+                        }
+                    )
+                selected_inquiry["earlier_discussions"] = earlier[-2:]
+                selected_inquiry["history_notice"] = (
+                    "先前分析只供对照问题如何推进，不是新证据。"
+                    "须重读本轮可用原文；指出新材料改变或未能改变哪些判断，不能直接沿用旧结论。"
+                )
+
             context["career_evidence"] = {
+                "selected_inquiry": selected_inquiry,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
                 "learning_selection_notice": "learning_notes只含最近选用的三份个人认识；"
                 "selected_learning_note是用户本次明确要求重查的完整记录，可能已搁置。"

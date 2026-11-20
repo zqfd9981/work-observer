@@ -70,3 +70,16 @@
 .career-live-research{padding:20px 24px;margin:18px 0;background:#f1f6eb;border:1px solid #d6e2cd}.career-live-research h3{font-size:16px;line-height:1.8;margin:9px 0;overflow-wrap:anywhere}.career-live-research>.result-actions{margin:14px 0 0}
 
 .career-pitch-section{margin:30px 0}.career-pitch-editor{padding:24px;margin:18px 0}.career-pitch-card{padding:20px 24px;margin:14px 0}.career-pitch-card>summary{cursor:pointer;font-size:15px;font-weight:600;color:#365b43}.career-pitch-text{white-space:pre-wrap;font-size:14px;line-height:2;overflow-wrap:anywhere}.career-pitch-editor .result-actions{margin:14px 0}.career-pitch-editor textarea{line-height:1.9}@media(max-width:680px){.career-pitch-editor,.career-pitch-card{padding:17px}}
+
+/* Keep an ongoing research question beside its discussions. */
+.career-question-board{margin-top:22px;padding:20px 24px}
+.career-question-board>summary{font-weight:600;cursor:pointer}
+.career-question-board form{margin:18px 0;padding:20px;background:var(--surface-muted,#f4f7f1);border-radius:12px}
+.career-question-board form label{display:block;margin-bottom:14px}
+.career-question-card{padding:20px 0;border-top:1px solid #e3e8df;margin-top:18px;overflow-wrap:anywhere}
+.career-question-card h3{font-size:16px;line-height:1.7;margin:0}
+.career-question-card p{white-space:pre-wrap;line-height:1.8}
+.career-question-card .quiet-tag{flex-shrink:0}
+.career-question-history{margin-top:18px}
+.career-question-conclusion{padding:14px;background:#f4f7f1;border-radius:8px}
+@media(max-width:600px){.career-question-board{padding:16px}.career-question-board form{padding:12px}.career-question-card .section-heading{align-items:flex-start;flex-wrap:wrap}}

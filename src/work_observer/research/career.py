@@ -159,6 +159,9 @@ class CareerService:
                 "job_count": len(row["job_ids"]),
                 "story_count": len(row["career"]["stories"]),
                 "insight_count": len(row["career"].get("insights", [])),
+                "open_question_count": sum(
+                    q["state"] == "open" for q in row["career"].get("questions", [])
+                ),
                 "task_count": len(row["career"]["tasks"]),
                 "done_count": sum(task["state"] == "done" for task in row["career"]["tasks"]),
             }
@@ -317,6 +320,18 @@ class CareerService:
                     row["text"],
                     "interview",
                     step_id=row.get("source_step_id"),
+                )
+            for row in career.get("questions", []):
+                add(
+                    owner,
+                    "question",
+                    row,
+                    row["question"],
+                    "\n".join(
+                        row.get(key, "") for key in ("why_matters", "next_evidence", "conclusion")
+                    ),
+                    "requirements",
+                    step_id=row.get("conclusion_step_id") or row.get("source_step_id"),
                 )
             for row in career["runs"]:
                 step = next((item for item in owner["steps"] if item["id"] == row["step_id"]), None)
@@ -485,6 +500,7 @@ class CareerService:
             "tasks": career["tasks"],
             "insights": career.get("insights", []),
             "pitches": career.get("pitches", []),
+            "questions": career.get("questions", []),
             "document_ids": project.get("public_document_ids", []),
             "materials": archive_catalog(
                 self.repository,
@@ -804,6 +820,26 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def save_question(self, identity, data, question_id=None):
+        if data["state"] == "answered" and not data["conclusion"].strip():
+            raise ValueError("请先写下目前弄清了什么、依据和仍有的限制，再标记为已记结论。")
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            questions = project["career"].setdefault("questions", [])
+            runs = {row["step_id"]: row for row in project["career"]["runs"]}
+            for key in ("source_step_id", "conclusion_step_id"):
+                if data.get(key) and data[key] not in runs:
+                    raise ValueError("未找到所选讨论，请重新选择或取消关联。")
+            if question_id:
+                question = next((row for row in questions if row["id"] == question_id), None)
+                if not question:
+                    raise ValueError("未找到这条调查问题，请刷新清单。")
+                question.update(**data, updated_at=now())
+            else:
+                questions.append({"id": uuid4().hex, **data, "origin": "user", "created_at": now()})
+            self.projects._write(project)
+        return self.get(identity)
+
     def use_insight(self, identity, insight_id, use_for_research):
         with self.store.lock, self.store.db:
             project = self._project(identity)
@@ -865,6 +901,7 @@ class CareerService:
         allow_public=False,
         story_id=None,
         insight_id=None,
+        question_id=None,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -883,6 +920,17 @@ class CareerService:
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
             user_question = question.strip() if kind == "ask" else ""
+            if question_id:
+                saved_question = next(
+                    (
+                        row
+                        for row in project["career"].get("questions", [])
+                        if row["id"] == question_id
+                    ),
+                    None,
+                )
+                if not saved_question or kind != "ask":
+                    raise ValueError("请选择一条已保存的调查问题，并通过提问继续研究。")
             if insight_id:
                 insight = next(
                     (
@@ -1094,6 +1142,14 @@ class CareerService:
                     "请回查原文和观察，说明它还能支持什么、哪些需修正、哪些仍未知。"
                     "它可能已经搁置，不因本次讨论而自动恢复；不因记录较新或较旧就判断真假。"
                 )
+            if question_id:
+                question += (
+                    "本次围绕career_evidence.selected_inquiry中的持续调查问题展开，"
+                    "结合用户本次提问、关心它的理由和希望补充的证据，回读相关原文。"
+                    "若用户已有结论，它仍是待查证的个人记录，不当作独立事实。"
+                    "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
+                    "不因为本轮生成回答而宣称问题已解决。"
+                )
             used = self.projects.usage(project)
             allow_public = bool(allow_public and not offline)
             if allow_public:
@@ -1181,6 +1237,7 @@ class CareerService:
                     "material_id": material_id if kind == "ask" else None,
                     "story_id": story_id if kind == "pitch" else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
+                    "question_id": question_id,
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if kind in {"reflect", "challenge"} or insight_id else None,
                     "created_at": now(),
@@ -1190,6 +1247,8 @@ class CareerService:
                 project["steps"][-1]["career_task_id"] = task_id
             if insight_id and kind in {"ask", "challenge"}:
                 project["steps"][-1]["career_insight_id"] = insight_id
+            if question_id:
+                project["steps"][-1]["career_question_id"] = question_id
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id

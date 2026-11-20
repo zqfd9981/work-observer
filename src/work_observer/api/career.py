@@ -80,6 +80,17 @@ class InsightUseInput(BaseModel):
     use_for_research: bool = Field(strict=True)
 
 
+class ResearchQuestionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    question: str = Field(min_length=1, max_length=1500)
+    why_matters: str = Field(default="", max_length=1000)
+    next_evidence: str = Field(default="", max_length=1500)
+    state: Literal["open", "answered", "parked"] = "open"
+    conclusion: str = Field(default="", max_length=2000)
+    source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    conclusion_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
 class CareerResearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal[
@@ -108,6 +119,7 @@ class CareerResearchInput(BaseModel):
     material_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class PitchInput(BaseModel):
@@ -234,6 +246,15 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             )
         )
 
+    async def question(request):
+        data = ResearchQuestionInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().save_question(
+                request.path_params["id"], data.model_dump(), request.path_params.get("question_id")
+            ),
+            200 if request.path_params.get("question_id") else 201,
+        )
+
     async def pitch(request):
         data = PitchInput.model_validate(await read_json(request))
         return change(
@@ -327,6 +348,8 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/insights", insight, methods=["POST"]),
         Route("/api/career/{id}/insights/{insight_id}", edit_insight, methods=["PATCH"]),
         Route("/api/career/{id}/insights/{insight_id}/use", insight_use, methods=["POST"]),
+        Route("/api/career/{id}/questions", question, methods=["POST"]),
+        Route("/api/career/{id}/questions/{question_id}", question, methods=["PATCH"]),
         Route("/api/career/{id}/pitches", pitch, methods=["POST"]),
         Route("/api/career/{id}/pitches/{pitch_id}", pitch, methods=["PATCH"]),
         Route("/api/career/{id}/stories", story, methods=["POST"]),
