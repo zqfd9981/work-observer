@@ -364,14 +364,24 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
-    def add_insight(self, identity, data):
+    def add_insight(self, identity, data, insight_id=None):
         with self.store.lock, self.store.db:
             project = self._project(identity)
             notes = project["career"].setdefault("insights", [])
             task_id = data.get("task_id")
             if task_id and not any(row["id"] == task_id for row in project["career"]["tasks"]):
                 raise ValueError("这项练习已不在当前目标中，请重新选择。")
-            notes.append({"id": uuid4().hex, **data, "origin": "user", "created_at": now()})
+            if data.get("source_step_id") and not any(
+                row["step_id"] == data["source_step_id"] for row in project["career"]["runs"]
+            ):
+                raise ValueError("未找到这次讨论，请重新选择来源。")
+            if insight_id:
+                note = next((row for row in notes if row["id"] == insight_id), None)
+                if not note:
+                    raise ValueError("未找到这份认识记录。")
+                note.update(**data, updated_at=now())
+            else:
+                notes.append({"id": uuid4().hex, **data, "origin": "user", "created_at": now()})
             self.projects._write(project)
         return self.get(identity)
 

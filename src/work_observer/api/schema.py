@@ -87,6 +87,7 @@ def openapi(routes):
         ("/api/career/{id}/prepare", "POST"): CareerResearchInput,
         ("/api/career/{id}/resume", "PATCH"): ResumeInput,
         ("/api/career/{id}/insights", "POST"): InsightInput,
+        ("/api/career/{id}/insights/{insight_id}", "PATCH"): InsightInput,
         ("/api/career/{id}/experiments", "POST"): ExperimentInput,
         ("/api/career/{id}/tasks", "POST"): TaskImport,
         ("/api/career/{id}/tasks/{task_id}", "PATCH"): TaskUpdate,

@@ -290,6 +290,16 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         learned = client.post(f"/api/career/{identity}/insights", json=insight, headers=auth)
         assert learned.status_code == 201, learned.text
         assert learned.json()["insights"][0]["origin"] == "user"
+        insight_id = learned.json()["insights"][0]["id"]
+        insight["current_view"] += " 更正：还需要区分触发条件。"
+        insight["source_step_id"] = reflected["results"][0]["step_id"]
+        edited_insight = client.patch(
+            f"/api/career/{identity}/insights/{insight_id}", json=insight, headers=auth
+        )
+        assert edited_insight.status_code == 200, edited_insight.text
+        assert len(edited_insight.json()["insights"]) == 1
+        assert edited_insight.json()["insights"][0]["id"] == insight_id
+        assert edited_insight.json()["insights"][0]["source_step_id"] == insight["source_step_id"]
         assert len(model.contexts) == calls_before_note
         interview = run_stage(client, identity, auth, "interview")
         assert (
