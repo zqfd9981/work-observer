@@ -217,6 +217,7 @@ def _cascade(
 ):
     from work_observer.knowledge.service import DomainKnowledgeService
     from work_observer.quality.reviews import QualityReviewService
+    from work_observer.reports.domain_updates import DomainUpdateService
     from work_observer.research.projects import ProjectService
     from work_observer.workflow.service import WorkflowService
 
@@ -224,6 +225,7 @@ def _cascade(
     _bind_reports_directory(store, operation_id, reports_dir)
     projects = ProjectService(store)
     workflows = WorkflowService(store, repository)
+    update_service = DomainUpdateService(store, repository)
     journal = _journal(
         store,
         operation_id,
@@ -263,10 +265,22 @@ def _cascade(
         identities.update(pending_memories)
         pending_runs.update(_runs_using_memories(store, pending_memories))
         pending_memories = set()
+        related = update_service.related_runs(pending_runs | affected_runs, identities)
+        pending_runs.update(related["affected_run_ids"])
+        affected_projects.update(related["affected_project_ids"])
+        _journal(
+            store, operation_id, memory_ids=identities, run_ids=pending_runs | affected_runs,
+            project_ids=affected_projects,
+        )
         # 执行依赖和项目整轮范围相互扩展；先求闭包，再擦除唯一回链。
         closure = pending_runs - affected_runs
         while closure:
             old = set(closure)
+            related = update_service.related_runs(
+                closure | affected_runs, identities | pending_memories
+            )
+            closure.update(related["affected_run_ids"])
+            affected_projects.update(related["affected_project_ids"])
             related = workflows.related_runs(closure | affected_runs, identities, affected_projects)
             closure.update(related["affected_run_ids"])
             affected_projects.update(related["affected_project_ids"])
@@ -374,9 +388,7 @@ def _cascade(
     trials = LocalRetrievalTrialService(store, repository).invalidate_research(
         sorted(affected_runs), sorted(identities)
     )
-    from work_observer.reports.domain_updates import DomainUpdateService
-
-    updates = DomainUpdateService(store, repository).invalidate(
+    updates = update_service.invalidate(
         sorted(affected_runs), sorted(identities)
     )
     workflow_results = workflows.invalidate(

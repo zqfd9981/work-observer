@@ -1012,6 +1012,45 @@ class DomainUpdateService:
             "note": "待调查，不自动花费模型额度；可将问题与明确范围带入研究项目。",
         }
 
+    def related_runs(self, run_ids, memory_ids):
+        """Collect report-created projects before forgetting removes their copied private text."""
+        from work_observer.research.projects import ProjectService
+
+        runs, memories = set(run_ids), set(memory_ids)
+        captures, reports = set(), set()
+        with self.store.lock:
+            for table, affected in (
+                ("domain_update_captures", captures), ("domain_update_reports", reports)
+            ):
+                for identity, encoded in self.store.db.execute(
+                    f"SELECT id,record FROM {table} WHERE namespace=?", (self.store.namespace,)
+                ):
+                    row = json.loads(encoded)
+                    if (
+                        set(row.get("source_run_ids", [])) & runs
+                        or {ref["id"] for ref in row.get("memory_refs", [])} & memories
+                        or row.get("before_id") in captures
+                        or row.get("after_id") in captures
+                    ):
+                        affected.add(identity)
+        keys = {
+            "domain-update:" + identity + suffix
+            for identity in reports
+            for suffix in ("", ":common-cohort", ":both-panels")
+        }
+        if not keys:
+            return {"affected_project_ids": [], "affected_run_ids": []}
+        projects, related_runs = set(), set()
+        for project in ProjectService(self.store).list(all_records=True):
+            if project.get("source_key") not in keys:
+                continue
+            projects.add(project["id"])
+            related_runs.update(
+                step["run_id"] for step in project["steps"] if step.get("run_id")
+            )
+            related_runs.update(project.get("erased_run_ids", []))
+        return {"affected_project_ids": sorted(projects), "affected_run_ids": sorted(related_runs)}
+
     def invalidate(self, run_ids, memory_ids):
         affected_captures = []
         affected_reports = []

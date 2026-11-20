@@ -16,6 +16,7 @@ from work_observer.config import Settings
 from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.knowledge.models import DomainDefinition, WorkRelation
+from work_observer.knowledge.service import DomainKnowledgeService
 from work_observer.memory.lifecycle import (
     forget_personal,
     forget_project,
@@ -457,3 +458,134 @@ def test_pending_erasure_rejects_wrong_report_directory_without_marking_complete
         assert pending_erasures(reopened) == 0 and not Path(saved["json"]).exists()
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize("suffix", ["", ":common-cohort", ":both-panels"])
+def test_forgetting_report_memory_erases_queued_followup_projects_before_any_model_run(
+    erasure, suffix
+):
+    repo, store, job, root = erasure
+    memory = MemoryService(repo).create("preference", PRIVATE)
+    updates = DomainUpdateService(store, repo)
+    before = updates.capture("合成私人观察前", job_ids=[job], include_personal=True)
+    after = updates.capture("合成私人观察后", job_ids=[job], include_personal=True)
+    report = updates.compare(before["id"], after["id"])
+    prepared = updates.followup(report["id"], PRIVATE)
+    projects = ProjectService(store)
+    project = projects.create(
+        PRIVATE, prepared["question"], prepared["job_ids"],
+        source_key="domain-update:" + report["id"] + suffix,
+    )
+    project = projects.add(project["id"], PRIVATE, revision=project["revision"])
+    unrelated = projects.create("无关研究", "保留公开任务研究", [job])
+    original_evidence = Catalog(repo).evidence(job)
+    assert store.list() == []
+    forget_personal(repo, store, memory["id"], root / "reports")
+    erased = projects.get(project["id"])
+    assert erased["state"] == "invalidated"
+    assert PRIVATE not in json.dumps(erased, ensure_ascii=False)
+    assert projects.get(unrelated["id"])["state"] == "active"
+    assert Catalog(repo).evidence(job) == original_evidence
+    assert store.list() == []
+
+
+def test_report_followup_erasure_reaches_a_later_report_project_without_memory_recall(erasure):
+    repo, store, job, root = erasure
+    memory = MemoryService(repo).create("preference", PRIVATE)
+    updates, projects = DomainUpdateService(store, repo), ProjectService(store)
+    before = updates.capture("私人来源前", job_ids=[job], include_personal=True)
+    after = updates.capture("私人来源后", job_ids=[job], include_personal=True)
+    report = updates.compare(before["id"], after["id"])
+    project = projects.create(
+        PRIVATE, PRIVATE, [job], source_key="domain-update:" + report["id"]
+    )
+    run = completed_run(repo, store, project["id"], job, PRIVATE)
+    # The report itself, rather than memory recall, carries this dependency.
+    assert run["memory_used"] == []
+    knowledge = DomainKnowledgeService(repo)
+    domain = knowledge.propose_domain("public_type", "合成公开类型", "接口工作")
+    knowledge.review_domain(domain["id"], "accept", "合成公开定义")
+    relation = knowledge.propose_relation(
+        domain["id"], "task", PRIVATE, "ability", PRIVATE, Catalog(repo).evidence(job),
+        source_run_id=run["run_id"],
+    )
+    knowledge.review_relation(relation["id"], "accept", "合成来源关系")
+    a = updates.capture("派生研究前", job_ids=[job], include_personal=False)
+    b = updates.capture("派生研究后", job_ids=[job], include_personal=False)
+    assert a["source_run_ids"] == [run["run_id"]] and not a["memory_refs"]
+    later = updates.compare(a["id"], b["id"])
+    child = projects.create(
+        PRIVATE, PRIVATE, [job], source_key="domain-update:" + later["id"] + ":both-panels"
+    )
+    original_evidence = Catalog(repo).evidence(job)
+    forgotten = forget_personal(repo, store, memory["id"], root / "reports")
+    assert {project["id"], child["id"]} <= set(forgotten["affected_project_ids"])
+    assert store.get(run["run_id"])["state"] == "invalidated"
+    for identity in (project["id"], child["id"]):
+        erased = projects.get(identity)
+        assert erased["state"] == "invalidated"
+        assert PRIVATE not in json.dumps(erased, ensure_ascii=False)
+    assert Catalog(repo).evidence(job) == original_evidence
+
+
+def test_report_followup_erasure_resumes_after_project_source_link_was_removed(
+    erasure, monkeypatch
+):
+    repo, store, job, root = erasure
+    memory_service = MemoryService(repo)
+    memory = memory_service.create("preference", PRIVATE)
+    updates, projects = DomainUpdateService(store, repo), ProjectService(store)
+    a = updates.capture("私人来源前", job_ids=[job], include_personal=True)
+    b = updates.capture("私人来源后", job_ids=[job], include_personal=True)
+    report = updates.compare(a["id"], b["id"])
+    project = projects.create(
+        PRIVATE, PRIVATE, [job], source_key="domain-update:" + report["id"] + ":common-cohort"
+    )
+    nested_memory = memory_service.create(
+        "preference", PRIVATE, scope="project", project_id=project["id"]
+    )
+    original_erase = ProjectService.erase
+
+    def interrupted(self, identity):
+        result = original_erase(self, identity)
+        if identity == project["id"]:
+            raise RuntimeError("synthetic interruption after project erase")
+        return result
+
+    monkeypatch.setattr(ProjectService, "erase", interrupted)
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        forget_personal(repo, store, memory["id"], root / "reports")
+    assert pending_erasures(store) == 1
+    assert "source_key" not in projects.get(project["id"])
+    monkeypatch.setattr(ProjectService, "erase", original_erase)
+    reopened = ResearchStore(store.path, store.namespace)
+    try:
+        resume_erasures(repo, reopened, root / "reports")
+        assert pending_erasures(reopened) == 0
+        erased = ProjectService(reopened).get(project["id"])
+        assert PRIVATE not in json.dumps(erased, ensure_ascii=False)
+        erased_memory = next(
+            row for row in memory_service.list(True) if row["id"] == nested_memory["id"]
+        )
+        assert erased_memory["status"] == "forgotten" and PRIVATE not in erased_memory["content"]
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("suffix", ["", ":common-cohort", ":both-panels"])
+def test_cached_report_followup_cannot_create_private_project_after_forgetting(erasure, suffix):
+    repo, store, job, root = erasure
+    memory = MemoryService(repo).create("preference", PRIVATE)
+    updates = DomainUpdateService(store, repo)
+    a = updates.capture("私人来源前", job_ids=[job], include_personal=True)
+    b = updates.capture("私人来源后", job_ids=[job], include_personal=True)
+    report = updates.compare(a["id"], b["id"])
+    prepared = updates.followup(report["id"], PRIVATE)
+    forget_personal(repo, store, memory["id"], root / "reports")
+    projects = ProjectService(store)
+    with pytest.raises(ProbeError, match="UPDATE_MEMORY_FORGOTTEN"):
+        projects.create(
+            PRIVATE, prepared["question"], prepared["job_ids"],
+            source_key="domain-update:" + report["id"] + suffix,
+        )
+    assert projects.list() == [] and store.list() == []

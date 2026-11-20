@@ -475,6 +475,23 @@ class ProjectService:
             stop_reason=None,
         )
         with self.store.lock, self.store.db:
+            update = re.fullmatch(
+                r"domain-update:([a-f0-9]{32})(?::(?:common-cohort|both-panels))?",
+                source_key or "",
+            )
+            if update:
+                exists = self.store.db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' "
+                    "AND name='domain_update_reports'"
+                ).fetchone()
+                source = self.store.db.execute(
+                    "SELECT record FROM domain_update_reports WHERE namespace=? AND id=?",
+                    (self.store.namespace, update[1]),
+                ).fetchone() if exists else None
+                if not source:
+                    raise ProbeError("UPDATE_RECORD_NOT_FOUND")
+                if json.loads(source[0]).get("state") == "invalidated":
+                    raise ProbeError("UPDATE_MEMORY_FORGOTTEN")
             # 恢复到新目录只改变namespace，不改变已有项目及其回链ID。
             # 先找原来源键，避免路径变化后再次创建预算与调查。
             if source_key:

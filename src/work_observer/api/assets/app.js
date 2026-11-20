@@ -21,6 +21,8 @@ let toastTimer, pollTimer;
 const conversation = {id:null, timer:null, reports:new Map(), drafts:new Map(), sourceScopes:new Map(), notes:[], knowledge:[], notesFor:null, renderedId:null};
 Object.assign(reasonLabels,{
   STEP_NOT_READY:"这一步目前不可执行。请刷新研究进度，核对是否仍在等待前置调查。",
+  UPDATE_MEMORY_FORGOTTEN:"这份观察已随相关记忆或研究清除，不能从旧页面继续。请重新选择现有资料建立研究。",
+  UPDATE_RECORD_NOT_FOUND:"未找到这份观察记录，请刷新列表后重新选择。",
   RESEARCH_HISTORY_TIME_OUT_OF_SCOPE:"历史读取时点必须明确，且不能晚于本轮研究开始。",
   INVALID_HISTORICAL_JOB_WINDOW:"历史正文读取位置无效，本次没有取得新证据。",
   EVIDENCE_DOCUMENT_INTEGRITY_FAILED:"该版本原始文档已缺失或改变，不能用现文替代历史依据。",

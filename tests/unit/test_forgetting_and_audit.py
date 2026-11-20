@@ -216,6 +216,7 @@ def test_audit_marks_revised_memory_and_later_source_without_destroying_historic
         "knowledge_issues": [],
         "memory_issues": [],
         "changed_sources": [],
+        "historical_sources": [],
         "affected_strategy": [],
     }
     memory.revise(item["id"], "模拟更新偏好")
