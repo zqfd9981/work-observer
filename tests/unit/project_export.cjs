@@ -18,6 +18,10 @@ second.result.upstream_revision_notices={items:[{previous_run_id:"ancestor",run_
 const affected=vm.runInContext('projectDossierMarkdown(project)',ctx);
 assert.ok(affected.includes("## 沿用旧认识的下游研究")&&affected.includes("先核对责任边界"));
 assert.ok(affected.includes("原研究：ancestor")&&affected.includes("修正研究：correction")&&affected.includes("另有 1 条相关意见"));
+second.result.upstream_revision_notices.items.push({previous_run_id:"ancestor",run_id:"retention",decision:"retain",reason:"重新确认任务，权限仍未知"});
+const retained=vm.runInContext('projectDossierMarkdown(project)',ctx);
+assert.ok(retained.includes("后续保留：重新确认任务，权限仍未知")&&retained.includes("先核对责任边界"));
+assert.ok(retained.includes("修正研究：retention"));
 delete second.result.upstream_revision_notices;
 const markdown=vm.runInContext('projectDossierMarkdown(project,"2026-11-20T00:00:00+00:00")',ctx);
 const current=markdown.split("## 当前认识")[1].split("## 工作地图")[0];

@@ -65,3 +65,43 @@ def test_retention_is_not_a_conflict_and_visible_limit_is_explicit():
     notices = upstream_revision_notices(findings)["b"]
     assert [row["run_id"] for row in notices["items"]] == ["r2", "r3", "r4"]
     assert notices["omitted"] == 1
+
+
+def test_later_retention_accompanies_a_challenge_without_erasing_it_or_deciding_truth():
+    findings = [
+        ({"run_id": "a"}, {"claims": [{"text": "任务存在，独立验收权限未知"}]}),
+        ({"run_id": "b"}, {"continued_from": ["a"]}),
+    ]
+    for index, decision in enumerate(["unresolved", "retain", "retain", "retain"]):
+        findings.append(
+            (
+                {"run_id": f"r{index}"},
+                {
+                    "cognition_revisions": [
+                        {
+                            "previous_run_id": "a",
+                            "previous_claim_index": 0,
+                            "previous_statement": "任务存在，独立验收权限未知",
+                            "decision": decision,
+                            "reason": f"合成核对意见{index}",
+                            "aspects": [
+                                {"previous_excerpt": "独立验收权限未知", "decision": decision}
+                            ],
+                        }
+                    ]
+                },
+            )
+        )
+    before = deepcopy(findings)
+    notices = upstream_revision_notices(findings)["b"]
+    assert [row["run_id"] for row in notices["items"]] == ["r0", "r3"]
+    assert notices["items"][1]["decision"] == "retain"
+    assert notices["items"][1]["aspects"][0]["previous_excerpt"] == "独立验收权限未知"
+    assert notices["omitted"] == 2
+    assert "不以记录时间决定真假" in notices["notice"]
+    assert findings == before
+    # A newer challenge remains visible; an older retention cannot clear it.
+    findings[-1][1]["cognition_revisions"][0]["decision"] = "revise"
+    notices = upstream_revision_notices(findings)["b"]
+    assert [row["run_id"] for row in notices["items"]] == ["r0", "r3"]
+    assert all(row["decision"] != "retain" for row in notices["items"])

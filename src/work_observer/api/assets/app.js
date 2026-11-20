@@ -1085,7 +1085,7 @@ function renderSubmissionFeedback(result,evidence) {
 function renderUpstreamRevisionNotices(result) {
   const notices=result.upstream_revision_notices;
   if(!notices?.items?.length)return "";
-  const decisions={revise:"修订",withdraw:"撤回",unresolved:"仍有疑问"};
+  const decisions={retain:"重新保留",revise:"修订",withdraw:"撤回",unresolved:"仍有疑问"};
   return `<section class="research-context"><h3>沿用的旧研究后来出现不同判断</h3><p>${e(notices.notice)}</p>${notices.items.map(row=>`<section><p>${e(decisions[row.decision]||"后续意见")}：${e(row.reason)} <button class="text-button" data-open-run="${e(row.previous_run_id)}">查看原判断所在研究 ↗</button> <button class="text-button" data-open-run="${e(row.run_id)}">查看后续修正及原文 ↗</button></p>${renderRevisionAspects(row)}</section>`).join("")}${notices.omitted?`<p class="form-note">另有 ${e(notices.omitted)} 条相关意见，请在逐轮记录中核对。</p>`:""}</section>`;
 }
 

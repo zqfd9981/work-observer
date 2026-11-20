@@ -61,7 +61,7 @@ def upstream_revision_notices(findings):
             original = by_run.get(revision["previous_run_id"])
             claim_index = revision["previous_claim_index"]
             if (
-                revision["decision"] not in {"revise", "withdraw", "unresolved"}
+                revision["decision"] not in {"retain", "revise", "withdraw", "unresolved"}
                 or not original
                 or original[0] >= index
                 or type(claim_index) is not int
@@ -79,6 +79,24 @@ def upstream_revision_notices(findings):
                 continue
             ancestors.add(parent)
             pending.extend(by_run[parent][1].get("continued_from", []))
+        history, latest, challenged = [], {}, set()
+        for correction_index, run_id, revision in corrections:
+            if correction_index <= index or revision["previous_run_id"] not in ancestors:
+                continue
+            key = (revision["previous_run_id"], revision["previous_claim_index"])
+            if revision["decision"] != "retain":
+                challenged.add(key)
+            if key in challenged:
+                entry = (run_id, revision)
+                history.append(entry)
+                latest[key] = entry
+        # Repeated retentions must not crowd out the challenge they rechecked.
+        selected = [
+            entry
+            for entry in history
+            if entry[1]["decision"] != "retain"
+            or latest[(entry[1]["previous_run_id"], entry[1]["previous_claim_index"])] is entry
+        ]
         affected = [
             {
                 "run_id": run_id,
@@ -89,16 +107,20 @@ def upstream_revision_notices(findings):
                 "aspects": revision.get("aspects", []),
                 "comparison_notice": revision.get("comparison_notice"),
             }
-            for correction_index, run_id, revision in corrections
-            if correction_index > index and revision["previous_run_id"] in ancestors
+            for run_id, revision in selected
         ]
         if affected:
             notices[step["run_id"]] = {
                 "items": affected[-3:],
-                "omitted": max(0, len(affected) - 3),
+                "omitted": len(history) - len(affected[-3:]),
                 "notice": "本轮曾沿用的旧研究后来有修订、撤回或疑问。依赖只记录到研究轮次，"
                 "不能据此断定本轮每条判断错误；继续使用前须核对修正及本轮原文。"
-                "后续意见未自动改写本轮回答或已采纳知识。",
+                "后续意见未自动改写本轮回答或已采纳知识。"
+                + (
+                    "也保留后续重新保留原判断的意见，须与早期疑问和原文一并核对，不以记录时间决定真假。"
+                    if any(revision["decision"] == "retain" for _, revision in selected)
+                    else ""
+                ),
             }
     return notices
 
@@ -184,14 +206,17 @@ def _map_context(context, item, result, *, focus=None):
         if omitted is not None:
             item["work_map_omitted"] = omitted
         return
-    targets = [focus] if focus else [
-        (key, index) for key in keys for index in range(len(value.get(key, [])))
-    ]
+    targets = (
+        [focus]
+        if focus
+        else [(key, index) for key in keys for index in range(len(value.get(key, [])))]
+    )
     for key, index in targets:
         row = value[key][index]
         unit = (
             [("work_relations", i) for i in row["relation_indices"]] + [(key, index)]
-            if key == "comparisons" else [(key, index)]
+            if key == "comparisons"
+            else [(key, index)]
         )
         if any(
             kind != "unknowns" and not set(value[kind][i]["claim_indices"]) <= selected
@@ -224,9 +249,7 @@ def _map_context(context, item, result, *, focus=None):
                 output["omitted"][kind] += 1
     for key in keys:
         output[key].sort(key=lambda row: row["previous_index"])
-    return focus is None or any(
-        row["previous_index"] == focus[1] for row in output[focus[0]]
-    )
+    return focus is None or any(row["previous_index"] == focus[1] for row in output[focus[0]])
 
 
 def _prior_claim_context(context, item, result, ranked, followups, query):
@@ -484,10 +507,14 @@ class ProjectService:
                     "SELECT 1 FROM sqlite_master WHERE type='table' "
                     "AND name='domain_update_reports'"
                 ).fetchone()
-                source = self.store.db.execute(
-                    "SELECT record FROM domain_update_reports WHERE namespace=? AND id=?",
-                    (self.store.namespace, update[1]),
-                ).fetchone() if exists else None
+                source = (
+                    self.store.db.execute(
+                        "SELECT record FROM domain_update_reports WHERE namespace=? AND id=?",
+                        (self.store.namespace, update[1]),
+                    ).fetchone()
+                    if exists
+                    else None
+                )
                 if not source:
                     raise ProbeError("UPDATE_RECORD_NOT_FOUND")
                 if json.loads(source[0]).get("state") == "invalidated":

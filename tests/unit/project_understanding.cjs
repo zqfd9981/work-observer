@@ -70,6 +70,10 @@ assert.ok(affectedHtml.includes("第 2 轮研究需要回看其沿用依据"));
 assert.ok(affectedHtml.includes('data-open-run="ancestor"')&&affectedHtml.includes('data-open-run="correction"'));
 assert.ok(affectedHtml.includes("&lt;script&gt;边界已改变&lt;/script&gt;")&&!affectedHtml.includes("<script>"));
 assert.ok(affectedHtml.includes("不能断定每条判断错误")&&affectedHtml.includes("另有 1 条相关意见"));
+second.result.upstream_revision_notices.items.push({previous_run_id:"ancestor",run_id:"retention",decision:"retain",reason:"重新确认任务，权限仍未知"});
+const retainedHtml=vm.runInContext("renderProjectUnderstanding(project)",context);
+assert.ok(retainedHtml.includes("重新保留：重新确认任务，权限仍未知"));
+assert.ok(retainedHtml.includes('data-open-run="correction"')&&retainedHtml.includes('data-open-run="retention"'));
 
 // Partial rechecks expose the exact unreviewed work, then a later full recheck clears it.
 const partial=second.result.cognition_revisions[0];
