@@ -1482,6 +1482,17 @@ class ProjectService:
                 "notice": "以下是用户自述和个人练习记录，不是招聘原文、独立评测或能力认证。"
                 "摘要仅供定位；项目经历全文可按document_id读取本轮归档。",
                 "selected_experiment_id": step.get("career_task_id"),
+                "learning_notes": [
+                    {
+                        "previous_view": row["previous_view"][:500],
+                        "reported_observation": row["observation"][:500],
+                        "current_user_view": row["current_view"][:500],
+                        "open_question": row["open_question"][:300],
+                        "notice": "这是用户记录的理解与疑问，不是企业事实或已验证的能力。",
+                        "recorded_at": row["created_at"],
+                    }
+                    for row in career.get("insights", [])[-3:]
+                ],
                 "stories": [
                     {
                         "title": row["title"],
@@ -1496,6 +1507,7 @@ class ProjectService:
                     {
                         "title": row["title"],
                         "proposed_check": row["completion_check"],
+                        "origin": row.get("origin", "research"),
                         "state": row["state"],
                         "reported_observation": row["outcome"]
                         if selected_task

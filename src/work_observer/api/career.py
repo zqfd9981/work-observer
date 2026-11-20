@@ -35,6 +35,15 @@ class ResumeInput(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
 
 
+class InsightInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    previous_view: str = Field(min_length=1, max_length=1500)
+    observation: str = Field(min_length=1, max_length=2000)
+    current_view: str = Field(min_length=1, max_length=1500)
+    open_question: str = Field(default="", max_length=1000)
+    task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
 class CareerResearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["role", "gaps", "plan", "reflect", "interview", "answer"]
@@ -47,6 +56,15 @@ class CareerResearchInput(BaseModel):
 class TaskImport(BaseModel):
     model_config = ConfigDict(extra="forbid")
     step_id: str = Field(pattern="^[a-f0-9]{32}$")
+
+
+class ExperimentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=150)
+    task_or_ability: str = Field(min_length=1, max_length=500)
+    deliverable: str = Field(min_length=1, max_length=700)
+    completion_check: str = Field(min_length=1, max_length=700)
+    hypothesis: str = Field(default="", max_length=1500)
 
 
 class TaskUpdate(BaseModel):
@@ -105,6 +123,12 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         data = ResumeInput.model_validate(await read_json(request))
         return change(lambda: service().set_resume(request.path_params["id"], **data.model_dump()))
 
+    async def insight(request):
+        data = InsightInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().add_insight(request.path_params["id"], data.model_dump()), 201
+        )
+
     async def edit_story(request):
         if busy():
             return response({"message": "请等当前研究结束后再修改经历，输入仍保留。"}, 409)
@@ -128,6 +152,12 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         data = TaskImport.model_validate(await read_json(request))
         return change(lambda: service().import_tasks(request.path_params["id"], data.step_id))
 
+    async def experiment(request):
+        data = ExperimentInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().add_experiment(request.path_params["id"], data.model_dump()), 201
+        )
+
     async def update_task(request):
         data = TaskUpdate.model_validate(await read_json(request))
         return change(
@@ -141,10 +171,12 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
+        Route("/api/career/{id}/insights", insight, methods=["POST"]),
         Route("/api/career/{id}/stories", story, methods=["POST"]),
         Route("/api/career/{id}/stories/{story_id}", edit_story, methods=["PATCH"]),
         Route("/api/career/{id}/stories/{story_id}", remove_story, methods=["DELETE"]),
         Route("/api/career/{id}/prepare", prepare, methods=["POST"]),
         Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
+        Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),
     ]

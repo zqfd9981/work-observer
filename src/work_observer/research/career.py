@@ -125,6 +125,7 @@ class CareerService:
                 "updated_at": row["updated_at"],
                 "job_count": len(row["job_ids"]),
                 "story_count": len(row["career"]["stories"]),
+                "insight_count": len(row["career"].get("insights", [])),
                 "task_count": len(row["career"]["tasks"]),
                 "done_count": sum(task["state"] == "done" for task in row["career"]["tasks"]),
             }
@@ -207,6 +208,7 @@ class CareerService:
             "jobs": [self.repository.job(key) for key in project["job_ids"]],
             "stories": career["stories"],
             "tasks": career["tasks"],
+            "insights": career.get("insights", []),
             "requirements": requirements,
             "results": results,
             "usage": self.projects.usage(project),
@@ -304,6 +306,17 @@ class CareerService:
                 for key in (project.get("public_document_ids") or [])
                 if key != story["document_id"]
             ]
+            self.projects._write(project)
+        return self.get(identity)
+
+    def add_insight(self, identity, data):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            notes = project["career"].setdefault("insights", [])
+            task_id = data.get("task_id")
+            if task_id and not any(row["id"] == task_id for row in project["career"]["tasks"]):
+                raise ValueError("这项练习已不在当前目标中，请重新选择。")
+            notes.append({"id": uuid4().hex, **data, "origin": "user", "created_at": now()})
             self.projects._write(project)
         return self.get(identity)
 
@@ -421,6 +434,7 @@ class CareerService:
                     {
                         "id": uuid4().hex,
                         "source_key": key,
+                        "origin": "research",
                         **action,
                         "state": "planned",
                         "outcome": "",
@@ -429,6 +443,30 @@ class CareerService:
                         "created_at": now(),
                     }
                 )
+            self.projects._write(project)
+        return self.get(identity)
+
+    def add_experiment(self, identity, data):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            tasks = project["career"]["tasks"]
+            if len(tasks) >= 24:
+                raise ValueError("这个目标已保存24项练习，请先集中完成已有练习。")
+            task_id = uuid4().hex
+            tasks.append(
+                {
+                    "id": task_id,
+                    "source_key": "user:" + task_id,
+                    "origin": "user",
+                    **data,
+                    "evidence_ids": [],
+                    "assumptions": [],
+                    "state": "planned",
+                    "outcome": "",
+                    "artifact": "",
+                    "created_at": now(),
+                }
+            )
             self.projects._write(project)
         return self.get(identity)
 

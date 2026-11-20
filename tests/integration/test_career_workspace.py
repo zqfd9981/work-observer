@@ -202,7 +202,25 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert personal["experiments"][0]["prior_expectation"] == "重试会避免写入失败"
         assert personal["selected_experiment_id"] == task["id"]
         assert personal["resume"]["document_id"] == replacement.json()["resume"]["document_id"]
+        calls_before_note = len(model.contexts)
+        insight = {
+            "previous_view": "重试会自动消除写入问题",
+            "observation": "本地仍有重复写入",
+            "current_view": "目前只证明运行了失败样例，尚未证明重复写入已解决",
+            "open_question": "下一步如何设计去重对照实验？",
+            "task_id": task["id"],
+        }
+        learned = client.post(f"/api/career/{identity}/insights", json=insight, headers=auth)
+        assert learned.status_code == 201, learned.text
+        assert learned.json()["insights"][0]["origin"] == "user"
+        assert len(model.contexts) == calls_before_note
         interview = run_stage(client, identity, auth, "interview")
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["learning_notes"][0][
+                "current_user_view"
+            ]
+            == insight["current_view"]
+        )
         question = interview["results"][0]["result"]["gaps"][-1]
         feedback = run_stage(
             client,
@@ -223,8 +241,39 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         removed = client.delete(f"/api/career/{identity}/stories/{temporary['id']}", headers=auth)
         assert removed.status_code == 200 and len(removed.json()["stories"]) == 1
         assert client.get("/api/public-documents/" + temporary["document_id"]).status_code == 200
+        calls_before_manual = len(model.contexts)
+        manual = client.post(
+            f"/api/career/{identity}/experiments",
+            json={
+                "title": "自选合成对照实验",
+                "task_or_ability": "排查重复写入",
+                "hypothesis": "只有超时场景会重复写入",
+                "deliverable": "正常与超时两组本地运行记录",
+                "completion_check": "对照两组的请求标识和写入次数",
+            },
+            headers=auth,
+        )
+        assert manual.status_code == 201, manual.text
+        manual_task = manual.json()["tasks"][-1]
+        assert manual_task["origin"] == "user" and manual_task["evidence_ids"] == []
+        assert len(model.contexts) == calls_before_manual
+        client.patch(
+            f"/api/career/{identity}/tasks/{manual_task['id']}",
+            json={
+                "state": "done",
+                "hypothesis": manual_task["hypothesis"],
+                "outcome": "两组都观察到了重复写入，原先解释仍需调整",
+                "artifact": "本地合成对照记录",
+            },
+            headers=auth,
+        )
+        run_stage(client, identity, auth, "reflect", task_id=manual_task["id"])
+        manual_context = model.contexts[-1]["project_context"]["career_evidence"]
+        assert manual_context["experiments"][0]["title"] == manual_task["title"]
+        assert manual_context["experiments"][0]["origin"] == "user"
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         data = client.get(f"/api/career/{identity}").json()
-        assert len(data["stories"]) == len(data["tasks"]) == 1
+        assert len(data["stories"]) == 1 and len(data["tasks"]) == 2
         assert data["tasks"][0]["state"] == "done"
-        assert client.get("/api/career").json()[0]["done_count"] == 1
+        assert data["insights"][0]["current_view"] == insight["current_view"]
+        assert client.get("/api/career").json()[0]["done_count"] == 2
