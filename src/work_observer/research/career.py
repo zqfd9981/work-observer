@@ -11,6 +11,8 @@ from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.projects import ProjectService
+from work_observer.retrieval.unified import UnifiedRetrieval
+from work_observer.text_match import match_text
 
 QUESTIONS = {
     "map": (
@@ -177,6 +179,150 @@ class CareerService:
             project["career"]["background_memory_id"] = note["id"]
             self.projects._write(project)
         return self.get(identity)
+
+    def search(self, identity, *, q, scope="goal"):
+        project = self._project(identity)
+        terms = q.split()[:10]
+        originals = UnifiedRetrieval(self.repository).search(
+            terms,
+            job_ids=project["job_ids"] if scope == "goal" else None,
+            public_document_ids=project.get("public_document_ids", []) if scope == "goal" else None,
+            project_id=identity if scope == "goal" else None,
+            include_knowledge=False,
+            limit=12,
+        )
+        projects = (
+            [project]
+            if scope == "goal"
+            else [
+                row
+                for row in self.projects.list(all_records=True)
+                if row["state"] == "active" and row.get("career")
+            ]
+        )
+        terms = [match_text(term) for term in terms]
+        records = []
+
+        def add(owner, kind, row, title, text, section, *, step_id=None):
+            folded = match_text(title + "\n" + text)
+            if not all(term in folded for term in terms):
+                return
+            position = min(
+                (match_text(text).find(term) for term in terms if term in match_text(text)),
+                default=0,
+            )
+            start = max(0, position - 50)
+            records.append(
+                {
+                    "id": row.get("id") or row["step_id"],
+                    "kind": kind,
+                    "title": title,
+                    "excerpt": text[start : start + 280],
+                    "project_id": owner["id"],
+                    "project_title": owner["title"],
+                    "section": section,
+                    "step_id": step_id,
+                    "recorded_at": row.get("updated_at") or row.get("created_at"),
+                }
+            )
+
+        for owner in projects:
+            career = owner["career"]
+            for row in career["stories"]:
+                add(
+                    owner,
+                    "story",
+                    row,
+                    row["title"],
+                    "\n".join(
+                        row.get(key, "") for key in ("situation", "action", "result", "limits")
+                    ),
+                    "stories",
+                )
+            for row in career["tasks"]:
+                add(
+                    owner,
+                    "task",
+                    row,
+                    row["title"],
+                    "\n".join(
+                        row.get(key, "")
+                        for key in (
+                            "task_or_ability",
+                            "deliverable",
+                            "completion_check",
+                            "hypothesis",
+                            "outcome",
+                        )
+                    ),
+                    "experiments",
+                )
+            for row in career.get("insights", []):
+                add(
+                    owner,
+                    "insight",
+                    row,
+                    row["current_view"],
+                    "\n".join(
+                        row.get(key, "")
+                        for key in ("previous_view", "observation", "current_view", "open_question")
+                    ),
+                    "experiments",
+                    step_id=row.get("source_step_id"),
+                )
+            for row in career["runs"]:
+                step = next((item for item in owner["steps"] if item["id"] == row["step_id"]), None)
+                run = self.store.get(step["run_id"]) if step and step.get("run_id") else None
+                if not run or run["state"] == "invalidated":
+                    continue
+                result = run.get("result") or {}
+                section = row.get("section") or {
+                    "role": "requirements",
+                    "map": "requirements",
+                    "gaps": "stories",
+                    "plan": "experiments",
+                    "reflect": "experiments",
+                }.get(row["kind"], "interview")
+                text = "\n".join(
+                    [
+                        row.get("interview_question", ""),
+                        row.get("answer", ""),
+                        *[claim["text"] for claim in result.get("claims", [])],
+                        *result.get("gaps", []),
+                    ]
+                )
+                title = (
+                    row.get("user_question")
+                    or row.get("interview_question")
+                    or {
+                        "role": "看清岗位",
+                        "map": "探索工作地图",
+                        "gaps": "对照经历与差距",
+                        "plan": "工作样本建议",
+                        "reflect": "练习反思",
+                        "interview": "模拟面试问题",
+                        "followup": "针对回答的追问",
+                        "answer": "面试回答与反馈",
+                    }.get(row["kind"], "研究讨论")
+                )
+                add(
+                    owner,
+                    "discussion",
+                    row,
+                    title,
+                    text,
+                    section,
+                    step_id=row["step_id"],
+                )
+        records.sort(key=lambda row: row["recorded_at"] or "", reverse=True)
+        return {
+            "query": q,
+            "scope": scope,
+            "originals": originals,
+            "records": records[:24],
+            "record_count": len(records),
+            "records_truncated": len(records) > 24,
+        }
 
     def get(self, identity):
         project = self._project(identity)

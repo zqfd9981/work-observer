@@ -466,10 +466,53 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             headers=auth,
         )
         assert old_interview.status_code == 422
+        searched = client.get(f"/api/career/{identity}/search", params={"q": "重复写入"})
+        assert searched.status_code == 200, searched.text
+        assert {row["kind"] for row in searched.json()["records"]} >= {
+            "task",
+            "insight",
+            "discussion",
+        }
+        materials = client.get(f"/api/career/{identity}/search", params={"q": "writes=2"}).json()
+        assert any(
+            row.get("public_document_id") == material_id
+            for row in materials["originals"]["evidence"]
+        )
+        other = client.post(
+            "/api/career",
+            json={
+                "title": "另一个合成目标",
+                "goal": "验证跨目标检索",
+                "background": "合成背景",
+                "job_ids": [job],
+            },
+            headers=auth,
+        ).json()
+        client.post(
+            f"/api/career/{other['id']}/insights",
+            json={
+                "previous_view": "跨目标检索样例原先认识",
+                "observation": "合成观察",
+                "current_view": "跨目标检索样例新的认识",
+            },
+            headers=auth,
+        )
+        local = client.get(f"/api/career/{identity}/search", params={"q": "跨目标检索样例"}).json()
+        across = client.get(
+            f"/api/career/{identity}/search", params={"q": "跨目标检索样例", "scope": "all"}
+        ).json()
+        assert not local["records"]
+        assert across["records"][0]["project_id"] == other["id"]
+        assert len(model.contexts) == calls_before_goal_edit
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         data = client.get(f"/api/career/{identity}").json()
         assert len(data["stories"]) == 1 and len(data["tasks"]) == 2
         assert data["tasks"][0]["state"] == "done"
         assert data["insights"][0]["current_view"] == insight["current_view"]
         assert data["title"] == "调整后的合成求职目标"
-        assert client.get("/api/career").json()[0]["done_count"] == 2
+        assert (
+            next(row for row in client.get("/api/career").json() if row["id"] == identity)[
+                "done_count"
+            ]
+            == 2
+        )

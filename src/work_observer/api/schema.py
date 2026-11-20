@@ -14,6 +14,7 @@ def openapi(routes):
         CareerGoalInput,
         CareerInput,
         CareerResearchInput,
+        CareerSearchQuery,
         ExperimentInput,
         InsightInput,
         ResumeInput,
@@ -229,6 +230,11 @@ def openapi(routes):
                 parameters.extend(
                     {"in": "query", "name": key, "required": False, "schema": schema}
                     for key, schema in HistoryQuery.model_json_schema()["properties"].items()
+                )
+            if route.path == "/api/career/{id}/search" and method == "GET":
+                parameters.extend(
+                    {"in": "query", "name": key, "required": key == "q", "schema": schema}
+                    for key, schema in CareerSearchQuery.model_json_schema()["properties"].items()
                 )
             if route.path == "/api/public-documents" and method == "GET":
                 parameters.extend(

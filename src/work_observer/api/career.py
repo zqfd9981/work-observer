@@ -3,6 +3,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 from work_observer.research.career import CareerService
@@ -20,6 +21,12 @@ class CareerGoalInput(BaseModel):
 class CareerInput(CareerGoalInput):
     resume_title: str = Field(default="个人简历", min_length=1, max_length=150)
     resume_text: str = Field(default="", max_length=20_000)
+
+
+class CareerSearchQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    q: str = Field(min_length=1, max_length=200)
+    scope: Literal["goal", "all"] = "goal"
 
 
 class StoryInput(BaseModel):
@@ -112,6 +119,13 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
     async def get(request):
         return change(lambda: detail(request.path_params["id"]))
 
+    async def search(request):
+        query = CareerSearchQuery.model_validate(dict(request.query_params))
+        result = await run_in_threadpool(
+            service().search, request.path_params["id"], **query.model_dump()
+        )
+        return response(result)
+
     async def update_goal(request):
         task = tasks.get("project:" + request.path_params["id"])
         if task and not task.done():
@@ -198,6 +212,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", listing),
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
+        Route("/api/career/{id}/search", search),
         Route("/api/career/{id}", update_goal, methods=["PATCH"]),
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
         Route("/api/career/{id}/insights", insight, methods=["POST"]),
