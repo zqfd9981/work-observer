@@ -420,6 +420,23 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
             row.get("public_document_id") == material_id
             for row in reflected_material["results"][0]["result"]["evidence"]
         )
+        compared_explanations = run_stage(
+            client,
+            identity,
+            auth,
+            "challenge",
+            task_id=manual_task["id"],
+            hypothesis_a="超时触发重复提交，所以出现重复写入。",
+            hypothesis_b="重复写入也可能来自去重或并发处理，与超时无关。",
+        )
+        challenge = compared_explanations["results"][0]
+        assert challenge["kind"] == "challenge" and challenge["section"] == "experiments"
+        assert challenge["hypothesis_a"] in model.contexts[-1]["question"]
+        assert challenge["hypothesis_b"] in model.contexts[-1]["question"]
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["selected_experiment_id"]
+            == manual_task["id"]
+        )
         calls_before_goal_edit = len(model.contexts)
         before_edit = client.get(f"/api/career/{identity}").json()
         another_job = client.post(

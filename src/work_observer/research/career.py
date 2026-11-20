@@ -542,8 +542,10 @@ class CareerService:
         source_step_id=None,
         question="",
         section="requirements",
+        hypothesis_a="",
+        hypothesis_b="",
     ):
-        if kind not in QUESTIONS and kind not in {"answer", "followup", "ask"}:
+        if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
         with self.store.lock, self.store.db:
             project = self._project(identity)
@@ -553,7 +555,7 @@ class CareerService:
                 step["state"] in {"running", "queued", "interrupted"} for step in project["steps"]
             ):
                 raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
-            if kind == "reflect" and task_id:
+            if kind in {"reflect", "challenge"} and task_id:
                 task = next(
                     (row for row in project["career"]["tasks"] if row["id"] == task_id), None
                 )
@@ -566,7 +568,27 @@ class CareerService:
                     for row in self.get(identity)["results"]
                     if row["current"] and row["result"]["status"] == "completed"
                 ]
-            if kind == "ask":
+            if kind == "challenge":
+                if not hypothesis_a.strip() or not hypothesis_b.strip():
+                    raise ValueError("请分别写下两种想对照的解释。")
+                user_question = (
+                    "解释 A：" + hypothesis_a.strip() + "\n解释 B：" + hypothesis_b.strip()
+                )
+                section = "experiments"
+                question = (
+                    "请对照两种尚未验证的解释，不预设必须有一方正确：\n"
+                    + user_question
+                    + "\n先读取当前岗位原文；若选定了实验，优先读取career_evidence中所选实验的"
+                    "artifact_document归档记录，对照实际观察。"
+                    "分别说明每种解释支持什么、受到哪些反例挑战，以及现有资料无法区分什么。"
+                    "不要因为表述不同就断定互斥，也允许两者同时成立或都不成立。"
+                    "用户日志是用户提供的材料，未由你独立运行，不证明因果或企业招聘要求。"
+                    "claims只写有已读原文引用的判断，区分岗位原文、用户记录与分析推断，"
+                    "把待判断的问题留在gaps。最后如有必要，通过application_plan提出最多一个"
+                    "能区分两种解释的最小验证，写具体产物与检查方式，不编造结果，不安排额外调查。"
+                )
+                reply = None
+            elif kind == "ask":
                 if not user_question:
                     raise ValueError("请先写下你想弄清楚的问题。")
                 previous = next((row for row in sources if row["step_id"] == source_step_id), None)
@@ -698,13 +720,15 @@ class CareerService:
                     if kind in {"answer", "followup", "ask"}
                     else None,
                     "user_question": user_question,
-                    "section": section if kind == "ask" else None,
+                    "section": section if kind in {"ask", "challenge"} else None,
+                    "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
+                    "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "interview_question": questions[question_index] if kind == "answer" else "",
-                    "task_id": task_id if kind == "reflect" else None,
+                    "task_id": task_id if kind in {"reflect", "challenge"} else None,
                     "created_at": now(),
                 }
             )
-            if kind == "reflect" and task_id:
+            if kind in {"reflect", "challenge"} and task_id:
                 project["steps"][-1]["career_task_id"] = task_id
             project["steps"][-1]["career_action"] = kind
             self.projects._write(project)

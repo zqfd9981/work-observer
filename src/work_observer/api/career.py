@@ -58,7 +58,16 @@ class InsightInput(BaseModel):
 class CareerResearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal[
-        "role", "map", "gaps", "plan", "reflect", "interview", "answer", "followup", "ask"
+        "role",
+        "map",
+        "gaps",
+        "plan",
+        "reflect",
+        "interview",
+        "answer",
+        "followup",
+        "ask",
+        "challenge",
     ]
     answer: str = Field(default="", max_length=2500)
     offline: bool = False
@@ -67,6 +76,8 @@ class CareerResearchInput(BaseModel):
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     question: str = Field(default="", max_length=1500)
     section: Literal["requirements", "stories", "experiments", "interview"] = "requirements"
+    hypothesis_a: str = Field(default="", max_length=700)
+    hypothesis_b: str = Field(default="", max_length=700)
 
 
 class TaskImport(BaseModel):
