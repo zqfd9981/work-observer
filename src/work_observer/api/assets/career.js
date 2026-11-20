@@ -55,6 +55,7 @@
     const insight=$("#career-insight");if(insight)data.insight=Object.fromEntries(new FormData(insight));
     const inquiry=$("#career-inquiry");if(inquiry)data.inquiries={...data.inquiries,[career.tab]:Object.fromEntries(new FormData(inquiry))};
     const manual=$("#career-manual-experiment");if(manual){data.manual=Object.fromEntries(new FormData(manual));data.manual_open=manual.closest("details").open;}
+    const intake=$('[data-career-jd="target"]');if(intake)data.target_jd={values:Object.fromEntries($$("[data-jd-field]",intake).map(field=>[field.dataset.jdField,field.value])),open:intake.open};
     const settings=$("#career-settings");if(settings){data.settings=Object.fromEntries(new FormData(settings));data.settings_open=settings.closest("details").open;data.settings_query=$("#career-target-query").value;}
     for(const form of $$("[data-career-task-form]"))data["task:"+form.dataset.careerTaskForm]=Object.fromEntries(new FormData(form));
     career.drafts.set(career.id,data);
@@ -65,6 +66,28 @@
     $("#career-goals").innerHTML=items.length?items.map(row=>`<a href="#career/${e(row.id)}" class="career-goal-card ${career.id===row.id?"is-current":""}"><strong>${e(row.title)}</strong><span>${row.job_count} 个目标岗位 · ${row.story_count} 份经历证据</span><small>${row.done_count} / ${row.task_count} 项练习已记录结果 · ${row.insight_count||0} 次复盘</small></a>`).join(""):"";
   }
 
+  function jdIntake(target){
+    const draft=target==="target"?storyDraft().target_jd:null,values=draft?.values||{};
+    return `<details class="career-jd-intake" data-career-jd="${target}" ${draft?.open?"open":""}><summary>＋ 直接粘贴一份新的JD</summary><div class="form-grid"><label>岗位名称<input data-jd-field="title" maxlength="300" value="${e(values.title||"")}" placeholder="按招聘页面填写"></label><label>公司名称<input data-jd-field="company" maxlength="300" value="${e(values.company||"")}" placeholder="按招聘页面填写"></label></div><label>完整招聘正文<textarea data-jd-field="description" rows="6" maxlength="100000" placeholder="粘贴职责与任职要求，保留必备、加分和方向限定等原文。">${e(values.description||"")}</textarea></label><div class="form-grid"><label>原文链接（可选）<input type="url" data-jd-field="job_url" maxlength="2000" value="${e(values.job_url||"")}" placeholder="https://…"></label><label>资料性质<select data-jd-field="data_kind"><option value="user_provided">我提供的招聘资料</option><option value="synthetic" ${values.data_kind==="synthetic"?"selected":""}>演示用的虚构资料</option></select></label></div><button type="button" class="secondary" data-career-save-jd="${target}">保存JD并选为目标岗位</button><p class="form-note" data-jd-status role="status">只保存你粘贴的文字；不会自动打开链接或调用模型。</p></details>`;
+  }
+  async function saveInlineJD(button){
+    const intake=button.closest("[data-career-jd]"),target=intake.dataset.careerJd,id=career.id;
+    const selected=target==="target"?goalJobs():new Map(career.selected);
+    if(selected.size>=6)throw new Error("最多选择6个岗位，请先移除一个再补充。");
+    const values=Object.fromEntries($$("[data-jd-field]",intake).map(field=>[field.dataset.jdField,field.value.trim()]));
+    if(!values.title||!values.company||!values.description)throw new Error("请填写岗位名称、公司和完整招聘正文。");
+    if(!values.job_url)delete values.job_url;
+    button.disabled=true;const status=intake.querySelector("[data-jd-status]");status.textContent="正在保存岗位原文…";
+    try{
+      const result=await api("import",{method:"POST",body:JSON.stringify(values)});
+      const title=[values.title,values.company].join(" · ");selected.set(result.job_id,title);
+      if(target==="target"){
+        const draft=career.drafts.get(id)||{};draft.settings_jobs=[...selected];delete draft.target_jd;career.drafts.set(id,draft);
+        if(career.id===id){captureDrafts();const updated=storyDraft();updated.settings_jobs=[...selected];delete updated.target_jd;career.drafts.set(id,updated);renderDetail();}
+      }else{career.selected=selected;selectedJobs();await findJobs();intake.outerHTML=jdIntake("onboard");}
+      await loadOverview();notify(target==="target"?"JD已保存并选中，点击保存调整后用于这个目标。":"JD已保存并选中，可以继续建立求职目标。");
+    }catch(error){if(status.isConnected)status.textContent=error.message;throw error;}finally{button.disabled=false;}
+  }
   async function findJobs(){
     const query=$("#career-job-query").value.trim();
     $("#career-job-options").innerHTML='<p class="form-note">正在查找岗位…</p>';
@@ -93,7 +116,7 @@
   }
   function goalSettings(data){
     const values=storyDraft().settings||{title:data.title,goal:data.goal,background:data.profile?.background||"",constraints:data.profile?.constraints||""};
-    return `<details class="panel career-settings-panel" ${storyDraft().settings_open?"open":""}><summary>调整目标、个人背景与目标岗位</summary><form id="career-settings"><div class="form-grid"><label>目标名称<input name="title" maxlength="150" required value="${e(values.title)}"></label><label>投入与限制<input name="constraints" maxlength="500" value="${e(values.constraints)}"></label></div><label>我现在希望达到什么目标<textarea name="goal" maxlength="1000" rows="2" required>${e(values.goal)}</textarea></label><label>更新已有经历与能力<textarea name="background" maxlength="1500" rows="3" required>${e(values.background)}</textarea></label><label>目标岗位（最多6个）</label><div id="career-target-selection"></div><div class="research-hub-search"><input id="career-target-query" type="search" value="${e(storyDraft().settings_query||"")}" placeholder="查找想加入的岗位" aria-label="查找想加入目标的岗位"><button type="button" class="secondary" id="career-target-find">查找岗位</button></div><div id="career-target-options"></div><div class="result-actions"><button class="primary" ${data.running?"disabled":""}>保存调整</button><button type="button" class="text-button" data-career-cancel-settings>取消修改</button><a class="text-button" href="#jobs">去补充新的JD ↗</a></div><p class="form-note">保存不调用模型。已有经历、练习和认知记录继续保留，新的分析使用更新后的目标与背景。</p></form></details>`;
+    return `<details class="panel career-settings-panel" ${storyDraft().settings_open?"open":""}><summary>调整目标、个人背景与目标岗位</summary><form id="career-settings"><div class="form-grid"><label>目标名称<input name="title" maxlength="150" required value="${e(values.title)}"></label><label>投入与限制<input name="constraints" maxlength="500" value="${e(values.constraints)}"></label></div><label>我现在希望达到什么目标<textarea name="goal" maxlength="1000" rows="2" required>${e(values.goal)}</textarea></label><label>更新已有经历与能力<textarea name="background" maxlength="1500" rows="3" required>${e(values.background)}</textarea></label><label>目标岗位（最多6个）</label><div id="career-target-selection"></div><div class="research-hub-search"><input id="career-target-query" type="search" value="${e(storyDraft().settings_query||"")}" placeholder="查找想加入的岗位" aria-label="查找想加入目标的岗位"><button type="button" class="secondary" id="career-target-find">查找岗位</button></div><div id="career-target-options"></div>${jdIntake("target")}<div class="result-actions"><button class="primary" ${data.running?"disabled":""}>保存调整</button><button type="button" class="text-button" data-career-cancel-settings>取消修改</button></div><p class="form-note">保存不调用模型。已有经历、练习和认知记录继续保留，新的分析使用更新后的目标与背景。</p></form></details>`;
   }
 
   function requirements(data){
@@ -220,7 +243,7 @@
 
   window.loadCareer=async()=>{
     clearTimeout(career.timer);$("#career-detail").hidden=true;await loadGoals();
-    const id=location.hash.split("/")[1];
+    const id=location.hash.split("/")[1];$("#career-goal-switcher").open=!id;if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");
     if(id&&/^[a-f0-9]{32}$/.test(id))await openCareer(id);
     else{$("#career-onboarding").hidden=false;$("#career-detail").hidden=true;await findJobs();}
   };
@@ -270,8 +293,9 @@
     if(event.target.id==="career-offline")career.offline=event.target.checked;
   });
   document.addEventListener("click",async event=>{
-    const target=event.target.closest("[data-career-tab],[data-career-remove-job],[data-career-research],[data-career-link-story],[data-career-import-tasks],[data-career-task-story],[data-career-edit-story],[data-career-remove-story],[data-career-cancel-story],[data-career-new-insight],[data-career-insight-task],[data-career-cancel-insight],[data-career-cancel-settings],[data-career-goal-remove-job],[data-career-followup],[data-career-ask-result],#career-target-find,#career-refresh,#career-export");if(!target)return;
+    const target=event.target.closest("[data-career-tab],[data-career-remove-job],[data-career-research],[data-career-link-story],[data-career-import-tasks],[data-career-task-story],[data-career-edit-story],[data-career-remove-story],[data-career-cancel-story],[data-career-new-insight],[data-career-insight-task],[data-career-cancel-insight],[data-career-cancel-settings],[data-career-goal-remove-job],[data-career-followup],[data-career-ask-result],[data-career-save-jd],#career-target-find,#career-refresh,#career-export");if(!target)return;
     try{
+      if(target.dataset.careerSaveJd)await saveInlineJD(target);
       if(target.dataset.careerRemoveJob){career.selected.delete(target.dataset.careerRemoveJob);selectedJobs();await findJobs();}
       if(target.dataset.careerTab){captureDrafts();career.tab=target.dataset.careerTab;renderDetail();}
       if(target.dataset.careerAskResult){captureDrafts();const draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:{...draft.inquiries?.[career.tab],source_step_id:target.dataset.careerAskResult,...(target.dataset.careerMapQuestion?{question:target.dataset.careerMapQuestion}:{})}};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus();}
@@ -289,7 +313,7 @@
       if(target.hasAttribute("data-career-cancel-insight")){captureDrafts();delete storyDraft().insight;renderDetail();}
       if(target.id==="career-target-find")await findGoalJobs();
       if(target.dataset.careerGoalRemoveJob){captureDrafts();const selected=goalJobs();selected.delete(target.dataset.careerGoalRemoveJob);const draft=storyDraft();draft.settings_jobs=[...selected];career.drafts.set(career.id,draft);showGoalJobs();}
-      if(target.hasAttribute("data-career-cancel-settings")){captureDrafts();for(const key of ["settings","settings_jobs","settings_open","settings_query"])delete storyDraft()[key];renderDetail();}
+      if(target.hasAttribute("data-career-cancel-settings")){captureDrafts();for(const key of ["settings","settings_jobs","settings_open","settings_query","target_jd"])delete storyDraft()[key];renderDetail();}
     }catch(error){target.disabled=false;notify(error.message,true);}
   });
   document.addEventListener("submit",async event=>{
@@ -300,7 +324,7 @@
       else if(form.id==="career-resume-form"){if(form.elements.resume_text.value.length>20000)throw new Error("请把简历正文精简到2万字以内。");career.data=await api(apiPath()+"/resume",{method:"PATCH",body:JSON.stringify({title:form.elements.resume_title.value,text:form.elements.resume_text.value})});delete storyDraft().resume_text;delete storyDraft().resume_title;renderDetail();notify("简历已保存，后续研究将参考这份正文。");}
       else if(form.id==="career-insight"){const data=Object.fromEntries(new FormData(form));data.task_id=data.task_id||null;career.data=await api(apiPath()+"/insights",{method:"POST",body:JSON.stringify(data)});delete storyDraft().insight;renderDetail();notify("这次认识变化已保存，后续研究会参考你的理解和疑问。");}
       else if(form.id==="career-manual-experiment"){career.data=await api(apiPath()+"/experiments",{method:"POST",body:JSON.stringify(Object.fromEntries(new FormData(form)))});delete storyDraft().manual;delete storyDraft().manual_open;renderDetail();await loadGoals();notify("自己设计的实验已加入练习板。");}
-      else if(form.id==="career-settings"){const data=Object.fromEntries(new FormData(form));data.job_ids=[...goalJobs().keys()];if(!data.job_ids.length)throw new Error("请至少保留一个目标岗位。");const id=career.id,updated=await api(apiPath(),{method:"PATCH",body:JSON.stringify(data)});if(career.id===id){career.data=updated;for(const key of ["settings","settings_jobs","settings_open","settings_query"])delete storyDraft()[key];renderDetail();await loadGoals();}notify("目标与背景已更新，经历、练习和认知记录继续保留。");}
+      else if(form.id==="career-settings"){const data=Object.fromEntries(new FormData(form));data.job_ids=[...goalJobs().keys()];if(!data.job_ids.length)throw new Error("请至少保留一个目标岗位。");const id=career.id,updated=await api(apiPath(),{method:"PATCH",body:JSON.stringify(data)});if(career.id===id){career.data=updated;for(const key of ["settings","settings_jobs","settings_open","settings_query","target_jd"])delete storyDraft()[key];renderDetail();await loadGoals();}notify("目标与背景已更新，经历、练习和认知记录继续保留。");}
       else if(form.id==="career-inquiry")await research("ask","",0,null,form.elements.source_step_id.value||null,form.elements.question.value);
       else if(form.id==="career-interview-answer")await research("answer",form.elements.answer.value,Number(form.elements.question_index.value),null,form.elements.source_step_id.value);
       else{career.data=await api(apiPath()+"/tasks/"+encodeURIComponent(form.dataset.careerTaskForm),{method:"PATCH",body:JSON.stringify(Object.fromEntries(new FormData(form)))});delete storyDraft()["task:"+form.dataset.careerTaskForm];renderDetail();await loadGoals();notify("练习进度与实际观察已保存。");}
