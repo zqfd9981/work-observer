@@ -48,3 +48,11 @@ const notice=vm.runInContext("renderMemoryRevisionNotices(notices)",context);
 assert.ok(notice.includes("涉及原判断 3")&&notice.includes("&lt;script&gt;原任务"));
 assert.ok(notice.includes('data-open-run="later"')&&notice.includes("已保存内容保留"));
 assert.ok(!notice.includes("<script>")&&!notice.includes("<img>"));
+
+context.support=[{claim_index:4,text:"精通<script>平台系统</script>",category:"ability",basis:"direct",requirement:"preferred",source_references:[{id:"one",job_id:"j",document_id:"original",title:"<img>原岗位",company:"原公司"}]}];
+const supportHtml=vm.runInContext("renderKnowledgeSupport(support)",context);
+assert.ok(supportHtml.includes("原判断 5")&&supportHtml.includes("原文明示")&&supportHtml.includes("加分"));
+assert.ok(supportHtml.includes("精通&lt;script&gt;平台系统")&&supportHtml.includes("&lt;img&gt;原岗位"));
+assert.ok(supportHtml.includes('data-source="original"')&&!supportHtml.includes("<script>"));
+context.retention.work_relations[0].supporting_claims=context.support;
+assert.ok(vm.runInContext("renderMapRetention(retention)",context).includes("原判断 5"));

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.knowledge.models import DomainDefinition, WorkRelation
 from work_observer.knowledge.service import DomainKnowledgeService, _record
+from work_observer.knowledge.support import claim_support
 from work_observer.memory.dependencies import DependencyAudit
 from work_observer.reports.cognition import checked_map
 from work_observer.storage.locks import exclusive
@@ -48,6 +49,7 @@ class ResearchKnowledgeService:
                 work_types.append(
                     {
                         **item,
+                        "supporting_claims": claim_support(result, item["claim_indices"]),
                         "index": index,
                         "saved_id": saved.id if saved else None,
                         "saved_status": saved.status if saved else None,
@@ -72,6 +74,19 @@ class ResearchKnowledgeService:
                     relation_items[key].append(
                         {
                             **item,
+                            "supporting_claims": claim_support(
+                                result,
+                                sorted(
+                                    set(item["claim_indices"])
+                                    | {
+                                        i
+                                        for row in value.get("comparisons", [])
+                                        if key == "work_relations"
+                                        and index in row["relation_indices"]
+                                        for i in row["claim_indices"]
+                                    }
+                                ),
+                            ),
                             "index": index,
                             **(
                                 {

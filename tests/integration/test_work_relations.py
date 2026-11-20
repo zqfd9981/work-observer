@@ -164,6 +164,11 @@ def test_saved_relation_carries_comparison_and_evidence_from_both_jobs(source_wo
     transfer = ResearchKnowledgeService(repo, store)
     preview = transfer.preview(result["run_id"])
     assert preview["work_relations"][0]["comparisons"][0]["claim_indices"] == [0, 1, 2, 3]
+    support = preview["work_relations"][0]["supporting_claims"]
+    assert [row["claim_index"] for row in support] == [0, 1, 2, 3]
+    assert support[1]["text"] == result["claims"][1]["text"]
+    assert support[1]["requirement"] == "required" and support[1]["basis"] == "direct"
+    assert {ref["job_id"] for row in support for ref in row["source_references"]} == set(jobs[:2])
     domain = transfer.save(result["run_id"], work_type_index=0)["record"]
     body = dict(work_relation_index=0, domain_id=domain["id"])
     row = transfer.save(result["run_id"], **body)["record"]
@@ -172,6 +177,18 @@ def test_saved_relation_carries_comparison_and_evidence_from_both_jobs(source_wo
     assert row["scope"]["research_map"]["comparisons"] == result["work_map"]["comparisons"]
     assert row["target_text"] == result["claims"][1]["text"] and len(row["target_text"]) > 500
     assert transfer.save(result["run_id"], **body)["record"]["id"] == row["id"]
+    knowledge = DomainKnowledgeService(repo)
+    knowledge.review_domain(domain["id"], "accept", "合成机制核对")
+    knowledge.review_relation(row["id"], "accept", "合成机制核对")
+    listed = next(record for record in knowledge.list_relations() if record["id"] == row["id"])
+    assert listed["supporting_claims"] == support
+    reused = knowledge.browse_for_research(["接口"], job_ids=jobs[:2], public_document_ids=[])
+    packet = next(
+        item for item in reused["supporting_findings"] if item["run_id"] == result["run_id"]
+    )
+    assert packet["claims"] == support
+    assert packet["omitted_claims"] == 0 and not packet["independent_source"]
+    assert "requires不自动等于招聘必备" in reused["rules"]
     assert store.get(result["run_id"])["result"] == original
 
 

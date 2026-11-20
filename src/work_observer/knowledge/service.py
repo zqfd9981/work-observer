@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.knowledge.models import DomainDefinition, WorkRelation
+from work_observer.knowledge.support import research_support
 from work_observer.memory.service import MemoryService
 from work_observer.retrieval.enhanced import RetrievalService
 
@@ -170,6 +171,13 @@ class DomainKnowledgeService:
                         "stale": bool(reasons),
                         "stale_reasons": reasons,
                         "revision_notices": self.revision_notices(row),
+                        "supporting_claims": research_support(
+                            self.repository,
+                            (row.source_context or {}).get("run_id"),
+                            (row.source_context or {}).get("claim_indices", []),
+                        )
+                        if row.status != "invalidated"
+                        else [],
                     }
                 )
             return output
@@ -479,6 +487,13 @@ class DomainKnowledgeService:
                         "stale": bool(reasons),
                         "stale_reasons": reasons,
                         "revision_notices": self.revision_notices(row),
+                        "supporting_claims": research_support(
+                            self.repository,
+                            row.source_run_id,
+                            row.scope.get("research_map", {}).get("claim_indices", []),
+                        )
+                        if row.status != "invalidated"
+                        else [],
                     }
                 )
             return output
@@ -756,6 +771,7 @@ class DomainKnowledgeService:
                         "target_kind": row.target_kind,
                         "target_text": row.target_text,
                         "predicate": row.predicate,
+                        "source_run_id": row.source_run_id,
                         "scope": row.scope,
                         "source_references": references(row.evidence),
                         "counter_references": references(row.counterevidence),
@@ -764,18 +780,52 @@ class DomainKnowledgeService:
                         **({"revision_notices": notices} if notices else {}),
                     }
                 )
+            support_indices = {}
+            for row in domain_output:
+                context = row["source_context"]
+                if context.get("run_id"):
+                    source_runs.add(context["run_id"])
+                    support_indices.setdefault(context["run_id"], set()).update(
+                        context.get("claim_indices", [])
+                    )
+            for row in relation_output:
+                if row["source_run_id"]:
+                    support_indices.setdefault(row["source_run_id"], set()).update(
+                        row["scope"].get("research_map", {}).get("claim_indices", [])
+                    )
+            supporting_findings, remaining = [], 12000
+            for run_id, indices in support_indices.items():
+                claims = research_support(self.repository, run_id, indices, at=cutoff)
+                selected = []
+                for claim in claims:
+                    size = len(json.dumps(claim, ensure_ascii=False))
+                    if size <= remaining:
+                        selected.append(claim)
+                        remaining -= size
+                supporting_findings.append(
+                    {
+                        "run_id": run_id,
+                        "claims": selected,
+                        "omitted_claims": len(indices) - len(selected),
+                        "independent_source": False,
+                    }
+                )
             return {
                 "domains": domain_output,
                 "relations": relation_output,
+                "supporting_findings": supporting_findings,
                 "dependencies": dependencies,
                 "source_run_ids": sorted(source_runs),
                 "matching_relations": len(ranked),
                 "truncated": len(ranked) > len(relations),
-                "limits": {"domains": 6, "relations": 10},
+                "limits": {"domains": 6, "relations": 10, "supporting_claim_characters": 12000},
                 "rules": (
                     "领域与关系是人审派生线索，不是独立来源；原文引用尚未读取，"
                     "必须用read_job或search_archived_sources重新取得当前研究的证据后才能提交判断。"
                     "revision_notices是后续研究提出的不同判断，使用前核对原文；未自动修改采纳状态。"
+                    "supporting_findings保留原判断的完整表述、维度、解释性质及要求性质，"
+                    "仍是派生认识，不是本轮已读证据。关系中的requires不自动等于招聘必备。"
+                    "省略数非零时不能把已展示的部分当成完整能力条件或比较双方。"
                 ),
             }
 

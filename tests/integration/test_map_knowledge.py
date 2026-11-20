@@ -169,6 +169,10 @@ def test_map_http_retention_revisions_reuse_and_forgetting(source_workspace, tmp
             for row in session.scalars(select(WorkRelation))
         )
     assert raw_jobs == [repo.job(job) for job in jobs]
+    assert all(not row["supporting_claims"] for row in knowledge.list_domains(include_history=True))
+    assert all(
+        not row["supporting_claims"] for row in knowledge.list_relations(include_history=True)
+    )
 
 
 def test_rejected_map_stops_saved_work_type_reuse(source_workspace):
