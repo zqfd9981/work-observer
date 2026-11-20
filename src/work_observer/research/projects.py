@@ -1557,6 +1557,7 @@ class ProjectService:
                 )
 
             context["career_evidence"] = {
+                "selected_requirement": step.get("career_requirement"),
                 "selected_inquiry": selected_inquiry,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
                 "learning_selection_notice": "learning_notes只含最近选用的三份个人认识；"

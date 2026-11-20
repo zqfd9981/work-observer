@@ -80,6 +80,20 @@ class InsightUseInput(BaseModel):
     use_for_research: bool = Field(strict=True)
 
 
+class RequirementRecordInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["story", "task", "material"]
+    id: str = Field(pattern="^[a-f0-9]{32}$")
+
+
+class RequirementEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    requirement_key: str = Field(min_length=1, max_length=100)
+    records: list[RequirementRecordInput] = Field(default_factory=list, max_length=3)
+    relevance: str = Field(default="", max_length=1500)
+    missing: str = Field(default="", max_length=1500)
+
+
 class ResearchQuestionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     question: str = Field(min_length=1, max_length=1500)
@@ -105,6 +119,7 @@ class CareerResearchInput(BaseModel):
         "ask",
         "challenge",
         "pitch",
+        "evidence",
     ]
     answer: str = Field(default="", max_length=2500)
     offline: bool = False
@@ -120,6 +135,7 @@ class CareerResearchInput(BaseModel):
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    requirement_key: str = Field(default="", max_length=100)
 
 
 class PitchInput(BaseModel):
@@ -255,6 +271,14 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             200 if request.path_params.get("question_id") else 201,
         )
 
+    async def requirement_evidence(request):
+        data = RequirementEvidenceInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().save_requirement_evidence(
+                request.path_params["id"], data.model_dump()
+            )
+        )
+
     async def pitch(request):
         data = PitchInput.model_validate(await read_json(request))
         return change(
@@ -350,6 +374,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/insights/{insight_id}/use", insight_use, methods=["POST"]),
         Route("/api/career/{id}/questions", question, methods=["POST"]),
         Route("/api/career/{id}/questions/{question_id}", question, methods=["PATCH"]),
+        Route("/api/career/{id}/requirement-evidence", requirement_evidence, methods=["POST"]),
         Route("/api/career/{id}/pitches", pitch, methods=["POST"]),
         Route("/api/career/{id}/pitches/{pitch_id}", pitch, methods=["PATCH"]),
         Route("/api/career/{id}/stories", story, methods=["POST"]),

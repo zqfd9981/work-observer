@@ -83,3 +83,12 @@
 .career-question-history{margin-top:18px}
 .career-question-conclusion{padding:14px;background:#f4f7f1;border-radius:8px}
 @media(max-width:600px){.career-question-board{padding:16px}.career-question-board form{padding:12px}.career-question-card .section-heading{align-items:flex-start;flex-wrap:wrap}}
+
+.career-proof-editor{grid-column:1/-1;border-top:1px solid var(--line);padding:22px;background:#f8faf5}
+.career-proof-editor>label{display:block;margin:16px 0}
+.career-proof-editor .form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.career-proof-record{border-bottom:1px solid #dbe4d4;padding-bottom:10px;width:100%;overflow-wrap:anywhere}
+.career-proof-record strong{font-size:13px}
+.career-proof-relevance,.career-proof-missing{font-size:13px;line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere;margin:18px 0 0}
+.career-proof-missing{background:#f6f4e9;padding:12px;border-radius:8px}
+@media(max-width:680px){.career-proof-editor{padding:16px}.career-proof-editor .form-grid{grid-template-columns:1fr}}

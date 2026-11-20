@@ -17,6 +17,18 @@ from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.text_match import match_text
 
 QUESTIONS = {
+    "evidence": (
+        "逐项核对用户针对一项岗位要求选中的证据，不做笼统匹配打分。"
+        "本次要求和材料在career_evidence.selected_requirement，先回读该要求引用的JD原文，"
+        "再读取所选records中每份document_id对应的经历、作品或补充材料正文。"
+        "planned练习只是计划，done也只代表用户记录过观察；无产物的练习不能假装已读过产物。"
+        "区分招聘要求、自述经历、个人练习观察和你的迁移推断；保留必备、加分和未说明性质。"
+        "具体说明哪些个人行动或产物与此要求有关，迁移依赖什么前提，哪些缺口仍未知。"
+        "不能仅用JD证明用户做过什么，不因有材料就认定胜任，也不把未提供材料说成不会。"
+        "用户填写的relevance和missing是个人判断，须对照原文检验。"
+        "claims最多四条，给出相应原文引用；必要时通过application_plan只建议一个最小补证据练习。"
+        "结尾在gaps中列仍需补充的信息与最值得核实的问题，不编造能力、指标或企业验收标准。"
+    ),
     "pitch": (
         "为用户整理一份基于证据的项目面试讲述草稿。只围绕career_evidence.selected_story，"
         "先读取其document_id对应的用户经历原文，再结合目标JD理解讲述重点。"
@@ -342,6 +354,7 @@ class CareerService:
                 section = row.get("section") or {
                     "role": "requirements",
                     "map": "requirements",
+                    "evidence": "requirements",
                     "gaps": "stories",
                     "plan": "experiments",
                     "reflect": "experiments",
@@ -360,6 +373,7 @@ class CareerService:
                     or {
                         "role": "看清岗位",
                         "map": "探索工作地图",
+                        "evidence": "逐项核对证据：" + row.get("requirement_text", ""),
                         "gaps": "对照经历与差距",
                         "plan": "工作样本建议",
                         "reflect": "练习反思",
@@ -485,6 +499,7 @@ class CareerService:
                             "key": f"{step['run_id']}:{index}",
                             **claim,
                             "evidence": [evidence[key] for key in claim["evidence_ids"]],
+                            "proof": self.requirement_proof(project, f"{step['run_id']}:{index}"),
                         }
                     )
         return {
@@ -524,6 +539,92 @@ class CareerService:
             "budget": project["budget"],
             "running": any(step["state"] == "running" for step in project["steps"]),
         }
+
+    def requirement_proof(self, project, key):
+        career = project["career"]
+        saved = next(
+            (
+                row
+                for row in career.get("requirement_evidence", [])
+                if row["requirement_key"] == key
+            ),
+            None,
+        )
+        references = (
+            saved["records"]
+            if saved
+            else [
+                {"kind": "story", "id": row["id"]}
+                for row in career["stories"]
+                if row.get("requirement_key") == key
+            ][:3]
+        )
+        records = []
+        for ref in references:
+            kind, identity = ref["kind"], ref["id"]
+            if kind == "material":
+                source = (
+                    next(iter(archive_catalog(self.repository, [identity])), None)
+                    if identity in (project.get("public_document_ids") or [])
+                    else None
+                )
+                row = {"title": source["title"], "document_id": identity} if source else None
+            else:
+                row = next(
+                    (
+                        dict(item)
+                        for item in career["stories" if kind == "story" else "tasks"]
+                        if item["id"] == identity
+                    ),
+                    None,
+                )
+                if row and kind == "task":
+                    row["document_id"] = row.get("artifact_document_id")
+            records.append(
+                {
+                    **(row or {"title": "已移出当前目标的记录"}),
+                    "kind": kind,
+                    "id": identity,
+                    "available": bool(row),
+                }
+            )
+        return {
+            "records": records,
+            "relevance": saved.get("relevance", "") if saved else "",
+            "missing": saved.get("missing", "") if saved else "",
+        }
+
+    def save_requirement_evidence(self, identity, data):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if not any(
+                row["key"] == data["requirement_key"] for row in self.get(identity)["requirements"]
+            ):
+                raise ValueError("请从当前岗位分析中重新选择一项要求。")
+            career = project["career"]
+            links = career.setdefault("requirement_evidence", [])
+            references = list({(ref["kind"], ref["id"]): ref for ref in data["records"]}.values())
+            for ref in references:
+                available = (
+                    ref["id"] in (project.get("public_document_ids") or [])
+                    if ref["kind"] == "material"
+                    else any(
+                        row["id"] == ref["id"]
+                        for row in career["stories" if ref["kind"] == "story" else "tasks"]
+                    )
+                )
+                if not available:
+                    raise ValueError("所选材料已不在当前目标中，请重新选择。")
+            saved = {**data, "records": references, "updated_at": now()}
+            previous = next(
+                (row for row in links if row["requirement_key"] == data["requirement_key"]), None
+            )
+            if previous:
+                links[links.index(previous)] = saved
+            else:
+                links.append(saved)
+            self.projects._write(project)
+        return self.get(identity)
 
     def end_step(self, identity, step_id):
         with self.store.lock, self.store.db:
@@ -902,6 +1003,7 @@ class CareerService:
         story_id=None,
         insight_id=None,
         question_id=None,
+        requirement_key="",
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -920,6 +1022,21 @@ class CareerService:
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
             user_question = question.strip() if kind == "ask" else ""
+            selected_requirement = None
+            continued_requirement = None
+            if kind == "evidence":
+                selected_requirement = next(
+                    (
+                        row
+                        for row in self.get(identity)["requirements"]
+                        if row["key"] == requirement_key
+                    ),
+                    None,
+                )
+                if not selected_requirement:
+                    raise ValueError("请先选择当前分析中的一项岗位要求。")
+                if any(not row["available"] for row in selected_requirement["proof"]["records"]):
+                    raise ValueError("有一份材料已移出目标，请先调整这项要求的证据。")
             if question_id:
                 saved_question = next(
                     (
@@ -1017,6 +1134,10 @@ class CareerService:
                     raise ValueError("这份分析已不是当前目标下的结果，请重新选择或直接提问。")
                 previous_text = ""
                 if previous:
+                    previous_step = next(
+                        row for row in project["steps"] if row["id"] == previous["step_id"]
+                    )
+                    continued_requirement = previous_step.get("career_requirement")
                     answer_document_id = previous.get("answer_document_id")
                     answer_record = previous if previous.get("answer") else None
                     previous_text = (
@@ -1150,6 +1271,13 @@ class CareerService:
                     "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
                     "不因为本轮生成回答而宣称问题已解决。"
                 )
+            if continued_requirement:
+                question += (
+                    "本次沿着一项岗位要求的证据对照继续讨论，原先选定的材料在"
+                    "career_evidence.selected_requirement。请按本轮可用目录回查原文，"
+                    "用户原先写的相关性和缺口不是独立事实，旧讨论也不是新增证据。"
+                    "若资料已不在本轮可读范围，明确指出，不补造或假装已经读取。"
+                )
             used = self.projects.usage(project)
             allow_public = bool(allow_public and not offline)
             if allow_public:
@@ -1238,6 +1366,10 @@ class CareerService:
                     "story_id": story_id if kind == "pitch" else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "question_id": question_id,
+                    "requirement_key": requirement_key if kind == "evidence" else "",
+                    "requirement_text": selected_requirement["text"]
+                    if selected_requirement
+                    else "",
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if kind in {"reflect", "challenge"} or insight_id else None,
                     "created_at": now(),
@@ -1249,6 +1381,17 @@ class CareerService:
                 project["steps"][-1]["career_insight_id"] = insight_id
             if question_id:
                 project["steps"][-1]["career_question_id"] = question_id
+            if selected_requirement:
+                project["steps"][-1]["career_requirement"] = {
+                    **{
+                        key: selected_requirement[key]
+                        for key in ("key", "text", "category", "requirement", "evidence")
+                    },
+                    **selected_requirement["proof"],
+                    "notice": "用户选定的材料与判断，关联不代表胜任，须回读原文核对。",
+                }
+            elif continued_requirement:
+                project["steps"][-1]["career_requirement"] = continued_requirement
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id

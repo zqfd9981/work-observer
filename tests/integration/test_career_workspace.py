@@ -31,6 +31,12 @@ class CareerModel:
             for key in ("selected_answer", "selected_material", "selected_story")
             if (value := career_context.get(key))
         ]
+        required_documents.extend(
+            {"document_id": row["document_id"]}
+            for row in (career_context.get("selected_requirement") or {}).get("records", [])
+            if row.get("document_id")
+        )
+        required_documents = list({row["document_id"]: row for row in required_documents}.values())
         if not required_documents:
             required_documents = [
                 row["artifact_document"]
@@ -182,6 +188,18 @@ class CareerModel:
                     }
                 ]
                 arguments["gaps"] = ["尚需补充输入输出和记录位置，不编造业务指标。"]
+            if career_context.get("selected_requirement"):
+                read_ids = [ev["id"] for output in outputs for ev in output.get("evidence", [])]
+                arguments["claims"] = [
+                    {
+                        "category": "ability",
+                        "basis": "inference",
+                        "requirement": "unspecified",
+                        "text": "合成核对示例：已有本地样例记录，尚不能证明生产效果。",
+                        "evidence_ids": read_ids,
+                    }
+                ]
+                arguments["gaps"] = ["仍需了解业务验收口径与并发情境。"]
             name = "finish_research"
         call = {
             "type": "function_call",
