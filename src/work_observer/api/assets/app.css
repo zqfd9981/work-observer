@@ -121,3 +121,8 @@
 .career-question-experiments article{padding:10px 0;border-top:1px solid #dfe7da}
 .career-question-experiments .quiet-tag{margin-left:12px}
 .career-manual-question{white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;background:#edf3e7;border-radius:8px}
+
+.career-carried-understanding{margin:16px 0;padding:16px;border-left:3px solid #9cb58d;background:#f4f7ef;border-radius:0 10px 10px 0}
+.career-carried-understanding>summary{font-weight:600;cursor:pointer}
+.career-carried-understanding h4{font-size:13px;margin:18px 0 6px;color:#47614d}
+.career-carried-understanding p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.9}

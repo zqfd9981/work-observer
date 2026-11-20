@@ -48,7 +48,7 @@ class ResumeInput(BaseModel):
 class ReuseInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_project_id: str = Field(pattern="^[a-f0-9]{32}$")
-    kind: Literal["story", "task"]
+    kind: Literal["story", "task", "insight", "question"]
     record_id: str = Field(pattern="^[a-f0-9]{32}$")
 
 

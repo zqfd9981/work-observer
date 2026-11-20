@@ -334,6 +334,7 @@ class CareerService:
                     step_id=row.get("source_step_id"),
                 )
             for row in career.get("questions", []):
+                carried = row.get("carried_understanding") or {}
                 add(
                     owner,
                     "question",
@@ -341,6 +342,11 @@ class CareerService:
                     row["question"],
                     "\n".join(
                         row.get(key, "") for key in ("why_matters", "next_evidence", "conclusion")
+                    )
+                    + "\n"
+                    + "\n".join(
+                        carried.get(key, "")
+                        for key in ("understanding", "observation", "previous_view")
                     ),
                     "requirements",
                     step_id=row.get("conclusion_step_id") or row.get("source_step_id"),
@@ -832,13 +838,20 @@ class CareerService:
                 raise ValueError("这份记录已经在当前目标中。")
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等本轮研究结束后再带入材料。")
-            collection = "stories" if kind == "story" else "tasks"
+            collection = {
+                "story": "stories",
+                "task": "tasks",
+                "insight": "insights",
+                "question": "questions",
+            }[kind]
             original = next(
-                (row for row in source["career"][collection] if row["id"] == record_id), None
+                (row for row in source["career"].get(collection, []) if row["id"] == record_id),
+                None,
             )
             if not original:
                 raise ValueError("原目标中已找不到这份记录，请重新选择。")
-            records = project["career"][collection]
+            understanding = kind in {"insight", "question"}
+            records = project["career"].setdefault("questions" if understanding else collection, [])
             provenance = {
                 "project_id": source_project_id,
                 "project_title": source["title"],
@@ -852,6 +865,52 @@ class CareerService:
                 )
                 for row in records
             ):
+                return self.get(identity)
+            if understanding:
+                carried = original.get("carried_understanding") or {}
+                records.append(
+                    {
+                        "id": uuid4().hex,
+                        "question": original["question"]
+                        if kind == "question"
+                        else original.get("open_question") or "这条旧认识在当前岗位中仍然适用吗？",
+                        "why_matters": original.get("why_matters", "")
+                        if kind == "question"
+                        else "从另一个目标保存的个人理解出发，核对它对当前岗位的适用性。",
+                        "next_evidence": original.get("next_evidence", "")
+                        if kind == "question"
+                        else "",
+                        "state": "open",
+                        "conclusion": "",
+                        "source_step_id": None,
+                        "conclusion_step_id": None,
+                        "origin": "user",
+                        "reused_from": provenance,
+                        "created_at": now(),
+                        "carried_understanding": {
+                            "previous_view": original.get(
+                                "previous_view", carried.get("previous_view", "")
+                            ),
+                            "observation": original.get(
+                                "observation", carried.get("observation", "")
+                            ),
+                            "understanding": original.get("current_view", "")
+                            if kind == "insight"
+                            else original.get("conclusion") or carried.get("understanding", ""),
+                            "open_question": original.get("open_question", "")
+                            if kind == "insight"
+                            else original["question"],
+                            "was_in_use": original.get("use_for_research", True)
+                            if kind == "insight"
+                            else carried.get("was_in_use"),
+                            "record_state": original.get("state"),
+                            "recorded_at": original.get("updated_at") or original.get("created_at"),
+                            "notice": "来自其他目标的个人理解与观察，仅作待验证起点，"
+                            "不是当前岗位事实或独立证据。",
+                        },
+                    }
+                )
+                self.projects._write(project)
                 return self.get(identity)
             limit = 12 if kind == "story" else 24
             if len(records) >= limit:
@@ -1289,6 +1348,8 @@ class CareerService:
                     "本次围绕career_evidence.selected_inquiry中的持续调查问题展开，"
                     "结合用户本次提问、关心它的理由和希望补充的证据，回读相关原文。"
                     "若用户已有结论，它仍是待查证的个人记录，不当作独立事实。"
+                    "若含carried_understanding，它是另一个目标下保存的理解，先核对当前岗位的适用条件；"
+                    "原材料不在本轮范围时，明确无法重核旧结论，不用旧认识替代当前原文。"
                     "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
                     "不因为本轮生成回答而宣称问题已解决。"
                 )
