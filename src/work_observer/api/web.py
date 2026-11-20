@@ -481,6 +481,10 @@ def create_app(
         data["resumable"] = bool(
             checkpoint and run["state"] in {"interrupted", "failed"} and not data["project_id"]
         )
+        if run["state"] != "invalidated":
+            from work_observer.research.answer_feedback import with_submission_feedback
+
+            data["result"] = with_submission_feedback(data.get("result"), checkpoint)
         data["result"] = audited(data.get("result"))
         return response(data)
 
@@ -531,7 +535,10 @@ def create_app(
                 {"error_code": "RESULT_NOT_READY", "message": "结果尚未生成，暂时不能保存。"}, 409
             )
         if not run.get("saved"):
-            saved = save_result(public(run["result"], credentials), reports_dir)
+            from work_observer.research.answer_feedback import with_submission_feedback
+
+            result = with_submission_feedback(run["result"], store.load_checkpoint(run["id"]))
+            saved = save_result(public(result, credentials), reports_dir)
             store.save(run["id"], saved={"report_id": saved["report_id"]})
         return response(get_run(run["id"])["saved"])
 

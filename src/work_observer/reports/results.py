@@ -275,6 +275,29 @@ def render(result):
             )
         if label != "通过":
             lines.extend(["回答生成不表示质量核对通过；下文保留原回答及其引用。", ""])
+    if result.get("submission_feedback") and result["status"] != "completed":
+        feedback = result["submission_feedback"]
+        lines.extend(["## 最近一次提交为何未通过", "", escape(feedback["notice"]), ""])
+        for row in feedback["reasons"]:
+            indices = "、".join(str(index + 1) for index in row.get("claim_indices", []))
+            lines.append(
+                "- " + escape(row["message"]) + (" 对应条目：" + indices if indices else "")
+            )
+        lines.extend(["", "### 未通过的提交（不作为当前认识）", ""])
+        draft_labels = {
+            item["id"]: f"E{index}" for index, item in enumerate(result.get("evidence", []), 1)
+        }
+        for row in feedback["draft_claims"]:
+            lines.extend([f"条目 {row['index'] + 1}：" + escape(str(row["text"])), ""])
+            lines.append(
+                "待核对的引用："
+                + " ".join(
+                    f"[{draft_labels[key]}](#{draft_labels[key].lower()})"
+                    if key in draft_labels
+                    else "引用无法定位"
+                    for key in row["evidence_ids"]
+                )
+            )
     lines.extend(["## 本次候选", ""])
     audit = result.get("audit") or {}
     if (

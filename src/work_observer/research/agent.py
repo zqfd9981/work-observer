@@ -2516,7 +2516,15 @@ async def _research(
                             ),
                         }
                         entry["validation"] = "citation_or_coverage_rejected"
+                        from work_observer.research.answer_feedback import submission_feedback
+
+                        result["submission_feedback"] = submission_feedback(
+                            [claim.model_dump() for claim in answer.claims],
+                            data,
+                            list(evidence.values()),
+                        )
                     else:
+                        result.pop("submission_feedback", None)
                         result.update(
                             status="completed",
                             stop_reason="answered",

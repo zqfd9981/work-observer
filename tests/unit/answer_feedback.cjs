@@ -1,0 +1,13 @@
+const fs=require("node:fs"),vm=require("node:vm"),assert=require("node:assert/strict");
+const node=()=>({querySelector:node,querySelectorAll:()=>[],addEventListener(){}});
+const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:""},URL,console,setTimeout,clearTimeout,Intl};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],"utf8"),ctx);
+ctx.result={status:"incomplete",submission_feedback:{notice:"不是有效回答，不进入当前认识",reasons:[{message:"要求性质检查可能有误",claim_indices:[0]}],draft_claims:[{index:0,text:"<script>未通过的文本</script>",requirement:"preferred",basis:"direct",category:"ability",evidence_ids:["real","missing"]}]}};
+let html=vm.runInContext('renderSubmissionFeedback(result,new Map([["real",{label:"E1"}]]))',ctx);
+assert.ok(html.includes("第 1 条")&&html.includes("要求性质检查可能有误"));
+assert.ok(html.includes("&lt;script&gt;")&&!html.includes("<script>"));
+assert.ok(html.includes('data-cite="real"')&&html.includes("引用无法定位"));
+assert.ok(!html.includes("data-knowledge")&&!html.includes("data-conversation-claim"));
+ctx.result.status="completed";
+assert.equal(vm.runInContext('renderSubmissionFeedback(result,new Map())',ctx),"");
+console.log("Submission feedback: rejected draft, exact source links, safe text and no adoption actions passed.");

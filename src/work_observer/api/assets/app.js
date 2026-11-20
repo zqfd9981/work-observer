@@ -734,6 +734,7 @@ function renderResult(result, target, runId = null, replyStepId = null) {
     ${renderWorkMap(result,evidence)}
     ${renderCognitiveRevisions(result,evidence)}
     ${renderUpstreamRevisionNotices(result)}
+    ${renderSubmissionFeedback(result,evidence)}
     ${renderApplicationPlan(result,evidence,replyStepId)}
     ${renderSourceFindings(result,evidence)}
     ${result.source_findings?.length ? `<h2>判断（模型分析）</h2><p class="form-note">自由归纳与推断仍需语义审核，不能覆盖上述原文动作，也不能把个人分工未知改写为没有岗位任务。</p>` : ""}
@@ -1033,6 +1034,12 @@ async function sendResearchConversation(question, options={}) {
   conversation.replyToStepId=undefined;
   await openResearchConversation(project.id);
   clearConversationReceipt(project.id);
+}
+
+function renderSubmissionFeedback(result,evidence) {
+  const feedback=result.submission_feedback;
+  if(result.status==="completed"||!feedback)return "";
+  return `<section class="research-context"><h3>最近一次提交为何未通过</h3><p>${e(feedback.notice)}</p><ul>${feedback.reasons.map(row=>`<li>${e(row.message)}${row.claim_indices?.length?` 对应下方第 ${row.claim_indices.map(index=>index+1).join("、")} 条。`:""}</li>`).join("")}</ul><details><summary>查看未通过的提交 · ${feedback.draft_claims.length} 条（不作为当前认识）</summary>${feedback.draft_claims.map(row=>`<section class="claim"><strong>第 ${row.index+1} 条 · 未通过</strong><p>${e(row.text)}</p><p class="form-note">${e(categoryLabels[row.category]||"维度待核")} · ${e(claimBasisLabels[row.basis]||"性质待核")} · ${e(requirementLabels[row.requirement]||"要求性质待核")}</p>${row.evidence_ids.map(id=>evidence.has(id)?`<button class="cite" data-cite="${e(id)}">核对 ${e(evidence.get(id).label||"原文")} ↗</button>`:'<small class="form-note">引用无法定位</small>').join(" ")}</section>`).join("")}</details></section>`;
 }
 
 function renderUpstreamRevisionNotices(result) {

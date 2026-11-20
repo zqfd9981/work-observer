@@ -165,6 +165,15 @@ def project_routes(
             if step.get("run_id"):
                 run = store().get(step["run_id"])
                 result = run.get("result")
+                if result and run["state"] != "invalidated":
+                    from work_observer.research.answer_feedback import with_submission_feedback
+
+                    result = with_submission_feedback(
+                        result,
+                        store().load_checkpoint(step["run_id"])
+                        if result.get("status") in {"incomplete", "failed"}
+                        else None,
+                    )
                 step["result"] = (
                     {**result, "audit": audit_result(result, repository())} if result else None
                 )
