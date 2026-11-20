@@ -55,6 +55,7 @@
     const insight=$("#career-insight");if(insight)data.insight=Object.fromEntries(new FormData(insight));
     const inquiry=$("#career-inquiry");if(inquiry)data.inquiries={...data.inquiries,[career.tab]:Object.fromEntries(new FormData(inquiry))};
     const manual=$("#career-manual-experiment");if(manual){data.manual=Object.fromEntries(new FormData(manual));data.manual_open=manual.closest("details").open;}
+    const comparison=$(".career-comparison");if(comparison)data.compare_open=comparison.open;
     const intake=$('[data-career-jd="target"]');if(intake)data.target_jd={values:Object.fromEntries($$("[data-jd-field]",intake).map(field=>[field.dataset.jdField,field.value])),open:intake.open};
     const settings=$("#career-settings");if(settings){data.settings=Object.fromEntries(new FormData(settings));data.settings_open=settings.closest("details").open;data.settings_query=$("#career-target-query").value;}
     for(const form of $$("[data-career-task-form]"))data["task:"+form.dataset.careerTaskForm]=Object.fromEntries(new FormData(form));
@@ -119,9 +120,27 @@
     return `<details class="panel career-settings-panel" ${storyDraft().settings_open?"open":""}><summary>调整目标、个人背景与目标岗位</summary><form id="career-settings"><div class="form-grid"><label>目标名称<input name="title" maxlength="150" required value="${e(values.title)}"></label><label>投入与限制<input name="constraints" maxlength="500" value="${e(values.constraints)}"></label></div><label>我现在希望达到什么目标<textarea name="goal" maxlength="1000" rows="2" required>${e(values.goal)}</textarea></label><label>更新已有经历与能力<textarea name="background" maxlength="1500" rows="3" required>${e(values.background)}</textarea></label><label>目标岗位（最多6个）</label><div id="career-target-selection"></div><div class="research-hub-search"><input id="career-target-query" type="search" value="${e(storyDraft().settings_query||"")}" placeholder="查找想加入的岗位" aria-label="查找想加入目标的岗位"><button type="button" class="secondary" id="career-target-find">查找岗位</button></div><div id="career-target-options"></div>${jdIntake("target")}<div class="result-actions"><button class="primary" ${data.running?"disabled":""}>保存调整</button><button type="button" class="text-button" data-career-cancel-settings>取消修改</button></div><p class="form-note">保存不调用模型。已有经历、练习和认知记录继续保留，新的分析使用更新后的目标与背景。</p></form></details>`;
   }
 
+  function compareJobs(data){
+    const saved=(storyDraft().compare_jobs||[]).filter(id=>data.jobs.some(job=>job.id===id));
+    return [...new Set([...saved,...data.jobs.map(job=>job.id)])].slice(0,2).map(id=>data.jobs.find(job=>job.id===id));
+  }
+  function jobComparison(data){
+    if(data.jobs.length<2)return "";
+    const jobs=compareJobs(data),categories=["business","task","deliverable","responsibility","ability","tool"];
+    const jobIds=new Set(data.jobs.map(job=>job.id));
+    const refs=row=>[...new Set(row.evidence.map(ev=>ev.job_id).filter(id=>jobIds.has(id)))];
+    const shared=data.requirements.filter(row=>refs(row).length>1&&refs(row).some(id=>jobs.some(job=>job.id===id)));
+    const proof=row=>`<p class="form-note">${e(requirementLabels[row.requirement]||"性质未说明")} · ${e(claimBasisLabel(row))}</p><p>${e(row.text)}</p><details><summary>看原文</summary>${row.evidence.map(ev=>`<p class="form-note">${e(ev.title)}</p><blockquote>${e(ev.quote)}</blockquote>`).join("")}</details>`;
+    const rows=categories.map(category=>{
+      const columns=jobs.map(job=>data.requirements.filter(row=>row.category===category&&refs(row).length===1&&refs(row)[0]===job.id));
+      return `<tr><th scope="row">${e(workDimensionLabels[category]||category)}</th>${columns.map(items=>`<td>${items.length?items.map(row=>`<article>${proof(row)}</article>`).join(""):'<p class="form-note">当前分析尚未提炼这一项，可打开JD核对；不表示岗位没有这类工作或要求。</p>'}</td>`).join("")}</tr>`;
+    }).join("");
+    const question=`请比较我选中的两个岗位：${jobText(jobs[0])} 与 ${jobText(jobs[1])}。它们的实际任务、交付物和责任边界有何不同？哪些共用能力可以迁移、哪些尚无依据？请分别引用两侧原文，未写明不等于不需要。`;
+    return `<details class="panel career-comparison" ${storyDraft().compare_open?"open":""}><summary>并排看清两个岗位：工作与要求有何不同</summary><p class="form-note">按原文来源展示已有分析，不计算虚假的匹配分。空白表示尚未提炼，跨岗位的综合判断单独列出。</p><div class="form-grid">${jobs.map((job,index)=>`<label>对照岗位 ${index+1}<select data-career-compare-job="${index}">${data.jobs.map(option=>`<option value="${e(option.id)}" ${option.id===job.id?"selected":""}>${e(jobText(option))}</option>`).join("")}</select></label>`).join("")}</div><div class="career-comparison-scroll" tabindex="0" aria-label="岗位工作对照表，可横向滚动"><table><thead><tr><th scope="col">工作维度</th>${jobs.map(job=>`<th scope="col"><strong>${e(jobText(job))}</strong><button type="button" class="text-button" data-job="${e(job.id)}">打开JD ↗</button><p class="form-note">${[job.current.city,job.current.salary_raw,job.current.experience_raw,job.current.education_raw].filter(Boolean).map(e).join(" · ")||"地点、薪资、经验或学历未完整披露"}</p></th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>${shared.length?`<details class="career-comparison-shared"><summary>涉及多个岗位的综合判断</summary>${shared.map(row=>`<article>${proof(row)}</article>`).join("")}</details>`:""}<button type="button" class="secondary" data-career-compare-question="${e(question.slice(0,1500))}">深入研究这两个岗位的差异 ↗</button></details>`;
+  }
   function requirements(data){
     const rows=data.requirements;
-    return `<div class="section-heading"><div><h2>岗位要求 × 我的经历证据</h2><p class="form-note">经历由你自述；有材料可讨论，不等于已证明胜任。</p></div><div class="result-actions">${button("role",rows.length?"重新看清岗位":"从原文提炼关键要求")}${button("map","把工作关系画出来")}</div></div>${rows.length?`<div class="career-requirements">${rows.map(row=>{
+    return `${jobComparison(data)}<div class="section-heading"><div><h2>岗位要求 × 我的经历证据</h2><p class="form-note">经历由你自述；有材料可讨论，不等于已证明胜任。</p></div><div class="result-actions">${button("role",rows.length?"重新看清岗位":"从原文提炼关键要求")}${button("map","把工作关系画出来")}</div></div>${rows.length?`<div class="career-requirements">${rows.map(row=>{
       const stories=data.stories.filter(story=>story.requirement_key===row.key);
       return `<article class="career-requirement"><div class="career-requirement-main"><div class="result-actions">${badge(categoryLabels[row.category]||row.category,"muted")}${badge(requirementLabels[row.requirement]||"未说明性质",row.requirement==="required"?"amber":"muted")}<span class="form-note">${e(claimBasisLabel(row))} · 待核对</span></div><h3>${e(row.text)}</h3><details><summary>查看招聘原文依据</summary>${row.evidence.map(ev=>`<p class="form-note">${e(ev.title)}</p><blockquote>${e(ev.quote)}</blockquote>`).join("")}</details></div><div class="career-requirement-proof"><span class="quiet-tag">${stories.length?"有自述经历，待核对":"还没有对应的经历证据"}</span>${stories.map(story=>`<p>${e(story.title)}</p>`).join("")}<button type="button" class="text-button" data-career-link-story="${e(row.key)}">${stories.length?"再补充一份证据":"我有哪些经历可以说明？"} ↗</button></div></article>`;
     }).join("")}</div>`:empty("先看清这份工作，再讨论自己差什么","分析会把具体要求与招聘原文放在一起；你可以逐项补充真实项目经历。")}`;
@@ -271,6 +290,9 @@
     catch(error){notify(error.message,true);}finally{submit.disabled=false;}
   });
   document.addEventListener("change",event=>{
+    if(event.target.matches?.('[data-career-compare-job]')){
+      const select=event.target,side=Number(select.dataset.careerCompareJob);captureDrafts();const old=compareJobs(career.data).map(job=>job.id),pair=[...old];pair[side]=select.value;if(pair[0]===pair[1])pair[1-side]=old[side];const draft=storyDraft();draft.compare_jobs=pair;draft.compare_open=true;career.drafts.set(career.id,draft);renderDetail();return;
+    }
     if(event.target.matches?.('#career-interview-answer [name="source_step_id"],#career-interview-answer [name="question_index"]')){
       const target=event.target;captureDrafts();const draft=storyDraft();delete draft.next_source_step_id;
       if(target.name==="source_step_id"){draft.source_step_id=target.value;draft.question_index="0";}else draft.question_index=target.value;
@@ -293,8 +315,9 @@
     if(event.target.id==="career-offline")career.offline=event.target.checked;
   });
   document.addEventListener("click",async event=>{
-    const target=event.target.closest("[data-career-tab],[data-career-remove-job],[data-career-research],[data-career-link-story],[data-career-import-tasks],[data-career-task-story],[data-career-edit-story],[data-career-remove-story],[data-career-cancel-story],[data-career-new-insight],[data-career-insight-task],[data-career-cancel-insight],[data-career-cancel-settings],[data-career-goal-remove-job],[data-career-followup],[data-career-ask-result],[data-career-save-jd],#career-target-find,#career-refresh,#career-export");if(!target)return;
+    const target=event.target.closest("[data-career-tab],[data-career-remove-job],[data-career-research],[data-career-link-story],[data-career-import-tasks],[data-career-task-story],[data-career-edit-story],[data-career-remove-story],[data-career-cancel-story],[data-career-new-insight],[data-career-insight-task],[data-career-cancel-insight],[data-career-cancel-settings],[data-career-goal-remove-job],[data-career-followup],[data-career-ask-result],[data-career-save-jd],[data-career-compare-question],#career-target-find,#career-refresh,#career-export");if(!target)return;
     try{
+      if(target.dataset.careerCompareQuestion){captureDrafts();const draft=storyDraft();draft.inquiries={...draft.inquiries,requirements:{question:target.dataset.careerCompareQuestion,source_step_id:""}};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus();}
       if(target.dataset.careerSaveJd)await saveInlineJD(target);
       if(target.dataset.careerRemoveJob){career.selected.delete(target.dataset.careerRemoveJob);selectedJobs();await findJobs();}
       if(target.dataset.careerTab){captureDrafts();career.tab=target.dataset.careerTab;renderDetail();}
