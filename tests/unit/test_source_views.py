@@ -167,6 +167,46 @@ def test_nested_heading_direction_and_switch_keep_only_read_context():
         assert text[row["start"] : row["end"]] == row["text"]
 
 
+def test_caption_with_repeated_role_section_stops_previous_direction_leaking_into_new_work():
+    text = (
+        "方向一：企业工作平台\n1、岗位做什么\n追踪项目任务。\n"
+        "科研管控平台\n1、岗位做什么\n自研科研框架。\n2、岗位要求\n具备平台开发经验。"
+    )
+    sentences = source(build_source_views([evidence(text)]))["sentences"]
+    first = next(row for row in sentences if "追踪项目" in row["text"])
+    second = next(row for row in sentences if "自研科研" in row["text"])
+    assert [h["text"].strip() for h in first["context"]] == [
+        "方向一：企业工作平台",
+        "1、岗位做什么",
+    ]
+    assert [h["text"].strip() for h in second["context"]] == ["科研管控平台", "1、岗位做什么"]
+    requirements = next(row for row in sentences if "具备平台" in row["text"])
+    assert [h["text"].strip() for h in requirements["context"]] == ["科研管控平台", "2、岗位要求"]
+    tail = source(build_source_views([evidence(text, start=text.index("自研科研"))]))
+    assert not tail["sentences"][0]["context"]
+
+
+def test_inline_direction_prefix_is_located_without_treating_the_whole_task_as_heading():
+    text = (
+        "岗位职责\n根据专长选择方向之一：\n"
+        "工具协议方向：负责工具对接。\n维护协议接口。\n"
+        "任务调度方向：负责并发调度。\n优化任务响应。\n任职要求\n熟练Java或Python。"
+    )
+    sentences = source(build_source_views([evidence(text)]))["sentences"]
+    inline = next(row for row in sentences if "负责工具对接" in row["text"])
+    assert inline["heading_span"]["text"] == "工具协议方向："
+    task = next(row for row in sentences if "优化任务响应" in row["text"])
+    assert [h["text"].strip() for h in task["context"]] == [
+        "根据专长选择方向之一：",
+        "任务调度方向：",
+    ]
+    qualification = next(row for row in sentences if "熟练Java" in row["text"])
+    assert [h["text"].strip() for h in qualification["context"]] == ["任职要求"]
+    for row in sentences:
+        for span in row["context"] + ([row["heading_span"]] if row.get("heading_span") else []):
+            assert text[span["start"] : span["end"]] == span["text"]
+
+
 def test_overlap_is_counted_once_and_sentence_spanning_evidence_keeps_valid_quote():
     text = "岗位职责：\n搭建平台并维护服务。交付接口。"
     rows = [evidence(text, end=13), evidence(text, start=9, identity="e2")]

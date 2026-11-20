@@ -31,6 +31,9 @@ POLICY = (
 finish_research同时提交claims、gaps、work_map和revisions。work_map.version填work-map-v3-work-relations。
 先根据业务问题、主要任务和交付物形成可重叠分组，不按职位标题、工具名称或预设五类硬分。
 业务场景、技术层级与交付方式可以交叉；任务不足就放unknowns，可令work_types为空。
+同一正文含多个方向时，先说明共同范围，再按各方向的任务与交付对象解释；
+“可深入专攻之一”不等于每人全部承担，也不能将多个方向重复计为多个独立岗位。
+共同任职条件、限定某方向的条件和可选替代分别保留，未披露方向分配就保持未知。
 每个分组写问题、任务、交付物、边界/反例与下一步验证。work_relations按本题需要连接business业务问题、
 task任务、deliverable交付物、responsibility责任、ability能力、tool工具；两端用source_claim_index、
 target_claim_index定位本次claims，程序保留完整原判断及category，不再重复抄写或缩写节点。

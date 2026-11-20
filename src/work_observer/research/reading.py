@@ -37,7 +37,7 @@ def reading_guide(evidence, returned_ids):
             for sentence in source["sentences"]:
                 units[sentence["unit_id"]].append(sentence)
                 if sentence["heading_heuristic"]:
-                    headings.append(heading(sentence))
+                    headings.append(heading(sentence.get("heading_span", sentence)))
             guide = {
                 "job_id": job["job_id"],
                 "snapshot_id": source["snapshot_id"],
@@ -93,6 +93,8 @@ def reading_guide(evidence, returned_ids):
             "complete_read只表示该语句的已读字符连续完整，不表示语义已核实；"
             "coverage.gaps是尚未读到的范围，不可当作没有要求。"
             "分句仅按标点和换行定位，跨句修饰仍须结合上下文。"
+            "同一正文的不同方向须分别解释；‘专攻之一’不能变成每人承担全部方向，"
+            "章节中的团队或运行角色也不能直接改成应聘者的组织权限。"
             "这些是原文定位辅助，不是新来源、模型摘要或新增核对步骤；"
             "按问题需要补读原文或提交回答，无须为这些提示额外登记分项。"
         ),

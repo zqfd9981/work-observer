@@ -41,6 +41,8 @@ _SECTION_HEADINGS = {
     "业务背景",
 }
 _PRIORITY_HEADINGS = {"优先加分项", "优先条件", "优先项", "加分项"}
+_NUMBERED_SECTION = re.compile(r"^[1-9][、.．]\s*(?:岗位做什么|岗位要求|任职要求|任职资格)[：:]?$")
+_DIRECTION_PREFIX = re.compile(r"^\s*[^。；!?！？;\r\n:：]{1,60}方向[：:]")
 
 
 def _literal_section(text):
@@ -55,10 +57,31 @@ def _heading(text):
         return 3
     if stripped.rstrip("：:") in _SECTION_HEADINGS:
         return 2
+    if _NUMBERED_SECTION.fullmatch(stripped):
+        return 3
     if stripped.endswith(("：", ":")) or _HEADING.search(stripped):
         prefix = re.match(r"^(#{1,6})\s", stripped)
         return len(prefix[1]) if prefix else 2
     return None
+
+
+def _caption_starts(block):
+    """A literal caption followed by '1、岗位做什么' starts a peer section in read text."""
+    captions, previous, position = set(), None, block["start"]
+    for line in block["text"].splitlines(keepends=True):
+        stripped = line.strip()
+        if re.fullmatch(r"1[、.．]\s*岗位做什么[：:]?", stripped) and previous:
+            start, text = previous
+            if (
+                len(text) <= 100
+                and not re.search(r"[。；!?！？;]", text)
+                and _heading(text) is None
+            ):
+                captions.add(start)
+        if stripped:
+            previous = position, stripped
+        position += len(line)
+    return captions
 
 
 def _ranges(rows):
@@ -244,6 +267,7 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
             continue
         for block in blocks:
             headings = []
+            captions = _caption_starts(block)
             for row, start, end, text, unit_start, unit_end, complete in _parts(block, rows, total):
                 line_start = start == 0 or (
                     start > block["start"] and block["text"][start - block["start"] - 1] in "\r\n"
@@ -254,6 +278,15 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
                     and _literal_section(text)
                 )
                 level = _heading(text) if line_start or inline_section else None
+                direction = _DIRECTION_PREFIX.match(text) if line_start else None
+                if direction and not text[direction.end() :].strip():
+                    direction = None
+                if direction:
+                    level = 3
+                elif line_start and start in captions:
+                    level = 2
+                heading_text = direction.group() if direction else text
+                heading_end = start + len(heading_text)
                 if level is not None:
                     headings = [heading for heading in headings if heading["level"] < level]
                 if displayed >= max_sentences:
@@ -285,13 +318,20 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
                     "evidence_boundary_end": end == row["end"] and end < block["end"],
                 }
                 source["sentences"].append(sentence)
+                if level is not None:
+                    sentence["heading_span"] = {
+                        "text": heading_text,
+                        "start": start,
+                        "end": heading_end,
+                        "evidence_id": row["id"],
+                    }
                 displayed += 1
                 if level is not None:
                     headings.append(
                         {
-                            "text": text,
+                            "text": heading_text,
                             "start": start,
-                            "end": end,
+                            "end": heading_end,
                             "evidence_id": row["id"],
                             "job_id": job_id,
                             "snapshot_id": snapshot_id,
