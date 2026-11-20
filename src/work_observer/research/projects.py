@@ -1485,6 +1485,15 @@ class ProjectService:
             if selected_task := step.get("career_task_id"):
                 observations = [row for row in observations if row["id"] == selected_task]
             context["career_evidence"] = {
+                "public_research_policy": (
+                    "可按问题需要补查企业官方业务说明和技术资料，优先从所选JD与已有归档出发。"
+                    "公开检索只针对业务、企业、产品或技术问题，不把个人简历、联系方式、面试回答"
+                    "或个人实验原文写进搜索词；不要搜索个人信息或请求招聘平台。"
+                    "搜索摘要只能定位线索；需以网页事实作判断时读取并引用正文。"
+                    "公司介绍和产品文档不能单独证明岗位个人职责、权限或任职要求。"
+                )
+                if step.get("allow_public")
+                else None,
                 "selected_answer": {
                     "document_id": step["career_answer_document_id"],
                     "notice": "本次讨论的用户回答原文，可引用原话；经历和效果仍未独立核实。",
@@ -1680,6 +1689,23 @@ async def _execute_project_locked(
                 else "failed"
             )
             service.finish(identity, step["id"], state=next_state, reason=result.get("stop_reason"))
+            if step["allow_public"]:
+                discovered = [
+                    row["public_document_id"]
+                    for row in result.get("evidence", [])
+                    if row.get("source") == "public_web" and row.get("public_document_id")
+                ]
+                if discovered:
+                    with service.store.lock, service.store.db:
+                        current = service.get(identity)
+                        if current.get("career"):
+                            career = current["career"]
+                            career["researched_document_ids"] = list(
+                                dict.fromkeys(
+                                    career.get("researched_document_ids", []) + discovered
+                                )
+                            )
+                            service._write(current)
         except asyncio.CancelledError:
             service.store.save(run_id, state="interrupted")
             service.finish(

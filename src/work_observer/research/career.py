@@ -205,6 +205,7 @@ class CareerService:
                             for row in project["career"]["runs"]
                             if row.get("answer_document_id")
                         ],
+                        *project["career"].get("researched_document_ids", []),
                     ]
                 )
             )
@@ -404,6 +405,8 @@ class CareerService:
                     "state": step["state"],
                     "current": bool(current),
                     "scope_current": step["scope_version"] == project["scope_version"],
+                    "allow_public": bool(step["allow_public"]),
+                    "offline": bool(step["offline"]),
                     "continuation": continuation,
                     "progress": {
                         "calls": progress.get("model_calls", 0),
@@ -433,6 +436,11 @@ class CareerService:
                 for index, claim in enumerate(result["claims"]):
                     if not all(key in evidence for key in claim["evidence_ids"]):
                         continue
+                    if not any(
+                        evidence[key].get("job_id") in project["job_ids"]
+                        for key in claim["evidence_ids"]
+                    ):
+                        continue
                     requirements.append(
                         {
                             "key": f"{step['run_id']}:{index}",
@@ -459,6 +467,14 @@ class CareerService:
                     key
                     for key in (project.get("public_document_ids") or [])
                     if key not in personal_documents(career)
+                ],
+            ),
+            "discovered_materials": archive_catalog(
+                self.repository,
+                [
+                    key
+                    for key in career.get("researched_document_ids", [])
+                    if key not in (project.get("public_document_ids") or [])
                 ],
             ),
             "requirements": requirements,
@@ -760,6 +776,7 @@ class CareerService:
         hypothesis_a="",
         hypothesis_b="",
         material_id=None,
+        allow_public=False,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -964,6 +981,16 @@ class CareerService:
                     "再作反馈或追问。回答是用户自述，不代表经历已核实或能力已经证明。"
                 )
             used = self.projects.usage(project)
+            allow_public = bool(allow_public and not offline)
+            if allow_public:
+                public_limit = project["budget"]["max_public"] or 8
+                if used["public"] + 4 > public_limit:
+                    raise ValueError(
+                        "本目标剩余公开补查额度不足一轮，可关闭补查并继续使用已保存原文。"
+                    )
+                if project["budget"]["max_public"] == 0:
+                    project["budget"]["max_public"] = public_limit
+                    self.projects._write(project)
             calls_left = project["budget"]["max_calls"] - used["reserved_calls"]
             seconds_left = int(project["budget"]["max_seconds"] - used["reserved_seconds"])
             if not offline and (calls_left < 2 or seconds_left < 1):
@@ -975,7 +1002,7 @@ class CareerService:
                 max_calls=6 if offline else min(6, calls_left),
                 timeout=150 if offline else min(150, seconds_left),
                 offline=offline,
-                allow_public=False,
+                allow_public=allow_public,
                 coverage_mode="question",
                 approach="work_map" if kind == "map" else "standard",
                 reply_to_step_id=reply,
