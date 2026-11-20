@@ -63,6 +63,8 @@ class CareerModel:
                 arguments["gaps"] = [
                     "请结合亲自完成的接口项目，说明如何验证失败重试，哪一步有结果记录？"
                 ]
+            if "根据这份用户回答继续追问" in question:
+                arguments["gaps"] = ["你提到未完成去重验证，如何区分请求重试和重复写入？"]
             name = "finish_research"
         call = {
             "type": "function_call",
@@ -233,6 +235,44 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert feedback["results"][0]["kind"] == "answer"
         assert question in model.contexts[-1]["question"]
         assert "未完成去重验证" in model.contexts[-1]["question"]
+        question_source = interview["results"][0]["step_id"]
+        first_answer = feedback["results"][0]
+        assert first_answer["source_step_id"] == question_source
+        followup = run_stage(
+            client, identity, auth, "followup", source_step_id=first_answer["step_id"]
+        )
+        followup_step = followup["results"][0]["step_id"]
+        assert first_answer["answer"] in model.contexts[-1]["question"]
+        assert question in model.contexts[-1]["question"]
+        assert followup["results"][0]["source_step_id"] == first_answer["step_id"]
+        followup_question = followup["results"][0]["result"]["gaps"][-1]
+        followed = run_stage(
+            client,
+            identity,
+            auth,
+            "answer",
+            source_step_id=followup_step,
+            answer="我还没有记录请求标识，需要补上两者的对照。",
+        )
+        assert followed["results"][0]["interview_question"] == followup_question
+        retried = run_stage(
+            client,
+            identity,
+            auth,
+            "answer",
+            source_step_id=question_source,
+            answer="重答：我只验证了超时响应，无法凭现有记录判断是否重复写入。",
+        )
+        assert retried["results"][0]["interview_question"] == question
+        assert followup_question not in model.contexts[-1]["question"]
+        saved_answers = [row for row in retried["results"] if row["kind"] == "answer"]
+        assert len(saved_answers) == 3 and first_answer["answer"] == saved_answers[-1]["answer"]
+        invalid_followup = client.post(
+            f"/api/career/{identity}/prepare",
+            json={"kind": "followup", "source_step_id": question_source},
+            headers=auth,
+        )
+        assert invalid_followup.status_code == 422
         temporary = client.post(
             f"/api/career/{identity}/stories",
             json={**story, "title": "不再使用的合成补充"},

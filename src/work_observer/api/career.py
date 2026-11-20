@@ -49,11 +49,12 @@ class InsightInput(BaseModel):
 
 class CareerResearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["role", "gaps", "plan", "reflect", "interview", "answer"]
+    kind: Literal["role", "gaps", "plan", "reflect", "interview", "answer", "followup"]
     answer: str = Field(default="", max_length=2500)
     offline: bool = False
     question_index: int = Field(default=0, ge=0, le=20)
     task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class TaskImport(BaseModel):

@@ -365,8 +365,17 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
-    def prepare(self, identity, kind, answer="", offline=False, question_index=0, task_id=None):
-        if kind not in QUESTIONS and kind != "answer":
+    def prepare(
+        self,
+        identity,
+        kind,
+        answer="",
+        offline=False,
+        question_index=0,
+        task_id=None,
+        source_step_id=None,
+    ):
+        if kind not in QUESTIONS and kind not in {"answer", "followup"}:
             raise ValueError("请选择一种研究方式。")
         with self.store.lock, self.store.db:
             project = self._project(identity)
@@ -382,21 +391,55 @@ class CareerService:
                 )
                 if not task or not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
-            if kind == "answer":
+            if kind in {"answer", "followup"}:
+                sources = [
+                    row
+                    for row in self.get(identity)["results"]
+                    if row["current"] and row["result"]["status"] == "completed"
+                ]
+            if kind == "followup":
+                previous = next(
+                    (
+                        row
+                        for row in sources
+                        if row["kind"] == "answer" and row["step_id"] == source_step_id
+                    ),
+                    None,
+                )
+                if not previous:
+                    raise ValueError("请选择一份已完成反馈的回答，再继续追问。")
+                feedback = "\n".join(
+                    [claim["text"] for claim in previous["result"]["claims"]]
+                    + previous["result"].get("gaps", [])
+                )[:3000]
+                question = (
+                    "根据这份用户回答继续追问，而不是重新安排一套通用面试。\n"
+                    "原问题："
+                    + previous["interview_question"]
+                    + "\n用户自述回答（未经独立核实）："
+                    + previous["answer"]
+                    + "\n上一轮研究反馈（仍需核对，不是企业事实）："
+                    + feedback
+                    + "\n结合岗位原文，在gaps中给出最多两道完整的面试追问，每道使用问号。"
+                    "追问必须指出这份回答中具体需要澄清的行动、取舍、证据或责任边界；"
+                    "说明为什么追问以及应拿什么材料回答。不要替用户回答或编造指标，"
+                    "claims只列有引用的岗位依据，不生成行动计划，不安排额外调查。"
+                )
+                reply = previous["step_id"]
+            elif kind == "answer":
                 if not answer.strip():
                     raise ValueError("请先写下你的真实回答。")
                 interview = next(
                     (
                         row
-                        for row in self.get(identity)["results"]
-                        if row["kind"] == "interview"
-                        and row["current"]
-                        and row["result"]["status"] == "completed"
+                        for row in sources
+                        if row["kind"] in {"interview", "followup"}
+                        and (not source_step_id or row["step_id"] == source_step_id)
                     ),
                     None,
                 )
                 if not interview:
-                    raise ValueError("请先准备一次模拟面试。")
+                    raise ValueError("请先选择当前目标下已生成的面试问题。")
                 interview_result = interview["result"]
                 questions = [
                     text for text in interview_result.get("gaps", []) if "？" in text or "?" in text
@@ -409,11 +452,12 @@ class CareerService:
                     "本次模拟面试问题：" + questions[question_index] + "\n"
                     "这是用户的自述回答，不是招聘原文或已核验事实：\n"
                     + answer
-                    + "\n请对照前一轮面试问题、岗位原文和用户经历反馈：回答覆盖了什么，"
+                    + "\n请对照本次明确选中的面试问题、岗位原文和用户经历反馈：回答覆盖了什么，"
                     "哪些主张还缺证据，下一步最有价值的追问是什么。区分表达问题和能力未知，"
                     "不编造经历或替用户补出成功指标，不给虚假分数。最多三条具体反馈，不安排额外调查。"
                 )
                 reply = interview["step_id"]
+                source_step_id = interview["step_id"]
             else:
                 question = QUESTIONS[kind]
                 reply = None
@@ -435,6 +479,7 @@ class CareerService:
                     "step_id": project["steps"][-1]["id"],
                     "answer": answer,
                     "question_index": question_index if kind == "answer" else None,
+                    "source_step_id": source_step_id if kind in {"answer", "followup"} else None,
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if kind == "reflect" else None,
                     "created_at": now(),
