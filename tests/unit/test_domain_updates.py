@@ -82,6 +82,31 @@ def test_content_sample_and_scope_changes_are_separate(updates):
     assert not report["statistics"]["comparable"]
 
 
+def test_comparison_keeps_each_panels_source_observation_after_a_b_a_b(updates):
+    service, add = updates
+    job = add("repeat", "负责Python接口开发。")
+    before = service.capture("最初Python", job_ids=[job])
+    add("repeat", "负责Python接口开发。")  # A second observation before B is also not panel A.
+    add("repeat", "负责Java接口开发。")
+    after = service.capture("首次Java", job_ids=[job])
+    add("repeat", "负责Python接口开发。")
+    add("repeat", "负责Java接口开发。")
+    report = service.compare(before["id"], after["id"])
+    change = report["content_changes"][0]
+    for panel, side in ((before, "before"), (after, "after")):
+        frozen = panel["jobs"][0]["source"]
+        sources = [ev for ev in change["evidence"] if ev["snapshot_id"] == frozen["snapshot_id"]]
+        assert sources
+        assert all(ev["document_id"] == frozen["document_id"] for ev in sources)
+        assert all(ev["observed_at"] == frozen["observed_at"] for ev in sources)
+        assert all(ev["processed_at"] == frozen["processed_at"] for ev in sources)
+        assert change[side] == frozen
+    prepared = service.followup(report["id"], "核对报告中任务与工具的变化")
+    assert before["created_at"] in prepared["question"]
+    assert after["created_at"] in prepared["question"]
+    assert "不能把现在的内容代替过去" in prepared["question"]
+
+
 def test_domain_version_change_is_method_change_not_source_change(updates):
     service, add = updates
     add("one")

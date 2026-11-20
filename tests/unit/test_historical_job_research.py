@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from work_observer.config import Settings
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.research import historical_sources
 from work_observer.research.agent import PROPOSAL_TOOLS, method_fingerprint, research
+from work_observer.research.projects import ProjectService
 from work_observer.storage.models import JobObservation, JobSnapshot, SourceDocument
 
 
@@ -82,9 +84,10 @@ def test_absent_body_and_scope_time_window_integrity_boundaries(updates):
 
 
 class HistoryModel:
-    def __init__(self, job, cutoffs, interrupt=False, historical=True):
+    def __init__(self, job, cutoffs, interrupt=False, historical=True, query_first=False):
         self.job, self.cutoffs, self.interrupt = job, cutoffs, interrupt
         self.historical = historical
+        self.query_first = query_first
 
     async def turn(self, history):
         outputs = [
@@ -94,6 +97,11 @@ class HistoryModel:
         ]
         if self.interrupt and outputs:
             raise asyncio.CancelledError()
+        if self.query_first and not outputs:
+            call = dict(type="function_call", name="query_jobs", arguments="{}", call_id="scope")
+            return [call], call
+        if self.query_first:
+            outputs = outputs[1:]
         if len(outputs) < len(self.cutoffs):
             name, args = (
                 "read_historical_job",
@@ -122,6 +130,60 @@ class HistoryModel:
             type="function_call", name=name, arguments=json.dumps(args), call_id=str(len(history))
         )
         return [call], call
+
+
+def test_current_panel_followup_reads_the_report_endpoints_after_later_job_changes(updates):
+    service, add = updates
+    repo, store = service.repository, service.store
+    repo.bind_research_store(store)
+    job = add("one", "负责Python接口开发。")
+    before = service.capture("最初来源", job_ids=[job])
+    add("one", "负责Java接口开发。")
+    after = service.capture("较晚来源", job_ids=[job])
+    report = service.compare(before["id"], after["id"])
+    add("one", "报告之后新增Go接口任务，不属于两次面板。")
+    prepared = service.followup(report["id"], "核对报告中接口任务的变化")
+    matched = re.search(r"对照的来源截止：([^\s]+) → ([^。]+)。", prepared["question"])
+    assert matched
+    cutoffs = list(matched.groups())
+    assert cutoffs == [before["created_at"], after["created_at"]]
+    projects = ProjectService(store)
+    project = projects.create("核对两次来源", prepared["question"], prepared["job_ids"])
+    project = projects.add(
+        project["id"], prepared["question"], revision=project["revision"], max_calls=4
+    )
+    step = projects.claim(project["id"])
+    result = asyncio.run(
+        research(
+            repo,
+            step["question"],
+            Settings(),
+            job_ids=project["job_ids"],
+            project_id=project["id"],
+            conversation_context=projects.context(project["id"], step, repo),
+            model=HistoryModel(job, cutoffs, query_first=True),
+            checkpoint=(store, step["run_id"]),
+            max_calls=4,
+        )
+    )
+    assert result["status"] == "completed" and result["model_calls"] == 4, (
+        result.get("stop_reason"), result["trace"]
+    )
+    expected = {
+        before["jobs"][0]["source"]["snapshot_id"],
+        after["jobs"][0]["source"]["snapshot_id"],
+    }
+    assert {ev["snapshot_id"] for ev in result["evidence"]} == expected
+    assert {ev["quote"] for ev in result["evidence"]} == {
+        "负责Python接口开发。",
+        "负责Java接口开发。",
+    }
+    assert all("Go" not in ev["quote"] for ev in result["evidence"])
+    assert len(result["claims"][0]["evidence_ids"]) == 2
+    projects.finish(project["id"], step["id"], state="completed")
+    assert projects.usage(projects.get(project["id"]))["calls"] == 4
+    assert service._get("domain_update_captures", before["id"]) == before
+    assert service._get("domain_update_captures", after["id"]) == after
 
 
 @pytest.mark.parametrize("changed", [False, True])

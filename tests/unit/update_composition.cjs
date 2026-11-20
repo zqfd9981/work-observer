@@ -24,4 +24,11 @@ ctx.report.archived_documents=[{id:"new",title:"较晚版",evidence_kind:"work_m
 ctx.report.archived_changes={changes:[{before:{id:"old",title:"<script>较早版</script>",evidence_kind:"work_material"},after:ctx.report.archived_documents[0]}],removed:[]};
 const selection=vm.runInContext("updateDocumentSelection(report)",ctx);
 assert.ok(selection.includes('value="old"')&&selection.includes('value="new"')&&selection.includes("&lt;script&gt;"));
+const question=vm.runInContext('updateImpactQuestion({question:"核对接口任务"})',ctx);
+assert.ok(question.includes("两个来源截止")&&question.includes("资料补全")&&question.includes("之后的材料另列"));
+ctx.report.research_impact={notice:"来源关联",total_runs:1,direct_claim_count:0,runs:[{run_id:"a",question:"<img>旧认识",reasons:[],claims:[],project_id:"p",can_followup:true,document_updates:[{title:"同来源新版"}]}]};
+ctx.report.id="report";
+const impact=vm.runInContext("renderUpdateImpact(report)",ctx);
+assert.ok(impact.includes("保留原研究限定的旧版")&&impact.includes("两版对照")&&impact.includes("&lt;img&gt;"));
+assert.ok(!impact.includes("替换为较晚归档")&&!impact.includes("<img>"));
 console.log("Observation composition distinguishes sources, material identity, denominator and missing history.");

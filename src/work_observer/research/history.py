@@ -76,8 +76,15 @@ class HistoryService:
             }
 
     def compare(
-        self, job_id, before_snapshot_id=None, after_snapshot_id=None, *, observed_before=None
+        self,
+        job_id,
+        before_snapshot_id=None,
+        after_snapshot_id=None,
+        *,
+        observed_before=None,
+        before_cutoff=None,
     ):
+        """比较所选版本；面板对照可分别限定两侧观察时间，避免重现版本漂移到后次观察。"""
         with Session(self.repository.engine) as session:
             rows = self._rows(session, job_id, observed_before)
             history = [self._observation(row) for row in rows]
@@ -98,6 +105,11 @@ class HistoryService:
                     for row in reversed(rows[:after_index])
                     if row[1].id != after[1].id
                     and (before_snapshot_id is None or row[1].id == before_snapshot_id)
+                    and (
+                        before_cutoff is None
+                        or row[0].observed_at <= before_cutoff
+                        and row[0].processed_at <= before_cutoff
+                    )
                 ),
                 None,
             )

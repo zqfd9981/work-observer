@@ -68,14 +68,18 @@ def test_archive_change_rechecks_original_claim_and_advances_only_same_selected_
     projects.finish(project["id"], step["id"], state="completed")
     original = deepcopy(store.get(step["run_id"]))
     updates = DomainUpdateService(store, repo)
-    before = updates.capture("旧归档观察", job_ids=[], include_archived=True, as_of=now() if historical else None)
+    before = updates.capture(
+        "旧归档观察", job_ids=[], include_archived=True, as_of=now() if historical else None
+    )
     text = "checkpoint检查任务：先验证原文，再由负责人复核清单。"
     if kind == "manual":
         second = archive.revise_text(first["id"], first["title"], text)["document"]
     else:
         second = asyncio.run(archive.read("https://example.com/synthetic"))["document"]
     unrelated = archive.archive_text("合成其他来源", "无关材料，不应加入原研究。")["document"]
-    after = updates.capture("新归档观察", job_ids=[], include_archived=True, as_of=now() if historical else None)
+    after = updates.capture(
+        "新归档观察", job_ids=[], include_archived=True, as_of=now() if historical else None
+    )
     report = updates.compare(before["id"], after["id"])
     assert report["content_changes"] == []  # No invented job/task change.
     assert report["archived_changes"]["after_count"] == 2
@@ -108,10 +112,13 @@ def test_archive_change_rechecks_original_claim_and_advances_only_same_selected_
         again = client.post(path + "/followup", headers=auth, json=body)
         assert again.json()["step_id"] == saved.json()["step_id"]
         current = projects.get(project["id"])
-        assert set(current["public_document_ids"]) == ({first["id"], second["id"]} if historical else {second["id"]})
+        assert set(current["public_document_ids"]) == {first["id"], second["id"]}
         assert current["scope_history"][-1]["public_document_ids"] == [first["id"]]
         assert len(current["steps"]) == 2 and current["steps"][-1]["state"] == "queued"
         assert current["steps"][-1]["reply_to_step_id"] == step["id"]
+        question = current["steps"][-1]["question"]
+        assert report["observation_times"]["before"]["source_cutoff"] in question
+        assert report["observation_times"]["after"]["source_cutoff"] in question
         context = projects.context(project["id"], current["steps"][-1], repo)
         assert context["historical_reply"]["derived_claims"][0]["previous_claim_index"] == 0
         assert store.get(step["run_id"]) == original
