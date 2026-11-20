@@ -45,6 +45,13 @@ class ResumeInput(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
 
 
+class ReuseInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_project_id: str = Field(pattern="^[a-f0-9]{32}$")
+    kind: Literal["story", "task"]
+    record_id: str = Field(pattern="^[a-f0-9]{32}$")
+
+
 class InsightInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     previous_view: str = Field(min_length=1, max_length=1500)
@@ -190,6 +197,12 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             )
         )
 
+    async def reuse(request):
+        if busy():
+            return response({"message": "请等本轮研究结束后再带入经历或作品材料。"}, 409)
+        data = ReuseInput.model_validate(await read_json(request))
+        return change(lambda: service().reuse(request.path_params["id"], **data.model_dump()))
+
     async def remove_story(request):
         if busy():
             return response({"message": "请等当前研究结束后再移出经历。"}, 409)
@@ -224,6 +237,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
         Route("/api/career/{id}/search", search),
+        Route("/api/career/{id}/reuse", reuse, methods=["POST"]),
         Route("/api/career/{id}", update_goal, methods=["PATCH"]),
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),
         Route("/api/career/{id}/insights", insight, methods=["POST"]),

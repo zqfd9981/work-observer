@@ -1158,7 +1158,7 @@ function conversationAllocation(project, offline, allowPublic=false) {
   const calls=(budget.max_calls??10)-(usage.reserved_calls||0)-pending.reduce((n,s)=>n+s.max_calls,0);
   const seconds=(budget.max_seconds??720)-(usage.reserved_seconds||0)-pending.reduce((n,s)=>n+s.timeout,0);
   const publicLeft=(budget.max_public??4)-(usage.public||0)-pending.filter(s=>s.allow_public).length*4;
-  const issue=(project.steps||[]).length>=(budget.max_rounds??6) ? "本研究已达轮数上限，记录已保留。可从左侧开始新研究。"
+  const issue=!project.career&&(project.steps||[]).length>=(budget.max_rounds??6) ? "本研究已达轮数上限，记录已保留。可从左侧开始新研究。"
     : offline&&(project.steps||[]).some(step=>project.ready_step_ids?.includes(step.id)&&!step.offline) ? "当前有待执行的模型调查，请先处理已有进度，再仅整理原文。"
     : !offline&&calls<2 ? "剩余调用额度已分配，记录已保留。可只整理原文，或开始新研究。"
     : !offline&&seconds<1 ? "本研究可分配的调查时间已用完。可只整理原文，或开始新研究。"

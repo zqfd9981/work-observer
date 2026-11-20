@@ -521,6 +521,50 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert not local["records"]
         assert across["records"][0]["project_id"] == other["id"]
         assert len(model.contexts) == calls_before_goal_edit
+        original_story = changed["stories"][0]
+        for kind, source_id in (("story", original_story["id"]), ("task", manual_task["id"])):
+            for _ in range(2):
+                reused = client.post(
+                    f"/api/career/{other['id']}/reuse",
+                    json={
+                        "source_project_id": identity,
+                        "kind": kind,
+                        "record_id": source_id,
+                    },
+                    headers=auth,
+                )
+                assert reused.status_code == 200, reused.text
+        brought = reused.json()
+        assert len(brought["stories"]) == len(brought["tasks"]) == 1
+        assert brought["stories"][0]["requirement_key"] == ""
+        assert brought["stories"][0]["document_id"] == original_story["document_id"]
+        assert brought["tasks"][0]["artifact_document_id"] == material_id
+        assert brought["tasks"][0]["evidence_ids"] == []
+        assert brought["tasks"][0]["origin"] == "reused"
+        assert len(model.contexts) == calls_before_goal_edit
+        copied_story = brought["stories"][0]
+        adapted = client.patch(
+            f"/api/career/{other['id']}/stories/{copied_story['id']}",
+            json={
+                **{key: copied_story[key] for key in story},
+                "title": "为另一个岗位重新整理的经历",
+            },
+            headers=auth,
+        ).json()
+        assert adapted["stories"][0]["reused_from"]["project_id"] == identity
+        assert client.get(f"/api/career/{identity}").json()["stories"][0] == original_story
+        run_stage(client, other["id"], auth, "gaps")
+        reused_context = model.contexts[-1]["project_context"]["career_evidence"]
+        assert reused_context["stories"][0]["reused_from_goal"] == changed["title"]
+        assert reused_context["experiments"][0]["origin"] == "reused"
+        assert reused_context["experiments"][0]["artifact_document"]["document_id"] == material_id
+        full_project = client.get(f"/api/projects/{identity}").json()
+        assert len(full_project["steps"]) == full_project["budget"]["max_rounds"] == 12
+        assert changed["usage"]["calls"] < full_project["budget"]["max_calls"]
+        continued = client.post(
+            f"/api/career/{identity}/prepare", json={"kind": "role"}, headers=auth
+        )
+        assert continued.status_code == 201, continued.text
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         data = client.get(f"/api/career/{identity}").json()
         assert len(data["stories"]) == 1 and len(data["tasks"]) == 2

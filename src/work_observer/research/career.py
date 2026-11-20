@@ -475,6 +475,11 @@ class CareerService:
                 "document_id": document["id"],
                 "created_at": previous["created_at"] if previous else now(),
                 "updated_at": now(),
+                **(
+                    {"reused_from": previous["reused_from"]}
+                    if previous and previous.get("reused_from")
+                    else {}
+                ),
             }
             if previous:
                 stories[stories.index(previous)] = saved
@@ -507,6 +512,65 @@ class CareerService:
                 for key in (project.get("public_document_ids") or [])
                 if key != story["document_id"]
             ]
+            self.projects._write(project)
+        return self.get(identity)
+
+    def reuse(self, identity, *, source_project_id, kind, record_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            source = self._project(source_project_id)
+            if identity == source_project_id:
+                raise ValueError("这份记录已经在当前目标中。")
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再带入材料。")
+            collection = "stories" if kind == "story" else "tasks"
+            original = next(
+                (row for row in source["career"][collection] if row["id"] == record_id), None
+            )
+            if not original:
+                raise ValueError("原目标中已找不到这份记录，请重新选择。")
+            records = project["career"][collection]
+            provenance = {
+                "project_id": source_project_id,
+                "project_title": source["title"],
+                "record_id": record_id,
+                "kind": kind,
+            }
+            if any(
+                all(
+                    (row.get("reused_from") or {}).get(key) == provenance[key]
+                    for key in ("project_id", "record_id", "kind")
+                )
+                for row in records
+            ):
+                return self.get(identity)
+            limit = 12 if kind == "story" else 24
+            if len(records) >= limit:
+                raise ValueError("当前目标已保存足够多的经历或练习，请先集中整理已有内容。")
+            document_id = original.get("document_id" if kind == "story" else "artifact_document_id")
+            documents = list(project.get("public_document_ids") or [])
+            if document_id and document_id not in documents:
+                if len(documents) >= 20:
+                    raise ValueError("当前目标已有20份材料，请先在研究工作台调整。")
+                document = PublicDocumentService(
+                    self.repository, self.raw_directory / "public"
+                ).document(document_id)
+                if document["integrity"] != "verified":
+                    raise ValueError("原作品材料暂时无法完整读取，请先检查原记录。")
+                documents.append(document_id)
+            copied = {
+                **original,
+                "id": uuid4().hex,
+                "reused_from": provenance,
+                "created_at": now(),
+                "updated_at": now(),
+            }
+            if kind == "story":
+                copied["requirement_key"] = ""
+            else:
+                copied.update(origin="reused", source_key="user:" + copied["id"], evidence_ids=[])
+            records.append(copied)
+            project["public_document_ids"] = documents
             self.projects._write(project)
         return self.get(identity)
 

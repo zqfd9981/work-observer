@@ -637,7 +637,7 @@ class ProjectService:
                 existing = next((s for s in record["steps"] if s.get("key") == key), None)
                 if existing:
                     return record
-            if len(record["steps"]) >= record["budget"]["max_rounds"]:
+            if not record.get("career") and len(record["steps"]) >= record["budget"]["max_rounds"]:
                 raise ProbeError("PROJECT_ROUND_LIMIT")
             if reply_to_step_id is not None:
                 reply = next((s for s in record["steps"] if s["id"] == reply_to_step_id), None)
@@ -1497,6 +1497,7 @@ class ProjectService:
                     {
                         "title": row["title"],
                         "document_id": row["document_id"],
+                        "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
                         "personal_action": row["action"][:400],
                         "reported_result": row["result"][:300],
                         "limits": row["limits"][:200],
@@ -1508,6 +1509,7 @@ class ProjectService:
                         "title": row["title"],
                         "proposed_check": row["completion_check"],
                         "origin": row.get("origin", "research"),
+                        "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
                         "state": row["state"],
                         "reported_observation": row["outcome"]
                         if selected_task
