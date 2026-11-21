@@ -301,6 +301,14 @@ class TaskImport(BaseModel):
     )
 
 
+class ExperimentComparisonRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    condition: str = Field(min_length=1, max_length=300)
+    input: str = Field(default="", max_length=600)
+    expected: str = Field(default="", max_length=600)
+    observed: str = Field(default="", max_length=1000)
+
+
 class ExperimentInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=150)
@@ -311,6 +319,8 @@ class ExperimentInput(BaseModel):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     previous_task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     design_change: str = Field(default="", max_length=1500)
+    comparison_conditions: str = Field(default="", max_length=1000)
+    comparison_rows: list[ExperimentComparisonRow] = Field(default_factory=list, max_length=8)
 
 
 class RetryExperimentInput(RetryCasesInput):
@@ -323,14 +333,6 @@ class CohortExperimentInput(CohortCasesInput):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     hypothesis: str = Field(default="", max_length=1500)
     save: bool = False
-
-
-class ExperimentComparisonRow(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    condition: str = Field(min_length=1, max_length=300)
-    input: str = Field(default="", max_length=600)
-    expected: str = Field(default="", max_length=600)
-    observed: str = Field(default="", max_length=1000)
 
 
 class TaskUpdate(BaseModel):

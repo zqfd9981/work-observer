@@ -72,12 +72,6 @@ def test_condition_comparisons_survive_reopen_and_are_read_with_their_original_l
         }).json()
         identity, question = created["id"], created["questions"][0]
         base = f"/api/career/{identity}"
-        task = client.post(base + "/experiments", headers=auth, json={
-            "title": "合成编号对照", "question_id": question["id"],
-            "task_or_ability": "检验解释", "deliverable": "对照记录",
-            "completion_check": "固定其他条件，记录不同编号的结果。",
-        }).json()["tasks"][0]
-        path = base + "/tasks/" + task["id"]
         rows = [{"condition": label, "input": inputs, "expected": expected, "observed": ""}
                 for label, inputs, expected in (
                     ("相同编号", "同一编号提交两次", "第二次不增加"),
@@ -85,6 +79,15 @@ def test_condition_comparisons_survive_reopen_and_are_read_with_their_original_l
                     ("并发提交", "同时提交同一编号", "尚无预期"),
                 )]
         conditions = "使用同一张合成表格，未控制并发与清理状态。"
+        task = client.post(base + "/experiments", headers=auth, json={
+            "title": "合成编号对照", "question_id": question["id"],
+            "task_or_ability": "检验解释", "deliverable": "对照记录",
+            "completion_check": "固定其他条件，记录不同编号的结果。",
+            "comparison_conditions": conditions, "comparison_rows": rows,
+        }).json()["tasks"][0]
+        path = base + "/tasks/" + task["id"]
+        assert task["comparison_rows"] == rows and task["comparison_conditions"] == conditions
+        assert task["state"] == "planned" and not task["outcome"] and not model.contexts
         response = client.patch(path, headers=auth, json={
             "state": "planned", "comparison_rows": rows, "comparison_conditions": conditions,
         })
