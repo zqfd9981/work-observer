@@ -1385,6 +1385,11 @@ async def _research(
     result["memory_used"] = recall()
     result["project_id"] = project_id
     application_background = applications.background(result["memory_used"], project_id)
+    learning_plan = (conversation_context or {}).get("career_action") == "plan"
+    if application_background is None and learning_plan:
+        application_background = applications.background(
+            result["memory_used"], project_id, allow_learning=True
+        )
     if not resume:
         application_enabled = (
             approach == "standard" and not offline and application_background is not None
@@ -1514,6 +1519,11 @@ async def _research(
         system += budget_policy
     if application_enabled:
         system += applications.POLICY
+        if (
+            application_background
+            and application_background.get("purpose") == "understanding_check"
+        ):
+            system += applications.LEARNING_POLICY
     if archive_enabled:
         system += archive_history.policy(archive_contract_version)
     if archived_read_enabled:
@@ -2544,7 +2554,8 @@ async def _research(
                         raw_plan = arguments.pop("application_plan", None)
                         try:
                             application_plan = applications.validate(
-                                raw_plan, evidence, result["memory_used"], project_id
+                                raw_plan, evidence, result["memory_used"], project_id,
+                                allow_learning=learning_plan,
                             )
                         except ValueError as exc:
                             application_error = str(exc)

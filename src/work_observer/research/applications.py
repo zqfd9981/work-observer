@@ -1,4 +1,4 @@
-"""Evidence-linked proposals using an explicitly saved project background."""
+"""Evidence-linked experiments using saved goals and optional personal background."""
 
 import hashlib
 import inspect
@@ -22,6 +22,15 @@ POLICY = (
     "不把会用工具等同于具备能力；尊重用户自述限制，不猜测完成时间、授权或保证结果。"
     "未明确的资源、权限和前提列入assumptions或open_questions，不代替用户执行外部动作。"
 )
+LEARNING_POLICY = (
+    "本轮application_background.purpose为understanding_check：用户只保存了研究目标，尚未提供个人背景。"
+    "这足以设计资料理解验证，不足以判断个人适配、能力缺口或安排个人学习路线。"
+    "围绕当前问题只给一个最小验证动作：使用可自行构造的合成案例、公开示例或现有资料，"
+    "写清输入、待区分的解释、观察记录及什么结果会挑战原解释；不依赖企业权限或真实业务数据。"
+    "有本轮原文依据时可填写application_plan，绑定该目标的memory_id；不要因个人背景为空"
+    "就一律返回null。若资料本身不足以设计检查，返回null并明确缺少什么。"
+    "个人经历、环境、时间与资源均按未知处理；实验尚未执行，不保证预期，也不代表岗位胜任。"
+)
 
 
 class Action(BaseModel):
@@ -43,7 +52,7 @@ class Plan(BaseModel):
     open_questions: list[str] = Field(max_length=6)
 
 
-def background(memories, project_id):
+def background(memories, project_id, *, allow_learning=False):
     candidates = []
     for note in memories:
         if not (
@@ -78,9 +87,12 @@ def background(memories, project_id):
         if any(
             not isinstance(data[key], str) or len(data[key]) > limit
             for key, limit in (("background", 1500), ("goal", 1000), ("constraints", 500))
-        ) or not all(data[key].strip() for key in ("background", "goal")):
+        ) or not data["goal"].strip() or not (data["background"].strip() or allow_learning):
             continue
-        candidates.append({"memory_id": note["id"], "version": note["version"], **data})
+        candidate = {"memory_id": note["id"], "version": note["version"], **data}
+        if not data["background"].strip():
+            candidate["purpose"] = "understanding_check"
+        candidates.append(candidate)
     return candidates[0] if len(candidates) == 1 else None
 
 
@@ -102,13 +114,13 @@ def contract():
     return {"version": VERSION, "sha256": hashlib.sha256(source.encode()).hexdigest()}
 
 
-def validate(raw, evidence, memories, project_id):
+def validate(raw, evidence, memories, project_id, *, allow_learning=False):
     if raw is None:
         return None
     plan = Plan.model_validate(raw)
-    context = background(memories, project_id)
+    context = background(memories, project_id, allow_learning=allow_learning)
     if context is None or plan.background_memory_id != context["memory_id"]:
-        raise ValueError("行动建议必须绑定本项目本轮采用的唯一用户背景版本")
+        raise ValueError("行动建议必须关联本项目本轮采用的目标与背景记录")
     aliases = {row.get("citation_key"): key for key, row in evidence.items()}
     for action in plan.actions:
         action.evidence_ids = list(
@@ -130,4 +142,8 @@ def validate(raw, evidence, memories, project_id):
         "actions": [row.model_dump() for row in plan.actions],
         "open_questions": plan.open_questions,
         "notice": NOTICE,
+        **({"purpose": "understanding_check",
+            "notice": ("这是围绕资料解释设计的验证，个人背景尚未提供。"
+                       "尚未执行，不代表个人适配或岗位能力。")}
+           if context.get("purpose") == "understanding_check" else {}),
     }

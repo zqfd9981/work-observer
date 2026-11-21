@@ -87,9 +87,10 @@ QUESTIONS = {
         "如给application_plan，最多三项具体补证据动作，不安排额外调查。"
     ),
     "plan": (
-        "为这个求职目标设计最多三个可执行的工作样本实验，使用已保存的个人背景与经历。"
-        "先核对目标岗位原文，再在application_plan给出针对的任务或能力、要解决的业务问题、"
-        "可展示产物、可复现的完成检查、需要的资源和未知。每项引用对应岗位依据。"
+        "为这个研究目标设计可执行的最小验证；有个人背景时可结合已保存的经历，最多三个动作。"
+        "未提供个人背景时，只围绕当前资料中的解释设计一个理解验证，不判断个人适配或能力缺口。"
+        "先核对本轮工作资料或岗位原文，再在application_plan给出针对的任务或解释、要区分的问题、"
+        "具体产物、可复现的完成检查、需要的资源和未知。每项引用本轮已读原文。"
         "hypothesis写这次准备检验的解释及条件，completion_check写具体输入输出与可能推翻预期的结果；"
         "这些是待验证的实验设计，不是已经成立的结论。"
         "尊重用户投入限制，不编造完成时间；避免只有看教程、学工具的建议。"
@@ -1516,8 +1517,8 @@ class CareerService:
             raise ValueError("请选择一种研究方式。")
         material_focus_supplied = material_id is not None or material_ids is not None
         material_ids = list(material_ids or [])
-        if material_ids and (kind not in {"ask", "map"} or material_id):
-            raise ValueError("所选资料可用于提问或工作地图，请取消单份重点资料。")
+        if material_ids and (kind not in {"ask", "map", "plan"} or material_id):
+            raise ValueError("所选资料可用于提问、工作地图或验证设计，请取消单份重点资料。")
         if len(material_ids) > 6 or len(set(material_ids)) != len(material_ids):
             raise ValueError("每轮请选择最多6份不同的重点资料。")
         with self.store.lock, self.store.db:
@@ -1694,7 +1695,7 @@ class CareerService:
                     (row for row in project["career"].get("questions", [])
                      if row["id"] == saved_question.get("parent_question_id")), None
                 )
-                if (kind in {"ask", "map"} and not material_focus_supplied
+                if (kind in {"ask", "map", "plan"} and not material_focus_supplied
                     and not material_ids and not material_id):
                     material_ids = list(saved_question.get("material_ids") or [])
                 if kind == "challenge":
@@ -2378,7 +2379,7 @@ class CareerService:
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
-                    "material_ids": material_ids if kind in {"ask", "map"} else [],
+                    "material_ids": material_ids if kind in {"ask", "map", "plan"} else [],
                     "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "counter_insight_id": counter_insight_id,
@@ -2428,7 +2429,7 @@ class CareerService:
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
-            if kind in {"ask", "map"} and material_ids:
+            if kind in {"ask", "map", "plan"} and material_ids:
                 project["steps"][-1]["career_material_ids"] = material_ids[:]
             if story_id and kind in {"pitch", "ask"} | interview_kinds:
                 project["steps"][-1]["career_story_id"] = story_id
@@ -2527,6 +2528,9 @@ class CareerService:
                            if step.get("career_requirement") else {}),
                         "design_change": "",
                         **action,
+                        **({"purpose": "understanding_check"}
+                           if result["application_plan"].get("purpose") == "understanding_check"
+                           else {}),
                         "state": "planned",
                         "outcome": "",
                         "hypothesis": action.get("hypothesis", ""),

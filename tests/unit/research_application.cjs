@@ -81,6 +81,11 @@ vm.runInContext('conversation.id=project.id;api=async(path,options)=>{calls.push
  assert.ok(planHtml.includes("完成检查"));assert.ok(planHtml.includes('data-cite="source"'));
  assert.ok(planHtml.includes("&lt;script&gt;合成目标"));assert.ok(planHtml.includes("&lt;/p&gt;合成产物"));
  assert.ok(!planHtml.includes("<script>"));assert.ok(planHtml.includes("合成待确认权限"));
+ context.planResult.application_plan.purpose="understanding_check";
+ const learningHtml=vm.runInContext('renderApplicationPlan(planResult,new Map())',context);
+ assert.ok(learningHtml.includes("理解验证 · 实验设计"));
+ assert.ok(learningHtml.includes("尚未提供个人背景"));
+ assert.ok(!learningHtml.includes("版个人背景"));
  assert.equal(vm.runInContext('renderApplicationPlan({},new Map())',context),"");
  console.log("Application entry: scoped saving, evidence question, drafts, retries and budget checks passed.");
 })().catch(error=>{console.error(error);process.exitCode=1;});
