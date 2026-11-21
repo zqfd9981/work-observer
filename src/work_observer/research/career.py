@@ -170,6 +170,15 @@ def research_documents(project, kind, preferred=(), *, repository=None, query=""
     return selected, len(library) - len(selected)
 
 
+def interview_source(row):
+    return row["kind"] in {"interview", "teachback", "followup"} or (
+        row["kind"] == "ask" and len(
+            ((row.get("result") or {}).get("career_learning_context") or {})
+            .get("answer_comparison", [])
+        ) == 2
+    )
+
+
 class CareerService:
     def __init__(self, store, repository, raw_directory):
         self.projects = ProjectService(store)
@@ -1845,8 +1854,7 @@ class CareerService:
                                if row["current"] and row["result"]["status"] == "completed"]
                 previous_assessment = next(
                     (row for row in sources
-                     if row["kind"] in ({"interview", "teachback", "followup"}
-                                        if kind == "answer" else {"answer"})
+                     if (interview_source(row) if kind == "answer" else row["kind"] == "answer")
                      and (not source_step_id or row["step_id"] == source_step_id)), None
                 )
                 if previous_assessment and previous_assessment.get("understanding_check"):
@@ -1891,11 +1899,34 @@ class CareerService:
                 raise ValueError("请选一个已保存的问题，并取消只整理原文，再开始连续查证。")
             comparison_step_ids = comparison_step_ids or []
             if comparison_step_ids:
+                completed = {
+                    row["step_id"]: row for row in self.get(identity)["results"]
+                    if (row.get("result") or {}).get("status") == "completed"
+                    and row["state"] != "abandoned"
+                }
+                pair = [completed[key] for key in comparison_step_ids if key in completed]
+                answer_focus = ("question_id", "task_id", "story_id", "insight_id")
+                answer_pair = len(pair) == 2 and all(
+                    row["kind"] == "answer" and row.get("interview_question")
+                    and row["interview_question"] == pair[0].get("interview_question")
+                    and bool(row.get("understanding_check"))
+                    == bool(pair[0].get("understanding_check"))
+                    and all(row.get(key) == pair[0].get(key) for key in answer_focus)
+                    for row in pair
+                )
+                if answer_pair:
+                    requested = dict(zip(
+                        answer_focus, (question_id, task_id, story_id, insight_id), strict=True,
+                    ))
+                    if any((requested[key] or None) != (pair[0].get(key) or None)
+                           for key in answer_focus):
+                        raise ValueError("请沿用这两次回答对应的认识、调查与经历，再开始对照。")
+                    understanding_check = bool(pair[0].get("understanding_check"))
                 candidates = {
                     row["step_id"]: row
                     for row in self.get(identity)["results"]
-                    if (row.get("question_id") == question_id if question_id
-                        else (row.get("result") or {}).get("work_map"))
+                    if (answer_pair or (row.get("question_id") == question_id if question_id
+                        else (row.get("result") or {}).get("work_map")))
                     and row.get("result")
                     and row["result"]["status"] == "completed"
                     and row["state"] != "abandoned"
@@ -1906,7 +1937,8 @@ class CareerService:
                     or not all(step_id in candidates for step_id in comparison_step_ids)
                 ):
                     raise ValueError(
-                        "请选择同一调查问题下的两次完整回答，或当前目标下两份完整工作地图。"
+                        "请选择同一道题和同一组材料下的两次完整回答、同一调查的两次研究，"
+                        "或当前目标下两份完整工作地图。"
                     )
             counter_note = next((row for row in project["career"].get("insights", [])
                                  if row["id"] == counter_insight_id), None)
@@ -2103,7 +2135,7 @@ class CareerService:
                     (
                         row
                         for row in sources
-                        if row["kind"] in {"interview", "teachback", "followup"}
+                        if interview_source(row)
                         and (not source_step_id or row["step_id"] == source_step_id)
                     ),
                     None,
@@ -2364,6 +2396,10 @@ class CareerService:
                 )
             if comparison_step_ids:
                 question += (
+                    "若career_evidence.selected_answer_comparison非空，用户在对照两次自述回答与反馈。"
+                    "逐次读取其中完整题目、原回答、当时反馈与待核原文；先区分表述变化、"
+                    "推理条件变化与仍无依据的部分。较新、较长、语气更确定都不表示理解更正确，"
+                    "自述回答和模型反馈不证明实际经历或能力。不要替用户补造进步或生产结果。"
                     "用户本次明确对照的两次研究在career_evidence.selected_inquiry.earlier_discussions，"
                     "未绑定调查问题的两份工作地图则在career_evidence.selected_map_comparison。"
                     "按所选顺序比较两次提问、判断和来源。说明哪些差异可能来自问题或材料变化，"

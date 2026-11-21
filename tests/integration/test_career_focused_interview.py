@@ -156,7 +156,21 @@ def test_interview_retains_chosen_material_and_full_observations(tmp_path, focus
                 base + "/tasks", headers=auth, json={"step_id": plan["step_id"]}
             ).json()["tasks"][-1]
             assert imported["previous_task_id"] == record["id"]
+        repeated = check(run_stage(
+            client, identity, auth, "answer", source_step_id=questions["step_id"],
+            answer="合成重答：只记录本地样例，实际业务范围与并发行为仍未知。",
+        ))
+        compared = check(run_stage(
+            client, identity, auth, "ask", section="interview", inherit_focus=False,
+            comparison_step_ids=[answer["step_id"], repeated["step_id"]],
+            question="对照这两次原回答与原文，哪些推理条件改变了？", **{key: record["id"]},
+        ))
+        pair = compared["result"]["career_learning_context"]["answer_comparison"]
+        assert [row["user_answer"] for row in pair] == [answer["answer"], repeated["answer"]]
+        assert not compared["understanding_check"]
+        personal = model.contexts[-1]["project_context"]["career_evidence"]
+        assert not personal["selected_map_comparison"] and not personal["selected_learning_note"]
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         results = client.get(base).json()["results"]
-        assert len(results) == (5 if focus == "task" else 4)
+        assert len(results) == (7 if focus == "task" else 6)
         assert all(row[key] == record["id"] for row in results)

@@ -1490,7 +1490,15 @@ class ProjectService:
             )
             if selected_story:
                 stories = [selected_story]
-            if step.get("career_action") in {"interview", "answer", "followup"}:
+            compared_steps = set(step.get("career_comparison_steps", []))
+            comparing_answers = bool(compared_steps) and all(
+                entry["kind"] == "answer" for entry in career["runs"]
+                if entry["step_id"] in compared_steps
+            )
+            if (
+                step.get("career_action") in {"interview", "answer", "followup"}
+                or comparing_answers
+            ):
                 if selected_story:
                     observations = []
                 elif selected_task:
@@ -1755,12 +1763,44 @@ class ProjectService:
                     "不能仅因回答措辞变化就说岗位发生了变化。"
                 )
 
+            selected_answers = []
+            for step_id in step.get("career_comparison_steps", []):
+                entry = next(row for row in career["runs"] if row["step_id"] == step_id)
+                if entry["kind"] != "answer":
+                    continue
+                old_step = next(row for row in record["steps"] if row["id"] == step_id)
+                old_result = (self.store.get(old_step["run_id"]) or {}).get("result") or {}
+                selected_answers.append({
+                    "step_id": step_id,
+                    "interview_question": entry.get("interview_question"),
+                    "user_answer": entry.get("answer"),
+                    "answer_document_id": entry.get("answer_document_id"),
+                    "recorded_at": entry["created_at"],
+                    "understanding_check": bool(entry.get("understanding_check")),
+                    "same_job_scope": old_step["scope_version"] == record["scope_version"],
+                    "claim_details_to_recheck": [
+                        {key: claim.get(key) for key in (
+                            "text", "category", "basis", "requirement",
+                        )}
+                        for claim in old_result.get("claims", [])
+                    ],
+                    "unresolved_then": old_result.get("gaps", []),
+                    "source_references_to_reread": [
+                        {key: source.get(key) for key in (
+                            "title", "evidence_kind", "job_id", "public_document_id",
+                            "document_id", "snapshot_id", "historical_cutoffs", "start", "end",
+                        )}
+                        for source in old_result.get("evidence", [])
+                    ],
+                })
             selected_maps = []
             if not selected_inquiry:
                 for step_id in step.get("career_comparison_steps", []):
                     old_step = next(row for row in record["steps"] if row["id"] == step_id)
                     old_result = (self.store.get(old_step["run_id"]) or {}).get("result") or {}
                     entry = next(row for row in career["runs"] if row["step_id"] == step_id)
+                    if entry["kind"] == "answer":
+                        continue
                     selected_maps.append({
                         "step_id": step_id,
                         "question": entry.get("user_question") or old_step["question"],
@@ -1790,6 +1830,7 @@ class ProjectService:
                 "selected_requirement": step.get("career_requirement"),
                 "selected_inquiry": selected_inquiry,
                 "selected_map_comparison": selected_maps,
+                "selected_answer_comparison": selected_answers,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
                 "selected_learning_notes": [learning_note(row)
                                             for key in step.get("career_insight_ids", [])

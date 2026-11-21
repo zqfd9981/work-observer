@@ -1666,6 +1666,7 @@ async def _research(
             "notes": personal["learning_notes"],
             "selected_note": personal["selected_learning_note"],
             "selected_notes": personal.get("selected_learning_notes", []),
+            "answer_comparison": personal.get("selected_answer_comparison", []),
             "counter_note": personal.get("selected_counter_learning_note"),
             "comparison_inputs": [
                 row for row in [*personal.get("experiments", []),
