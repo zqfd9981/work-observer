@@ -53,9 +53,19 @@ class DemoModel:
             if row.get("type") == "function_call_output"
         ]
         evidence = [ev for output in outputs for ev in output.get("evidence", [])]
-        for job in context["fixed_scope"]["jobs"]:
-            if not any(ev.get("job_id") == job["id"] for ev in evidence):
-                return self.call(history, "read_job", {"job_id": job["id"]})
+        unread = [
+            job["id"]
+            for job in context["fixed_scope"]["jobs"]
+            if not any(ev.get("job_id") == job["id"] for ev in evidence)
+        ]
+        if len(unread) > 1:
+            return self.call(
+                history,
+                "read_jobs",
+                {"reads": [{"job_id": identity, "start": 0} for identity in unread[:6]]},
+            )
+        if unread:
+            return self.call(history, "read_job", {"job_id": unread[0]})
         documents = [
             career[key]["document_id"]
             for key in ("selected_story", "selected_answer", "selected_material")

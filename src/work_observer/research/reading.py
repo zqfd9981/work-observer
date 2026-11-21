@@ -7,7 +7,7 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.research.source_views import build_source_views
 
 
-def job_window(evidence, start=None):
+def job_window(evidence, start=None, *, limit=8):
     """Read existing frozen fragments around a character position without changing citations."""
     start = 0 if start is None else start
     if type(start) is not int or start < 0:
@@ -15,7 +15,7 @@ def job_window(evidence, start=None):
     ordered = sorted(evidence, key=lambda row: row["start"])
     length = max((row.get("full_text_length", row["end"]) for row in ordered), default=0)
     available_end = max((row["end"] for row in ordered), default=0)
-    selected = [row for row in ordered if row["end"] > start][:8]
+    selected = [row for row in ordered if row["end"] > start][:limit]
     first = selected[0]["start"] if selected else min(start, length)
     end = selected[-1]["end"] if selected else first
     return {
@@ -27,6 +27,39 @@ def job_window(evidence, start=None):
         "evidence": selected,
         "note": "按定位位置所在片段返回原文，引用与字符位置保持不变。"
         "next_start可继续读取后面的片段；正文未读到的范围仍保留未知，不能当作没有要求。",
+    }
+
+
+def job_windows(pool, reads):
+    """Read small windows from several frozen JDs, preserving each one's continuation."""
+    if (
+        not isinstance(reads, list)
+        or not 1 <= len(reads) <= 6
+        or any(
+            not isinstance(row, dict)
+            or set(row) != {"job_id", "start"}
+            or not isinstance(row["job_id"], str)
+            for row in reads
+        )
+    ):
+        raise ProbeError("INVALID_JOB_READ_BATCH")
+    if any(row["job_id"] not in pool for row in reads):
+        raise ProbeError("RESEARCH_SCOPE_VIOLATION")
+    evidence, windows = [], []
+    for request in reads:
+        window = job_window(pool[request["job_id"]], request["start"], limit=2)
+        evidence.extend(window["evidence"])
+        windows.append(
+            {
+                "job_id": request["job_id"],
+                **{key: value for key, value in window.items() if key != "evidence"},
+            }
+        )
+    return {
+        "evidence": evidence,
+        "windows": windows,
+        "note": "每份JD最多返回两个原始片段，不表示已读全文；"
+        "windows中has_more为true时，可用read_job和next_start继续。",
     }
 
 

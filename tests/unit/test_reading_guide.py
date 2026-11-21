@@ -6,8 +6,8 @@ import pytest
 from jsonschema import Draft202012Validator, ValidationError
 
 from work_observer.connectors.mcp_probe import ProbeError
-from work_observer.research.agent import TOOLS
-from work_observer.research.reading import job_window, reading_guide
+from work_observer.research.agent import BATCH_JOB_TOOL, TOOLS
+from work_observer.research.reading import job_window, job_windows, reading_guide
 
 
 def receipts():
@@ -73,6 +73,51 @@ def test_read_job_contract_exposes_a_valid_nullable_position():
     for start in (-1, True, "5600"):
         with pytest.raises(ValidationError):
             validator.validate({"job_id": "synthetic-job", "start": start})
+
+
+def test_batch_reading_keeps_partial_windows_and_original_source_positions():
+    text = "合成工作说明。" * 400 + "末尾限定：商科背景只是加分项。"
+    long_rows = [
+        {
+            "id": f"long:{start}",
+            "job_id": "long",
+            "start": start,
+            "end": min(start + 700, len(text)),
+            "quote": text[start : start + 700],
+            "full_text_length": len(text),
+        }
+        for start in range(0, len(text), 700)
+    ]
+    short_rows = [
+        {
+            "id": "short:0",
+            "job_id": "short",
+            "start": 0,
+            "end": 7,
+            "quote": "负责接口验证。",
+            "full_text_length": 7,
+        }
+    ]
+    pool = {"long": long_rows, "short": short_rows}
+    before = deepcopy(pool)
+    result = job_windows(pool, [{"job_id": "long", "start": 0}, {"job_id": "short", "start": None}])
+    assert result["evidence"] == [*long_rows[:2], *short_rows]
+    assert result["windows"][0]["has_more"] and result["windows"][0]["next_start"] == 1400
+    assert not result["windows"][1]["has_more"]
+    continued = job_window(long_rows, result["windows"][0]["next_start"])
+    assert "末尾限定" in continued["evidence"][-1]["quote"]
+    assert continued["next_start"] is None
+    assert pool == before
+    Draft202012Validator.check_schema(BATCH_JOB_TOOL["parameters"])
+    validator = Draft202012Validator(BATCH_JOB_TOOL["parameters"])
+    validator.validate({"reads": [{"job_id": "long", "start": 0}]})
+    with pytest.raises(ProbeError, match="RESEARCH_SCOPE_VIOLATION"):
+        job_windows(pool, [{"job_id": "outside", "start": 0}])
+    for invalid in ([], [{"job_id": "short", "start": 0}] * 7):
+        with pytest.raises(ProbeError, match="INVALID_JOB_READ_BATCH"):
+            job_windows(pool, invalid)
+    with pytest.raises(ProbeError, match="INVALID_JOB_SOURCE_WINDOW"):
+        job_windows(pool, [{"job_id": "short", "start": True}])
 
 
 def test_qualifier_across_citations_keeps_whole_literal_condition_and_section():
