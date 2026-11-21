@@ -112,9 +112,18 @@
   function prepareNotePractice(id){
     captureDrafts();if(!career.data.insights?.some(row=>row.id===id))throw new Error("请重新选择一条已保存的认识。");storyDraft().interview_focus="insight:"+id;career.tab="interview";renderDetail();$(".career-interview-focus").scrollIntoView({block:"start",behavior:"smooth"});notify("已选中这条认识，可以先查看，再决定是否生成自测问题。");
   }
+  function careerHome(items){
+    const preview=(text,length)=>{const points=Array.from(text||"");return e(points.slice(0,length).join(""))+(points.length>length?"…":"");};
+    const states={queued:"等待开始",running:"研究中",interrupted:"已暂停",failed:"未完成",completed:"已有研究记录",waiting_review:"已有待查看记录",waiting_material:"等待补充资料",abandoned:"已结束本轮"};
+    return `<section class="career-home panel" aria-labelledby="career-home-title"><div class="career-home-head"><div><div class="eyebrow">PICK UP YOUR INVESTIGATION</div><h2 id="career-home-title">接着你的调查往下走</h2><p>最近更新的目标。回到原来的问题、资料和研究记录。</p></div><a class="secondary button-link" href="#career/new">从一个新问题开始 ↗</a></div><div class="career-home-grid">${items.slice(0,3).map(row=>{
+      const root="#career/"+e(row.id),latest=row.latest_research,date=new Date(row.updated_at),updated=Number.isNaN(date.getTime())?"":date.toLocaleDateString("zh-CN");
+      return `<article class="career-home-card" data-career-home-goal="${e(row.id)}"><div class="career-home-meta"><span>最近更新${updated?" · "+e(updated):""}</span>${latest?`<span class="quiet-tag">${e(states[latest.state]||"已有研究记录")}</span>`:""}</div><h3><a href="${root}">${e(row.title)}</a></h3>${row.focus_question_id?`<div class="career-home-focus"><small>当前关注</small><p>${preview(row.focus_question,180)}</p><div class="result-actions"><a class="button-link primary small" href="${root}/inquiry/${e(row.focus_question_id)}">接着研究这个问题 ↗</a><a class="text-button" href="${root}/history/${e(row.focus_question_id)}">回看相关研究</a></div></div>`:`<p class="form-note">${preview(row.goal,180)||"打开工作区，选择这次想弄清楚的问题。"}</p>`}${latest?`<div class="career-home-last"><small>最近一轮 · ${e(labels[latest.kind]||"研究记录")}</small>${latest.question?`<p>${preview(latest.question,140)}</p>`:""}<a class="text-button" href="${root}/discussion/${e(latest.step_id)}">${["queued","running","interrupted","failed","waiting_material"].includes(latest.state)?"查看这一轮的进度":"查看这一轮的记录"} ↗</a></div>`:'<p class="form-note">还没有研究记录，可以先查看和补充资料。</p>'}<a class="text-button career-home-enter" href="${root}">进入完整工作区 ↗</a></article>`;
+    }).join("")}</div><p class="form-note">这些入口只打开或准备已有调查；是否开始或继续调用模型，由你进入后选择。全部 ${items.length} 个目标可在下方展开查看。</p></section>`;
+  }
   async function loadGoals(){
     const items=await api("career");
     $("#career-goals").innerHTML=items.length?items.map(row=>`<a href="#career/${e(row.id)}" class="career-goal-card ${career.id===row.id?"is-current":""}"><strong>${e(row.title)}</strong><span>${row.job_count?row.job_count+" 个目标岗位":"从资料开始研究"} · ${row.story_count} 份经历证据</span><small>${row.done_count} / ${row.task_count} 项练习已记录结果 · ${row.insight_count||0} 次复盘 · ${row.open_question_count||0} 个待研究问题</small>${row.focus_question?`<small>当前关注：${e(row.focus_question.slice(0,90))}${row.focus_question.length>90?"…":""}</small>`:""}</a>`).join(""):"";
+    return items;
   }
 
   function jdIntake(target){
@@ -1412,6 +1421,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     return `<span class="career-result-heading"><strong>${e(researchLabel(row))} · ${e(state)}</strong><time datetime="${e(row.created_at||"")}">${e(when(row.created_at))}</time></span>${preview?`<span class="career-result-question">${e(preview)}</span>`:""}`;
   }
   function showResearchResult(stepId){
+    const live=$(`[data-career-live-step="${stepId}"]`);if(live&&!career.data?.results.find(row=>row.step_id===stepId)?.result){live.scrollIntoView({block:"start",behavior:"smooth"});return;}
     let target=$(`[data-career-result="${stepId}"]`);
     if(!target&&career.data?.results.some(row=>row.step_id===stepId)){storyDraft().result_view="all";renderDetail();target=$(`[data-career-result="${stepId}"]`);}
     if(!target)return;
@@ -1487,7 +1497,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     const actions=pending?researchActivityItems(pending,data):[],phase=actions.length?"研究中 · 最近记录："+actions.at(-1).label:"正在研究资料";
     const reason={calls_exhausted:"本轮调用额度已用完，可保留记录后结束这轮。",time_exhausted:"本轮时间额度已用完，可保留记录后结束这轮。",scope_changed:"求职目标或资料范围已调整，请结束旧请求，再按当前目标提问。",material_changed:"所用资料或背景已有变化，请结束这轮后重新研究。",no_checkpoint:"这轮没有可继续的位置，可保留记录后重新提问。",unavailable:"这轮已不可继续，可查看完整记录。"}[pending?.continuation?.reason]||"";
     const canContinue=pending&&pending.scope_current&&(pending.state==="queued"||pending.continuation?.available);
-    return `<section class="career-live-research panel" aria-live="polite"><div>${autonomousState(pending||{})}<span class="quiet-tag">${data.running?phase:pending?.state==="queued"?"等待开始":pending?.state==="interrupted"?"已暂停":"本轮尚未完成"}</span><h3>${e(pending?.user_question?.slice(0,100)||labels[pending?.kind]||"当前研究")}</h3><p class="form-note">已发起 ${pending?.progress?.calls||0} 次调用 · 已读 ${pending?.progress?.read_fragments||0} 个原文片段，读到片段不代表核对了全文。</p>${pending&&typeof pending.allow_public==="boolean"?`<p class="form-note">本轮使用${pending.offline?"原文整理模式":pending.allow_public?"公开补查与已选资料":"已选的本地资料"}；续跑沿用此设置。</p>`:""}${pending?researchActivity(pending,data,true):""}${!data.running&&reason?`<p class="form-note">${e(reason)}</p>`:""}${!data.running&&pending?.state==="queued"&&!pending.scope_current?'<p class="form-note">这轮仍使用调整前的资料，请撤销后重新提问。</p>':""}</div><div class="result-actions">${data.running?`<button type="button" class="secondary" data-career-control="pause" ${career.busy?"disabled":""}>暂停本轮</button>`:`${canContinue?`<button type="button" class="primary" data-career-control="continue" data-career-step="${e(pending.step_id)}" ${career.busy?"disabled":""}>${pending.state==="queued"?"开始这轮研究":"从已有进度继续"}</button>`:""}<button type="button" class="text-button" data-career-control="end" data-career-step="${e(pending.step_id)}" ${career.busy?"disabled":""}>${pending.run_id?"结束这轮，保留已有记录":"撤销未开始的请求"}</button>`}</div>${!data.running&&pending?.continuation?.available?`<p class="form-note">继续沿用本轮剩余的 ${pending.continuation.remaining_calls} 次调用和 ${pending.continuation.remaining_seconds} 秒${pending.autonomous_rounds?`；完成后，最多还可自动补查 ${pending.autonomous_rounds-1} 轮，仍遵守本批三轮上限。`:"，不新增一轮额度。"}</p>`:""}</section>`;
+    return `<section class="career-live-research panel" data-career-live-step="${e(pending?.step_id||"")}" aria-live="polite"><div>${autonomousState(pending||{})}<span class="quiet-tag">${data.running?phase:pending?.state==="queued"?"等待开始":pending?.state==="interrupted"?"已暂停":"本轮尚未完成"}</span><h3>${e(pending?.user_question?.slice(0,100)||labels[pending?.kind]||"当前研究")}</h3><p class="form-note">已发起 ${pending?.progress?.calls||0} 次调用 · 已读 ${pending?.progress?.read_fragments||0} 个原文片段，读到片段不代表核对了全文。</p>${pending&&typeof pending.allow_public==="boolean"?`<p class="form-note">本轮使用${pending.offline?"原文整理模式":pending.allow_public?"公开补查与已选资料":"已选的本地资料"}；续跑沿用此设置。</p>`:""}${pending?researchActivity(pending,data,true):""}${!data.running&&reason?`<p class="form-note">${e(reason)}</p>`:""}${!data.running&&pending?.state==="queued"&&!pending.scope_current?'<p class="form-note">这轮仍使用调整前的资料，请撤销后重新提问。</p>':""}</div><div class="result-actions">${data.running?`<button type="button" class="secondary" data-career-control="pause" ${career.busy?"disabled":""}>暂停本轮</button>`:`${canContinue?`<button type="button" class="primary" data-career-control="continue" data-career-step="${e(pending.step_id)}" ${career.busy?"disabled":""}>${pending.state==="queued"?"开始这轮研究":"从已有进度继续"}</button>`:""}<button type="button" class="text-button" data-career-control="end" data-career-step="${e(pending.step_id)}" ${career.busy?"disabled":""}>${pending.run_id?"结束这轮，保留已有记录":"撤销未开始的请求"}</button>`}</div>${!data.running&&pending?.continuation?.available?`<p class="form-note">继续沿用本轮剩余的 ${pending.continuation.remaining_calls} 次调用和 ${pending.continuation.remaining_seconds} 秒${pending.autonomous_rounds?`；完成后，最多还可自动补查 ${pending.autonomous_rounds-1} 轮，仍遵守本批三轮上限。`:"，不新增一轮额度。"}</p>`:""}</section>`;
   }
   async function controlResearch(action,stepId){
     if(career.busy)return;captureDrafts();career.busy=true;renderDetail();const id=career.id;let ended=null;
@@ -1527,18 +1537,21 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
 
   async function openCareer(id){
     captureDrafts();clearTimeout(career.timer);career.id=id;
-    const data=await api("career/"+encodeURIComponent(id));if(career.id!==id)return;
+    const data=await api("career/"+encodeURIComponent(id));if(career.id!==id||location.hash.split("/")[1]!==id)return;
     career.data=data;renderDetail();
     if(data.running)career.timer=setTimeout(()=>{if(state.page==="career"&&career.id===id)openCareer(id).catch(error=>notify(error.message,true));},2000);
   }
 
   window.loadCareer=async()=>{
-    captureDrafts();clearTimeout(career.timer);$("#career-detail").hidden=true;$("#career-review").hidden=true;
-    if(location.hash.split("/")[1]==="review"){$("#career-onboarding").hidden=true;career.id=null;career.data=null;await loadGoals();$("#career-goal-switcher").open=false;$("#career-review").hidden=false;await loadNoteReview();return;}
-    await loadGoals();
-    const id=location.hash.split("/")[1];$("#career-goal-switcher").open=false;if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");
-    if(id&&/^[a-f0-9]{32}$/.test(id)){await openCareer(id);const parts=location.hash.split("/");if(parts[2])focusCareerRecord(parts[2],parts[3],parts[4]);else{captureDrafts();career.tab="requirements";renderDetail();}}
-    else{$("#career-onboarding").hidden=false;$("#career-detail").hidden=true;await findJobs();}
+    captureDrafts();clearTimeout(career.timer);$("#career-detail").hidden=true;$("#career-review").hidden=true;$("#career-home").hidden=true;$("#career-onboarding").hidden=true;
+    const route=location.hash,id=route.split("/")[1],items=await loadGoals();if(location.hash!==route)return;$("#career-goal-switcher").open=false;
+    if(id==="review"){career.id=null;career.data=null;$("#career-review").hidden=false;await loadNoteReview();return;}
+    if(id&&/^[a-f0-9]{32}$/.test(id)){await openCareer(id);if(location.hash!==route)return;const parts=route.split("/");if(parts[2])focusCareerRecord(parts[2],parts[3],parts[4]);else{captureDrafts();career.tab="requirements";renderDetail();}}
+    else{
+      career.id=null;career.data=null;
+      if(items.length&&id!=="new"){$("#career-home").innerHTML=careerHome(items);$("#career-home").hidden=false;}
+      else{if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");$("#career-onboarding").hidden=false;await findJobs();}
+    }
   };
 
   async function research(kind,answer="",questionIndex=0,taskId=null,sourceStepId=null,question="",extras={}){
@@ -1560,7 +1573,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
 
   $("#career-find-jobs").addEventListener("click",()=>findJobs().catch(error=>notify(error.message,true)));
   $("#career-job-query").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();findJobs().catch(error=>notify(error.message,true));}});
-  $("#career-new").addEventListener("click",()=>{captureDrafts();clearTimeout(career.timer);career.id=null;career.data=null;location.hash="career";$("#career-onboarding").hidden=false;$("#career-detail").hidden=true;findJobs().catch(error=>notify(error.message,true));});
+  $("#career-new").addEventListener("click",()=>{location.hash="career/new";});
   $("#career-create").addEventListener("submit",async event=>{
     event.preventDefault();const form=event.target,submit=$("#career-create-submit");
         submit.disabled=true;

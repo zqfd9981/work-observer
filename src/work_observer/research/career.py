@@ -255,28 +255,42 @@ class CareerService:
         return self.get(project["id"])
 
     def listing(self):
-        return [
-            {
+        items = []
+        for row in self.projects.list(all_records=True):
+            if row["state"] != "active" or not row.get("career"):
+                continue
+            career = row["career"]
+            focus = next((q for q in career.get("questions", [])
+                          if q["id"] == career.get("focus_question_id")), None)
+            steps = {step["id"]: step for step in row["steps"]}
+            latest = next((entry for entry in reversed(career["runs"])
+                           if entry["step_id"] in steps), None)
+            items.append({
                 "id": row["id"],
                 "title": row["title"],
                 "goal": row["goal"],
                 "updated_at": row["updated_at"],
                 "job_count": len(row["job_ids"]),
-                "story_count": len(row["career"]["stories"]),
-                "insight_count": len(row["career"].get("insights", [])),
+                "story_count": len(career["stories"]),
+                "insight_count": len(career.get("insights", [])),
                 "open_question_count": sum(
-                    q["state"] == "open" for q in row["career"].get("questions", [])
+                    q["state"] == "open" for q in career.get("questions", [])
                 ),
-                "focus_question": next(
-                    (q["question"] for q in row["career"].get("questions", [])
-                     if q["id"] == row["career"].get("focus_question_id")), None
-                ),
-                "task_count": len(row["career"]["tasks"]),
-                "done_count": sum(task["state"] == "done" for task in row["career"]["tasks"]),
-            }
-            for row in self.projects.list(all_records=True)
-            if row["state"] == "active" and row.get("career")
-        ]
+                "focus_question_id": focus["id"] if focus else None,
+                "focus_question": focus["question"] if focus else None,
+                "latest_research": {
+                    "step_id": latest["step_id"],
+                    "kind": latest["kind"],
+                    "question": latest.get("user_question")
+                    or latest.get("interview_question") or "",
+                    "question_id": latest.get("question_id"),
+                    "state": steps[latest["step_id"]]["state"],
+                    "created_at": latest["created_at"],
+                } if latest else None,
+                "task_count": len(career["tasks"]),
+                "done_count": sum(task["state"] == "done" for task in career["tasks"]),
+            })
+        return items
 
     def review(self, *, q="", goal_id=None, state="selected", unknown=False, offset=0):
         from work_observer.research.learning import learning_inquiry_links
