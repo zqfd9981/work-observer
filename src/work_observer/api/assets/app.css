@@ -144,3 +144,5 @@
 .career-reading-status{padding:14px 16px;background:#f3f7ef;border-radius:9px;margin:12px 0}.career-reading-status p{font-size:12px;line-height:1.8;overflow-wrap:anywhere;margin:8px 0}.career-reading-status strong{font-size:12px}
 
 .career-learning-recall{padding:16px;background:#f3f7ef;border-radius:9px;margin:16px 0}.career-learning-recall article{padding:14px 0;border-top:1px solid #dce5d5;margin-top:14px}.career-learning-recall p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}.career-learning-recall h4{margin:10px 0}
+
+.career-task-design{padding:12px;background:#f3f7ef;border-radius:8px;margin-bottom:16px}.career-task-design>summary{font-weight:600}.career-task-design label{margin-top:12px}.career-task-design input,.career-task-design textarea{width:100%;min-width:0}.career-task .result-actions{flex-wrap:wrap}

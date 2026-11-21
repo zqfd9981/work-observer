@@ -1759,7 +1759,21 @@ class CareerService:
         artifact_title="工作样本材料",
         artifact_text="",
         design_change="",
+        title=None,
+        task_or_ability=None,
+        deliverable=None,
+        completion_check=None,
     ):
+        plan = {
+            key: value.strip()
+            for key, value in {
+                "title": title, "task_or_ability": task_or_ability,
+                "deliverable": deliverable, "completion_check": completion_check,
+            }.items()
+            if value is not None
+        }
+        if any(not value for value in plan.values()):
+            raise ValueError("请填写实验名称、要验证的工作、交付物和检查方法。")
         if state == "done" and not outcome.strip():
             raise ValueError("请先记录实际做了什么或观察到什么，再标记为已记录结果。")
         with self.store.lock, self.store.db:
@@ -1786,6 +1800,7 @@ class CareerService:
                     key for key in (project.get("public_document_ids") or []) if key != previous
                 ] + [document["id"]]
             task.update(
+                **plan,
                 state=state,
                 outcome=outcome,
                 artifact=artifact,

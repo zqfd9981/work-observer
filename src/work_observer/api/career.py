@@ -175,6 +175,10 @@ class ExperimentInput(BaseModel):
 
 class TaskUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=150)
+    task_or_ability: str | None = Field(default=None, min_length=1, max_length=500)
+    deliverable: str | None = Field(default=None, min_length=1, max_length=700)
+    completion_check: str | None = Field(default=None, min_length=1, max_length=700)
     state: Literal["planned", "doing", "done"]
     outcome: str = Field(default="", max_length=4000)
     artifact: str = Field(default="", max_length=1000)
