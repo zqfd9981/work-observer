@@ -1633,6 +1633,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   }
   const comparisonStartQuestion="请逐份读取这两份JD，比较它们解决的业务问题、实际任务、交付物和责任边界。哪些能力或工具在什么条件下可以迁移？分别引用各岗位原文，保留必备、加分和未说明性质；资料没有说明的部分保留未知。";
   function comparisonStartPanel(){
+    if(demoMode)return "";
     return `<details class="career-comparison-start"><summary>从两份JD开始：看清工作与交付差异</summary><p class="form-note">把两份招聘原文放在一起，直接建立一条岗位对照调查。上方的问题可以留空，也可以写下你更想比较的地方。</p><div class="career-start-jobs">${[0,1].map(index=>`<article data-comparison-start-row="${index}"><h3>岗位 ${index+1}</h3><fieldset>${jdFields()}</fieldset><p class="form-note" data-comparison-start-status role="status">填写岗位、公司和完整招聘正文。</p><button type="button" class="text-button" data-comparison-start-edit hidden>改用另一份JD</button></article>`).join("")}</div><p class="form-note">这次调查只围绕以上两个岗位。保存原文和建立调查不调用模型，也不自动打开链接；进入后可先读原文，再开始研究。</p><div class="result-actions"><button type="submit" class="secondary" id="career-create-comparison">保存两份JD，进入岗位对照 ↗</button><button type="button" class="text-button" data-comparison-start-clear>清空这两份草稿</button></div><p class="form-note" data-comparison-start-notice role="status"></p></details>`;
   }
   function comparisonStartRowValues(row){
