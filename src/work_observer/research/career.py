@@ -1162,6 +1162,13 @@ class CareerService:
             for key in ("source_step_id", "conclusion_step_id"):
                 if data.get(key) and data[key] not in runs:
                     raise ValueError("未找到所选讨论，请重新选择或取消关联。")
+            if not question_id and "selected_job_ids" not in data:
+                source = runs.get(data.get("source_step_id"), {})
+                if source.get("selected_job_ids"):
+                    data = {**data, "selected_job_ids": source["selected_job_ids"][:]}
+            selected = data.get("selected_job_ids", [])
+            if len(selected) != len(set(selected)) or not set(selected) <= set(project["job_ids"]):
+                raise ValueError("请选择当前工作区中的岗位，或取消对特定岗位的限定。")
             if question_id:
                 question = next((row for row in questions if row["id"] == question_id), None)
                 if not question:
@@ -1275,6 +1282,7 @@ class CareerService:
         question_id=None,
         requirement_key="",
         comparison_step_ids=None,
+        selected_job_ids=None,
         inherit_focus=True,
         autonomous=False,
     ):
@@ -1287,6 +1295,7 @@ class CareerService:
             ):
                 raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
             sources = None
+            source_job_ids = []
             if kind == "ask" and source_step_id:
                 sources = [
                     row for row in self.get(identity)["results"]
@@ -1296,6 +1305,7 @@ class CareerService:
                 if not source:
                     raise ValueError("这份分析已不是当前目标下的结果，请重新选择或直接提问。")
                 if inherit_focus and (not question_id or question_id == source.get("question_id")):
+                    source_job_ids = source.get("selected_job_ids", [])
                     question_ids = {row["id"] for row in project["career"].get("questions", [])}
                     task_ids = {row["id"] for row in project["career"]["tasks"]}
                     story_ids = {row["id"] for row in project["career"]["stories"]}
@@ -1814,6 +1824,20 @@ class CareerService:
                     "不能从业务/技术说明补造具体招聘资格或个人职责，也不能推定用户经历与能力。"
                     "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
                 )
+            if selected_job_ids is None:
+                selected_job_ids = (
+                    saved_question.get("selected_job_ids", source_job_ids) if question_id
+                    else source_job_ids
+                )
+            if (len(selected_job_ids) != len(set(selected_job_ids))
+                    or not set(selected_job_ids) <= set(project["job_ids"])):
+                raise ValueError("所选对照岗位不在当前工作区中，请重新选择或取消岗位限定。")
+            if selected_job_ids:
+                question += (
+                    "本轮只研究用户明确选中的岗位，范围以fixed_scope为准。"
+                    "逐侧引用各自原文，区别工作差异、要求性质与尚未说明；"
+                    "不能把工作区中未选入本轮的其他岗位当作这次对照的依据。"
+                )
             used = self.projects.usage(project)
             allow_public = bool(allow_public and not offline)
             if allow_public:
@@ -1901,6 +1925,8 @@ class CareerService:
                 completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
             )
             project["steps"][-1]["public_document_ids"] = documents
+            if selected_job_ids:
+                project["steps"][-1]["job_ids"] = selected_job_ids[:]
             project["steps"][-1]["career_omitted_documents"] = omitted
             if answer_record and not answer_document_id:
                 answer_label = "理解自测回答" if understanding_check else "模拟面试回答"
@@ -1956,6 +1982,7 @@ class CareerService:
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
+                    "selected_job_ids": selected_job_ids[:],
                     "autonomous_rounds": 3 if autonomous else 0,
                     "materials_only": not bool(project["job_ids"]),
                     "understanding_check": understanding_check,
@@ -2026,6 +2053,7 @@ class CareerService:
             prepared = self.prepare(
                 identity, "ask", question=proposal["question"], question_id=source["question_id"],
                 source_step_id=step["id"], section=source.get("section") or "requirements",
+                selected_job_ids=source.get("selected_job_ids", []),
                 allow_public=step["allow_public"],
             )
         except ValueError as exc:

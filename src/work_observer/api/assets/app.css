@@ -172,3 +172,5 @@
 .career-learning-changes ul{padding-left:20px;margin:8px 0}.career-understanding-journey .career-learning-changes li,.career-learning-changes li{padding:0;margin:8px 0;border:0;background:transparent}.career-understanding-journey>.section-heading{flex-wrap:wrap}.career-understanding-journey>.section-heading>.result-actions{flex-wrap:wrap}.career-learning-impact details p{white-space:pre-wrap;overflow-wrap:anywhere}
 
 @media(max-width:900px){.career-demo-banner nav{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:580px){.career-demo-banner nav{grid-template-columns:1fr}}
+.career-selected-job-focus{padding:14px 16px;background:#edf4e9;border-left:3px solid #9db48b;border-radius:8px;margin:14px 0}.career-selected-job-focus ul{margin:8px 0;padding-left:20px}.career-selected-job-focus li{overflow-wrap:anywhere;white-space:pre-wrap}
+.career-comparison-origin{margin:14px 0;padding:14px 16px;border:1px solid #ccd9c4;border-radius:8px;background:#edf4e9}

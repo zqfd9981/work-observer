@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -326,4 +326,44 @@ assert.ok(!impactExport.includes('<raw>')&&!impactExport.includes('data-career-a
 assert.equal(JSON.stringify(impactData),impactBefore);
 console.log('Understanding review: changed inputs, actual full-note reads, referenced followups, unchanged snapshots and complete safe export passed.');
 
+}
+
+{
+const pairIds=['job-b','job-a'];
+const scopedData={...inquiryData,jobs:[{id:'job-a',current:{title:'Job A <condition>',company_name_raw:'Team A'}},{id:'job-b',current:{title:'Job B',company_name_raw:'Team B'}},{id:'job-c',current:{title:'Unselected job'}}],questions:[{...question,selected_job_ids:pairIds}]};
+const scopedRow={...old,selected_job_ids:pairIds};
+const scopedFocus=ctx.window.journeyTest.discussionFocus(scopedRow,scopedData);
+assert.deepEqual(Array.from(scopedFocus.selected_job_ids),pairIds);
+ctx.window.journeyTest.setDraft(scopedData,{...scopedFocus,question:'Retain this question.'});
+const scopedPanel=ctx.window.journeyTest.inquiryPanel(scopedData);
+assert.ok(scopedPanel.includes('name="selected_job_ids"')&&scopedPanel.includes('data-career-clear-selected-jobs'));
+assert.ok(scopedPanel.includes('Job A &lt;condition&gt;')&&scopedPanel.includes('Retain this question.'));
+assert.ok(!scopedPanel.includes('Unselected job'));
+const fromLibrary=ctx.window.journeyTest.libraryInquiry({kind:'question',id:'q',title:'Saved pair',excerpt:'Unknown remains.'},scopedData);
+assert.deepEqual(Array.from(fromLibrary.selected_job_ids),pairIds);
+const scopeHtml=ctx.window.journeyTest.researchScope({...scopedRow,result:{scope:{jobs:[{id:'job-b',title:'Original Job B'}]}}},scopedData,true);
+assert.ok(scopeHtml.includes('Original Job B')&&!scopeHtml.includes('Job B · Team B'));
+assert.ok(scopeHtml.indexOf('Original Job B')<scopeHtml.indexOf('Job A &lt;condition&gt;'));
+assert.ok(!scopeHtml.includes('Unselected job'));
+const scopedExport=ctx.window.journeyTest.questionJourneyPackage(scopedData.questions[0],{...scopedData,results:[]});
+assert.ok(scopedExport.includes('Job A &lt;condition&gt;')&&scopedExport.includes('Job B'));
+assert.ok(!scopedExport.includes('data-career-clear-selected-jobs'));
+console.log('Selected job inquiry: exact pair, continued and library questions, historical names and standalone export passed.');
+}
+
+{
+const pairEvidence=[{id:'ev-a',job_id:'job-a',quote:'Original A condition.',title:'Raw A'},{id:'ev-b',job_id:'job-b',quote:'Original B condition.',title:'Raw B'}];
+const pairStudy=result('pair-study',stamp(2),{user_question:'Only this chosen study.',selected_job_ids:['job-b','job-a'],result:{status:'completed',claims:[{category:'task',basis:'direct',requirement:'unspecified',text:'Selected A task.',evidence_ids:['ev-a']},{category:'ability',basis:'direct',requirement:'preferred',text:'Selected B preferred condition.',evidence_ids:['ev-b']},{category:'task',basis:'inference',requirement:'unspecified',text:'A qualified comparison of both jobs.',evidence_ids:['ev-a','ev-b']}],evidence:pairEvidence,gaps:[]}});
+const comparisonData={...data,jobs:[{id:'job-a',current:{title:'A'}},{id:'job-b',current:{title:'B'}}],requirements:[{category:'task',text:'Different recent map.',basis:'direct',requirement:'unspecified',evidence:[pairEvidence[0]]}],results:[pairStudy]};
+ctx.window.journeyTest.setDraft(comparisonData,{compare_jobs:['job-b','job-a'],compare_step_id:'pair-study'});
+const pairBefore=JSON.stringify(comparisonData),comparison=ctx.window.journeyTest.jobComparison(comparisonData);
+assert.ok(comparison.includes('Only this chosen study.')&&comparison.includes('Selected B preferred condition.'));
+assert.ok(comparison.includes('Original A condition.')&&comparison.includes('Original B condition.'));
+assert.ok(comparison.includes('A qualified comparison of both jobs.')&&!comparison.includes('Different recent map.'));
+assert.ok(comparison.includes('data-career-clear-comparison-study'));
+const readOnlyScope=ctx.window.journeyTest.researchScope(pairStudy,comparisonData,true);
+assert.ok(!readOnlyScope.includes('data-career-job-comparison'));
+assert.ok(ctx.window.journeyTest.researchScope(pairStudy,comparisonData).includes('data-career-job-comparison'));
+assert.equal(JSON.stringify(comparisonData),pairBefore);
+console.log('Chosen study comparison: its own claims and complete evidence, preferred conditions, shared judgments and read-only export passed.');
 }
