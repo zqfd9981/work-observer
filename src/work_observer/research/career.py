@@ -2819,6 +2819,36 @@ class CareerService:
         )
         return {"experiment": result, "career": saved, "task_id": task_id}
 
+    def cohort_experiment(self, identity, *, groups, metric, conditions, data_kind,
+                          question_id=None, hypothesis="", save=False):
+        from work_observer.research.cohort_experiment import run_cohort_experiment
+
+        project = self._project(identity)
+        if question_id and not any(q["id"] == question_id
+                                   for q in project["career"].get("questions", [])):
+            raise ValueError("请选择这个目标中想验证的调查问题。")
+        result = run_cohort_experiment(groups=groups, metric=metric, conditions=conditions,
+                                       data_kind=data_kind)
+        if not save:
+            return {"experiment": result}
+        if any(step["state"] == "running" for step in project["steps"]):
+            raise ValueError("本轮研究结束后可保存指标记录；仍可先在本地计算。")
+        saved = self.add_experiment(identity, {
+            "title": "本地指标对照：总体与分群", "question_id": question_id,
+            "task_or_ability": "区分总体比率、分群比率与人群构成变化。",
+            "deliverable": "完整计数、分群与总体比率，以及固定A分群占比后的重算结果。",
+            "completion_check": "核对分母、指标口径与人群占比，不把比率对照当作因果验证。",
+            "hypothesis": hypothesis, "previous_task_id": None, "design_change": "",
+        })
+        task_id = saved["tasks"][-1]["id"]
+        saved = self.update_task(
+            identity, task_id, state="done", outcome=result["outcome"], artifact="",
+            artifact_title="本地分群指标对照 · 完整输入与本机计算结果",
+            artifact_text=result["artifact_text"], comparison_conditions=conditions,
+            comparison_rows=result["comparison_rows"],
+        )
+        return {"experiment": result, "career": saved, "task_id": task_id}
+
     def add_experiment(self, identity, data):
         with self.store.lock, self.store.db:
             project = self._project(identity)

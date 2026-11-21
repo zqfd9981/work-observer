@@ -7,6 +7,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 from work_observer.research.career import CareerService
+from work_observer.research.cohort_experiment import CohortCasesInput
 from work_observer.research.retry_experiment import RetryCasesInput
 
 
@@ -285,6 +286,12 @@ class ExperimentInput(BaseModel):
 
 
 class RetryExperimentInput(RetryCasesInput):
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    hypothesis: str = Field(default="", max_length=1500)
+    save: bool = False
+
+
+class CohortExperimentInput(CohortCasesInput):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     hypothesis: str = Field(default="", max_length=1500)
     save: bool = False
@@ -571,6 +578,13 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             201 if data.save else 200,
         )
 
+    async def cohort_experiment(request):
+        data = CohortExperimentInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().cohort_experiment(request.path_params["id"], **data.model_dump()),
+            201 if data.save else 200,
+        )
+
     async def update_task(request):
         data = TaskUpdate.model_validate(await read_json(request))
         if data.artifact_text.strip() and busy():
@@ -621,5 +635,6 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
         Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retry", retry_experiment, methods=["POST"]),
+        Route("/api/career/{id}/experiments/cohorts", cohort_experiment, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),
     ]

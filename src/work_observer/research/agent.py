@@ -16,6 +16,7 @@ from work_observer.config import validate_url
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
 from work_observer.research import requirements as qualification
+from work_observer.research.cohort_experiment import CohortProbeInput, run_cohort_experiment
 from work_observer.research.retry_experiment import RetryProbeInput, run_retry_experiment
 from work_observer.retrieval.catalog import Catalog, Filters
 from work_observer.text_match import match_text
@@ -227,6 +228,14 @@ EXTRA_TOOLS = [
     ),
 ]
 LEARNING_TOOLS = [
+    {
+        "type": "function", "name": "run_cohort_comparison", "strict": True,
+        "description": "先写可检验的预期，再给出1至6个分群的A/B总数与达到指标数。"
+        "在本机计算分群、总体比率及固定A分群占比后的B比率，检查总体与分群是否反向。"
+        "明确填写指标口径、条件和数据性质；构造样例标为synthetic。"
+        "不连接业务服务，不做显著性或因果验证，不保存练习，不提供原文证据ID。",
+        "parameters": CohortProbeInput.model_json_schema(),
+    },
     tool(
         "search_inquiries",
         "查找本目标保存的调查问题、结论、待补证据、两种解释及原文摘录标注；"
@@ -1598,6 +1607,11 @@ async def _research(
             "不得把模拟说成真实服务、并发测试、故障恢复、岗位权限或个人能力的验证。"
             "报告时把原文、运行前预期、本地观察和仍未知的条件分开；工具记录不是可引用原文。"
             "仍需读取当前原文，不能因跑了模拟就把调查标为已解决。"
+            "\n涉及产品或运营指标解释时，可用run_cohort_comparison检验具体计数下的判断。"
+            "先说明预期、指标口径和条件；自主构造的输入标为synthetic，不冒充真实业务数据。"
+            "比较总体、各分群和固定原占比后的结果；分母为0保留无法计算，不能补成0。"
+            "重算只说明这些计数的数学关系，不证明因果、统计显著性、产品改进或用户能力。"
+            "计算输出与原文证据分别陈述，仍需读取资料，不能把工具结果当作新增业务事实。"
             "\n需要找回以前研究过的问题或判断时，可search_research_history检索同一目标，"
             "再read_research_history读取完整旧判断、工作关系、末尾限定和未知。"
             "旧分析只是待重核的线索，不能用搜索预览替代全文，也不能当成本轮证据。"
@@ -1993,7 +2007,8 @@ async def _research(
                 elif name in {"search_learning_notes", "read_learning_note",
                               "search_inquiries", "read_inquiry",
                               "search_research_history", "read_research_history",
-                              "search_experiments", "read_experiments", "run_retry_experiment"}:
+                              "search_experiments", "read_experiments", "run_retry_experiment",
+                              "run_cohort_comparison"}:
                     if not learning_enabled:
                         raise ProbeError("RESEARCH_TOOL_DENIED")
                     learning = result.setdefault("career_learning_context", {})
@@ -2023,6 +2038,24 @@ async def _research(
                                 len(case.requests) for case in probe.cases
                             ))
                             learning.setdefault("local_experiments", []).append(data)
+                    elif name == "run_cohort_comparison":
+                        try:
+                            probe = CohortProbeInput.model_validate(arguments)
+                            observed = run_cohort_experiment(
+                                **probe.model_dump(exclude={"hypothesis"}),
+                            )
+                            data = {"hypothesis": probe.hypothesis,
+                                    **{key: value for key, value in observed.items()
+                                       if key not in {"comparison_rows", "artifact_text"}}}
+                        except ValidationError as exc:
+                            data = {"error": "INVALID_COHORT_EXPERIMENT_INPUT",
+                                    "notice": "未运行或保存实验，请在原预算内修正计数与条件。",
+                                    "details": exc.errors(include_url=False, include_input=False,
+                                                          include_context=False)}
+                            entry["validation"] = data["error"]
+                        else:
+                            entry.update(group_count=len(probe.groups), metric=probe.metric)
+                            learning.setdefault("cohort_experiments", []).append(data)
                     elif name == "search_inquiries" and set(arguments) == {"terms", "offset"}:
                         data = learning_notebook.search_inquiries(**arguments)
                         entry.update(terms=arguments["terms"], matched=data["matching_count"])

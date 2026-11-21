@@ -165,7 +165,7 @@ def test_agent_pages_and_reads_old_understanding_then_returns_to_original_source
         run_stage(client, identity, auth, "role")
         assert not {"search_learning_notes", "read_learning_note"} & model.toolsets[-1]
         assert not {"search_research_history", "read_research_history", "run_retry_experiment",
-                    "search_inquiries", "read_inquiry"} & (
+                    "search_inquiries", "read_inquiry", "run_cohort_comparison"} & (
             model.toolsets[-1]
         )
         assert "learning_notes" not in model.contexts[-1]["project_context"]["career_evidence"]
