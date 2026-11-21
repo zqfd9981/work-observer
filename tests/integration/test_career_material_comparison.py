@@ -116,7 +116,7 @@ def test_selected_materials_survive_catalog_limits_continuation_and_reopening(tm
             {"kind": "ask", "material_ids": [documents[0], documents[0]]},
             {"kind": "ask", "material_ids": documents + [foreign]},
             {"kind": "ask", "material_id": documents[0], "material_ids": documents[1:3]},
-            {"kind": "map", "material_ids": documents[:2]},
+            {"kind": "role", "material_ids": documents[:2]},
         ]:
             response = client.post(base + "/prepare", headers=auth,
                                    json={"question": "不应开始研究", **payload})

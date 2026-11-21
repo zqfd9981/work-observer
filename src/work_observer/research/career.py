@@ -1503,8 +1503,8 @@ class CareerService:
             raise ValueError("请选择一种研究方式。")
         material_focus_supplied = material_id is not None or material_ids is not None
         material_ids = list(material_ids or [])
-        if material_ids and (kind != "ask" or material_id):
-            raise ValueError("多份资料对读请直接提问，并取消单份重点资料。")
+        if material_ids and (kind not in {"ask", "map"} or material_id):
+            raise ValueError("所选资料可用于提问或工作地图，请取消单份重点资料。")
         if len(material_ids) > 6 or len(set(material_ids)) != len(material_ids):
             raise ValueError("每轮请选择最多6份不同的重点资料。")
         with self.store.lock, self.store.db:
@@ -1593,7 +1593,7 @@ class CareerService:
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
                 if kind == "reflect" or inherit_focus and kind in {"ask", "plan", "challenge"}:
                     question_id = question_id or task.get("question_id")
-            user_question = question.strip() if kind == "ask" else ""
+            user_question = question.strip() if kind in {"ask", "map"} else ""
             selected_requirement = None
             continued_requirement = None
             if kind == "evidence" or kind == "plan" and requirement_key:
@@ -1735,6 +1735,8 @@ class CareerService:
                 raise ValueError("这份资料已不在当前目标中，请重新选择或先加入资料。")
             if any(key not in (project.get("public_document_ids") or []) for key in material_ids):
                 raise ValueError("重点对读的资料中有已移出的原文，请重新加入或调整资料选择。")
+            if kind == "map" and set(material_ids) & personal_documents(project["career"]):
+                raise ValueError("工作地图请选择工作说明或调研资料；个人经历和实验可另行查证。")
             if sources is None and (
                 kind in {"answer", "followup", "ask"} or (kind == "plan" and source_step_id)
             ):
@@ -1941,6 +1943,17 @@ class CareerService:
                 question = (MATERIAL_QUESTIONS.get(kind) if not project["job_ids"] else None) or (
                     QUESTIONS[kind]
                 )
+                if kind == "map":
+                    if user_question:
+                        question += "\n本次最想看清的工作关系：\n" + user_question
+                    if material_ids:
+                        question += (
+                            "\n用户选定的重点原文见career_evidence.selected_materials。逐份读取正文与限定，"
+                            "按各自工作线连接任务与交付物，再比较共同点、差异及迁移前提。"
+                            "同一资料的不同工作线分别保留，不能把一侧任务接到另一侧交付物上，"
+                            "也不能只因工具相同就合并职责。未说明的责任和无法连接之处保留未知。"
+                            "用户笔记仍是用户提供的资料，不是独立验证或个人能力证明。"
+                        )
                 reply = None
             if understanding_check and kind == "answer":
                 question = (
@@ -2346,7 +2359,7 @@ class CareerService:
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
-                    "material_ids": material_ids if kind == "ask" else [],
+                    "material_ids": material_ids if kind in {"ask", "map"} else [],
                     "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "counter_insight_id": counter_insight_id,
@@ -2396,7 +2409,7 @@ class CareerService:
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
-            if kind == "ask" and material_ids:
+            if kind in {"ask", "map"} and material_ids:
                 project["steps"][-1]["career_material_ids"] = material_ids[:]
             if story_id and kind in {"pitch", "ask"} | interview_kinds:
                 project["steps"][-1]["career_story_id"] = story_id

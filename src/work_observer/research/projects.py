@@ -1948,6 +1948,7 @@ class ProjectService:
                 context["career_evidence"] = {
                     "public_research_policy": context["career_evidence"]["public_research_policy"],
                     "selected_material": None,
+                    "selected_materials": context["career_evidence"]["selected_materials"],
                     "notice": "本轮只理解岗位工作。个人简历、经历、练习和认识不作为岗位要求依据。",
                 }
         return context
