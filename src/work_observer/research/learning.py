@@ -317,6 +317,12 @@ def recall_learning_notes(career, step, goal, *, limit=3):
     runs = {row["step_id"]: row for row in career.get("runs", [])}
     entry = runs.get(step["id"], {})
     previous = runs.get(entry.get("source_step_id"), {})
+    source_steps = set()
+    source = entry.get("source_step_id")
+    while source and source not in source_steps:
+        source_steps.add(source)
+        source = runs.get(source, {}).get("source_step_id")
+    notes_by_id = {note["id"]: note for note in career.get("insights", [])}
     inquiry_id, task_id = step.get("career_question_id"), step.get("career_task_id")
     inquiry = next((row for row in career.get("questions", []) if row["id"] == inquiry_id), {})
     task = next((row for row in career.get("tasks", []) if row["id"] == task_id), {})
@@ -357,13 +363,22 @@ def recall_learning_notes(career, step, goal, *, limit=3):
             and inquiry_id in {link["question_id"] for link in learning_inquiry_links(career, note)}
         )
         revision = note["id"] in family and note["id"] != selected_note.get("id")
+        origin, visited, source_linked = note, set(), False
+        while origin and origin["id"] not in visited:
+            visited.add(origin["id"])
+            if origin.get("source_step_id") in source_steps:
+                source_linked = True
+                break
+            origin = notes_by_id.get(origin.get("replaces_insight_id"))
         text = "\n".join(
             note.get(key, "")
             for key in ("previous_view", "observation", "current_view", "open_question")
         )
         matches = sorted(query_tokens & _tokens(text))
         reason = (
-            "belief_revision"
+            "same_discussion"
+            if source_linked
+            else "belief_revision"
             if revision
             else "same_inquiry_or_experiment"
             if linked
@@ -373,7 +388,7 @@ def recall_learning_notes(career, step, goal, *, limit=3):
         )
         ranked.append(
             (
-                linked or revision,
+                2 if source_linked else int(linked or revision),
                 len(matches),
                 note.get("updated_at") or note["created_at"],
                 index,

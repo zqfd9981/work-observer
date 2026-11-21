@@ -277,3 +277,5 @@
 @media(max-width:650px){.career-retry-input-hint{display:block}}
 
 .career-local-experiments{padding:16px;border:1px solid var(--line);border-radius:10px;background:#fafbf7;margin:18px 0}.career-local-experiments>summary{font-weight:700;cursor:pointer}.career-local-probe{border-top:1px solid var(--line);padding-top:16px;margin-top:18px}.career-local-prediction{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}.career-local-probe>p{line-height:1.8}.career-local-probe>details{margin:16px 0}
+
+.career-claim-note-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.career-claim-note-actions .text-button{white-space:normal;text-align:left}

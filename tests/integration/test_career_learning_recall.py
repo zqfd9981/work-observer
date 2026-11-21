@@ -213,3 +213,28 @@ def test_recheck_follows_multiple_corrections_and_keeps_parallel_active_views():
     assert {row["id"] for row in selected} == {"current", "parallel"}
     assert all(row["reason"] == "belief_revision" for row in recalled["selections"])
     assert not notes[0]["use_for_research"] and not notes[1]["use_for_research"]
+
+
+def test_continued_discussion_recalls_its_correction_before_unrelated_keyword_matches():
+    def note(identity, view, **extra):
+        return {"id": identity, "created_at": identity, "previous_view": "",
+                "observation": "", "current_view": view, "open_question": "", **extra}
+
+    notes = [
+        note("01", "验收权已明确。", source_step_id="origin", use_for_research=False),
+        note("02", "验收权仍未知。", replaces_insight_id="01"),
+        *[note(str(index), "接口工作。") for index in range(10, 16)],
+    ]
+    career = {"insights": notes, "runs": [
+        {"step_id": "origin", "user_question": "接口工作"},
+        {"step_id": "reply", "source_step_id": "origin", "user_question": "接口工作"},
+        {"step_id": "now", "source_step_id": "reply", "user_question": "再继续"},
+        {"step_id": "another", "user_question": "接口工作"},
+    ]}
+    selected, recall = recall_learning_notes(career, {"id": "now"}, "理解接口工作")
+    assert selected[0]["id"] == "02"
+    assert recall["selections"][0]["reason"] == "same_discussion"
+    assert "01" not in {row["id"] for row in selected}
+    unrelated, _ = recall_learning_notes(career, {"id": "another"}, "理解接口工作")
+    assert "02" not in {row["id"] for row in unrelated}
+    assert notes[0]["use_for_research"] is False
