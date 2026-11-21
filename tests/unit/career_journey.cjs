@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -264,3 +264,21 @@ const pairPitch=ctx.window.journeyTest.investigationPitchDraft(pairQuestion,pair
 assert.ok(pairPitch.text.includes(pairQuestion.hypothesis_a)&&pairPitch.text.includes(pairQuestion.hypothesis_b));
 assert.equal(ctx.window.journeyTest.questionHypotheses(question),'');
 console.log('Competing inquiry explanations: full conditions, historical comparison, planned work and exported presentation passed.');
+
+const originQuote='<source>Repeated passage with final qualification.</source>';
+const passage={public_document_id:'origin-doc',start:51,end:51+Array.from(originQuote).length,title:'Exact saved material',quote:originQuote,evidence_kind:'work_material'};
+const passageQuestion={...question,source_passage:passage};
+const passageData={...data,document_ids:[]};
+const originMarkup=ctx.window.journeyTest.passageOrigin(passageQuestion,passageData);
+assert.ok(originMarkup.includes('&lt;source&gt;')&&!originMarkup.includes('<source>Repeated'));
+assert.ok(originMarkup.includes('尚未选入')&&originMarkup.includes('data-career-attach-material="origin-doc"'));
+assert.equal(readerFocus(originMarkup).start,51);
+const passageExport=ctx.window.journeyTest.questionJourneyPackage(passageQuestion,passageData);
+assert.ok(passageExport.includes('Exact saved material')&&passageExport.includes('&lt;source&gt;'));
+assert.ok(!passageExport.includes('data-career-attach-material'));
+assert.deepEqual(Object.keys(ctx.window.journeyTest.passageReference(passage)).sort(),['end','public_document_id','start']);
+const crlf=String.fromCharCode(13,10),canonical='🙂'+crlf+'same'+crlf+'same';
+const selected=ctx.sourceSelectionOffsets(canonical,7,11);
+assert.equal(Array.from(canonical).slice(selected.start,selected.end).join(''),'same');
+assert.equal(selected.start,9);
+console.log('Original passage inquiry: exact repeated-text positions, Unicode and CRLF, readable origin and source-aware export passed.');

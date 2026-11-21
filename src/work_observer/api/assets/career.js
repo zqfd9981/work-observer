@@ -450,10 +450,26 @@
     const question=prefix+prompt.question;
     return {question:question.length<=1500?question:prefix+"请回查源地图里的完整内容、理由、适用条件和未知，查找支持、反例及替代解释，再说明怎样做一次最小验证；不以标题或节选代替完整限定。",why_matters:"这项解释会影响我如何理解工作及安排验证；当前仍需回查原文。",next_evidence:section==="boundary"?row.result.work_map.work_types[index].next_check:"回读原文，核对适用条件，并寻找能够区分原解释与替代解释的观察。"};
   }
+  function passageReference(passage){
+    return Object.fromEntries(["public_document_id","document_id","snapshot_id","start","end"].filter(key=>passage[key]!=null).map(key=>[key,passage[key]]));
+  }
+  function passageOrigin(question,data,exporting=false){
+    const passage=question.source_passage;if(!passage)return "";
+    const attached=passage.public_document_id?(data.document_ids||[]).includes(passage.public_document_id):data.jobs.some(row=>row.id===passage.job_id);
+    return `<details class="career-question-passage" ${exporting||!question.id?"open":""}><summary>问题从哪段原文而来</summary><p class="form-note">${e(passage.title)} · 原文位置 ${e(passage.start)}–${e(passage.end)}${passage.evidence_kind==="search_answer"||passage.evidence_kind==="search_excerpt"?" · 搜索线索，尚未核网页正文":""}</p><blockquote>${e(passage.quote)}</blockquote><p class="form-note">这是建立问题时保留的摘录，仍需结合原文前后条件核对。${attached?"后续调查按本轮可读资料重核。":"原资料尚未选入当前目标，后续研究可能无法重核。"}</p>${exporting?"":sourceContextButton(passage,"回到这段原文与上下文 ↗")}${!attached&&passage.public_document_id&&!exporting?`<button type="button" class="text-button" data-career-attach-material="${e(passage.public_document_id)}">把原资料用于后续调查</button>`:""}</details>`;
+  }
+  window.addEventListener("work-observer:passage-question",event=>{
+    if(!career.id||location.hash.split("/")[0]!=="#career"||!career.data)return;
+    if(storyDraft().question_editor){notify("已有未保存的调查问题，请先保存或取消；原文仍留在阅读器中。");return;}
+    captureDrafts();const passage=event.detail;career.tab="requirements";
+    for(const id of ["source-dialog","detail-dialog"]){const dialog=$("#"+id);if(dialog?.open)dialog.close();}
+    startQuestion(null,"这段资料说明了什么，又有哪些适用条件和未说明的部分？",null,{source_passage:passage});
+  });
   function questionOrigin(question,data,exporting=false){
+    const passage=passageOrigin(question,data,exporting);
     const row=data.results.find(row=>row.step_id===question.source_step_id);
-    if(row?.result?.status!=="completed"||!row.result.work_map)return "";
-    return `<details class="career-question-origin"><summary>问题起点：完整工作地图与原文依据</summary><p class="form-note">${e(when(row.created_at))} · 原研究解释，需按当前材料重新核对。${row.current===false?"来自当时资料或背景，不代表当前结论。":""}</p>${comparisonWorkMap(row,!exporting)}</details>`;
+    if(row?.result?.status!=="completed"||!row.result.work_map)return passage;
+    return passage+`<details class="career-question-origin"><summary>问题起点：完整工作地图与原文依据</summary><p class="form-note">${e(when(row.created_at))} · 原研究解释，需按当前材料重新核对。${row.current===false?"来自当时资料或背景，不代表当前结论。":""}</p>${comparisonWorkMap(row,!exporting)}</details>`;
   }
   const questionResearches=(question,data)=>data.results.filter(row=>row.question_id===question.id&&row.result?.status==="completed"&&row.state!=="abandoned");
   function questionAnswer(question,data,exporting=false){
@@ -532,7 +548,7 @@
   function questionJourney(question,data,exporting=false){
     const records=questionJourneyRecords(question,data),link=(kind,id,text)=>exporting?"":`<a class="text-button" href="#career/${e(data.id)}/${kind}/${e(id)}">${text} ↗</a>`;
     const paragraph=(label,value)=>value?`<p><strong>${label}：</strong>${e(value)}</p>`:"";
-    const events=[{id:question.id,kind:"question",created_at:question.created_at,updated_at:question.updated_at,title:"提出问题",body:paragraph("想弄清",question.question)+paragraph("为什么值得查",question.why_matters)+questionHypotheses(question,true)+(question.source_step_id?link("discussion",question.source_step_id,"回到问题由来的讨论"):"")+(exporting?carriedUnderstanding(question,true):question.reused_from?paragraph("问题起点","从「"+question.reused_from.project_title+"」带来，原理解仍待当前岗位资料检验。"):"")}];
+    const events=[{id:question.id,kind:"question",created_at:question.created_at,updated_at:question.updated_at,title:"提出问题",body:paragraph("想弄清",question.question)+paragraph("为什么值得查",question.why_matters)+passageOrigin(question,data,exporting)+questionHypotheses(question,true)+(question.source_step_id?link("discussion",question.source_step_id,"回到问题由来的讨论"):"")+(exporting?carriedUnderstanding(question,true):question.reused_from?paragraph("问题起点","从「"+question.reused_from.project_title+"」带来，原理解仍待当前岗位资料检验。"):"")}];
     const origin=data.results.find(row=>row.step_id===question.source_step_id);
     if(origin?.result?.status==="completed"&&!records.studies.some(row=>row.step_id===origin.step_id))events[0].body+=`<details><summary>问题形成时的原分析与引用</summary>${comparisonColumn(origin,!exporting)}</details>`;
     for(const row of records.studies){
@@ -881,7 +897,7 @@
     try{
       if(form.id==="career-library-form")await searchLibrary();
       else if(form.id==="career-proof-editor"){const values=Object.fromEntries(new FormData(form)),records=[0,1,2].map(index=>values["record_"+index]).filter(Boolean).map(value=>{const [kind,id]=value.split(":");return {kind,id};});const id=career.id,updated=await api("career/"+id+"/requirement-evidence",{method:"POST",body:JSON.stringify({requirement_key:values.requirement_key,records,relevance:values.relevance,missing:values.missing})});if(career.id===id){captureDrafts();career.data=updated;delete storyDraft().proof;renderDetail();}notify("证据对照已保存；相关性、实际结果和适用边界仍需回查材料。");}
-      else if(form.id==="career-question-editor"){const data=Object.fromEntries(new FormData(form));data.source_step_id=data.source_step_id||null;data.conclusion_step_id=data.conclusion_step_id||null;const id=career.id,questionId=storyDraft().question_editor.id,updated=await api("career/"+id+"/questions"+(questionId?"/"+questionId:""),{method:questionId?"PATCH":"POST",body:JSON.stringify(data)});if(career.id===id){captureDrafts();career.data=updated;delete storyDraft().question_editor;renderDetail();await loadGoals();}notify("问题与调查记录已保存，可以带着新材料继续研究。");}
+      else if(form.id==="career-question-editor"){const data=Object.fromEntries(new FormData(form));const origin=storyDraft().question_editor;if(!origin.id&&origin.source_passage)data.source_passage=passageReference(origin.source_passage);data.source_step_id=data.source_step_id||null;data.conclusion_step_id=data.conclusion_step_id||null;const id=career.id,questionId=storyDraft().question_editor.id,updated=await api("career/"+id+"/questions"+(questionId?"/"+questionId:""),{method:questionId?"PATCH":"POST",body:JSON.stringify(data)});if(career.id===id){captureDrafts();career.data=updated;delete storyDraft().question_editor;renderDetail();await loadGoals();}notify("问题与调查记录已保存，可以带着新材料继续研究。");}
       else if(form.id==="career-pitch-form"){const data=Object.fromEntries(new FormData(form));if(data.text.length>2500)throw new Error("请将讲述精简至2500字以内，保留关键事实与边界。");data.story_id=data.story_id||null;data.source_step_id=data.source_step_id||null;data.question_id=data.question_id||null;const id=career.id,pitchId=storyDraft().pitch.id,updated=await api("career/"+id+"/pitches"+(pitchId?"/"+pitchId:""),{method:pitchId?"PATCH":"POST",body:JSON.stringify(data)});if(career.id===id){career.data=updated;delete storyDraft().pitch;renderDetail();}notify("讲述卡已保存，后续面试练习可继续使用。");}
       else if(form.id==="career-material-form"){const values=Object.fromEntries(new FormData(form));if(values.material_text.length>20000)throw new Error("请把工作资料精简到2万字以内再保存。");const id=career.id,updated=await api("career/"+id+"/materials",{method:"POST",body:JSON.stringify({title:values.material_title,text:values.material_text,source_name:values.source_name})});if(career.id===id){captureDrafts();career.data=updated;delete storyDraft().material;renderDetail();}notify("资料已保存并加入当前目标，保存没有调用模型。");}
       else if(form.id==="career-story"){const storyId=storyDraft().story_id;career.data=await api(apiPath()+"/stories"+(storyId?"/"+encodeURIComponent(storyId):""),{method:storyId?"PATCH":"POST",body:JSON.stringify(Object.fromEntries(new FormData(form)))});resetStoryEditor();renderDetail();await loadGoals();notify("经历已保存，后续分析和面试可引用。");}

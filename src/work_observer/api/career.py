@@ -103,6 +103,15 @@ class RequirementEvidenceInput(BaseModel):
     missing: str = Field(default="", max_length=1500)
 
 
+class SourcePassageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    public_document_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    document_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    snapshot_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    start: int = Field(strict=True, ge=0)
+    end: int = Field(strict=True, ge=1)
+
+
 class ResearchQuestionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     question: str = Field(min_length=1, max_length=1500)
@@ -114,6 +123,7 @@ class ResearchQuestionInput(BaseModel):
     conclusion: str = Field(default="", max_length=2000)
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     conclusion_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_passage: SourcePassageInput | None = None
 
 
 class CareerFocusInput(BaseModel):
@@ -303,9 +313,12 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
 
     async def question(request):
         data = ResearchQuestionInput.model_validate(await read_json(request))
+        values = data.model_dump(exclude={"source_passage"})
+        if data.source_passage:
+            values["source_passage"] = data.source_passage.model_dump(exclude_none=True)
         return change(
             lambda: service().save_question(
-                request.path_params["id"], data.model_dump(), request.path_params.get("question_id")
+                request.path_params["id"], values, request.path_params.get("question_id")
             ),
             200 if request.path_params.get("question_id") else 201,
         )

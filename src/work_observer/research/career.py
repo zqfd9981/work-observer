@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_observer.collection.contracts import now
+from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.connectors.public_documents import PublicDocumentService
 from work_observer.connectors.public_models import PublicDocument
 from work_observer.memory.service import MemoryService, _tokens
@@ -17,6 +18,7 @@ from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.archived_sources import catalog as archive_catalog
 from work_observer.research.projects import ProjectService, step_continuation
+from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.text_match import match_text
 
@@ -428,6 +430,7 @@ class CareerService:
                 )
             for row in career.get("questions", []):
                 carried = row.get("carried_understanding") or {}
+                passage = row.get("source_passage") or {}
                 add(
                     owner,
                     "question",
@@ -443,7 +446,8 @@ class CareerService:
                     + "\n".join(
                         carried.get(key, "")
                         for key in ("understanding", "observation", "previous_view")
-                    ),
+                    )
+                    + "\n" + passage.get("title", "") + "\n" + passage.get("quote", ""),
                     "requirements",
                     step_id=row.get("conclusion_step_id") or row.get("source_step_id"),
                 )
@@ -1112,11 +1116,43 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def _source_passage(self, reference):
+        public_id, document_id = reference.get("public_document_id"), reference.get("document_id")
+        if bool(public_id) == bool(document_id):
+            raise ValueError("请选择一份已保存的正文，再选取原文段落。")
+        try:
+            if public_id:
+                if reference.get("snapshot_id"):
+                    raise ValueError("请按所选资料的原文位置创建问题。")
+                documents = PublicDocumentService(self.repository, self.raw_directory / "public")
+                source = documents.document(public_id)
+                text, title = source["text"], source["title"]
+                metadata = {"evidence_kind": source["evidence_kind"]}
+            else:
+                source = Catalog(self.repository).document(document_id)
+                version = next((row for row in source["versions"]
+                                if row["snapshot_id"] == reference.get("snapshot_id")), None)
+                if not version or version["kind"] != "detail":
+                    raise ValueError("请选择这份岗位的完整正文，不使用列表摘要创建原文问题。")
+                text, title = version["payload"].get("description", ""), version["payload"]["title"]
+                metadata = {"job_id": version["job_id"], "evidence_kind": "job_description"}
+        except ProbeError as error:
+            raise ValueError("未找到这份原文，请重新打开已保存的资料。") from error
+        if source["integrity"] != "verified":
+            raise ValueError("这份原文已无法读取，请先重新核对来源。")
+        start, end = reference["start"], reference["end"]
+        if not 0 <= start < end <= len(text) or end - start > 2000:
+            raise ValueError("请从正文中选取1至2000字的连续段落，保留关键条件。")
+        return {**reference, **metadata, "title": title, "quote": text[start:end],
+                "recorded_at": now()}
+
     def save_question(self, identity, data, question_id=None):
         if data["state"] == "answered" and not data["conclusion"].strip():
             raise ValueError("请先写下目前弄清了什么、依据和仍有的限制，再标记为已记结论。")
         with self.store.lock, self.store.db:
             project = self._project(identity)
+            if data.get("source_passage"):
+                data = {**data, "source_passage": self._source_passage(data["source_passage"])}
             questions = project["career"].setdefault("questions", [])
             runs = {row["step_id"]: row for row in project["career"]["runs"]}
             for key in ("source_step_id", "conclusion_step_id"):
@@ -1663,6 +1699,12 @@ class CareerService:
                     "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
                     "不因为本轮生成回答而宣称问题已解决。"
                 )
+                if saved_question.get("source_passage"):
+                    question += (
+                        "selected_inquiry.source_passage是问题起点的原文摘录与位置，"
+                        "先从本轮目录读取对应原文及前后条件，不能把摘录当作已经核对全文。"
+                        "若原资料不在本轮可读范围，明确无法重核，不自动恢复资料、不用旧摘录冒充新引用。"
+                    )
                 if saved_question.get("hypothesis_a") or saved_question.get("hypothesis_b"):
                     question += (
                         "selected_inquiry.hypothesis_a与hypothesis_b是用户保留的待验证解释，"
@@ -1755,6 +1797,10 @@ class CareerService:
             topic.extend((chosen_task.get("title"), chosen_task.get("task_or_ability")))
             if question_id:
                 topic.append(saved_question["question"])
+                passage = saved_question.get("source_passage") or {}
+                if passage.get("public_document_id") in project["public_document_ids"]:
+                    preferred.append(passage["public_document_id"])
+                topic.append(passage.get("quote", ""))
                 preferred.extend(row.get("artifact_document_id") for row in [
                     item for item in project["career"]["tasks"]
                     if item.get("question_id") == question_id
