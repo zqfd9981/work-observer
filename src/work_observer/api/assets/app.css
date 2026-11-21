@@ -281,6 +281,8 @@
 
 .career-claim-note-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.career-claim-note-actions .text-button{white-space:normal;text-align:left}
 
+.career-inquiry-recall{margin:18px 0;padding:18px;border:1px solid var(--line);border-radius:10px;background:#f8faf5}.career-inquiry-recall>summary{font-weight:600}.career-inquiry-recall>article{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}.career-inquiry-recall p,.career-inquiry-recall blockquote{white-space:pre-wrap;overflow-wrap:anywhere}.career-inquiry-recall-passage{padding:14px;background:var(--paper);border-radius:8px;margin:14px 0}.career-inquiry-recall-passage h5{margin:0 0 8px}
+
 .career-answer-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:18px 0;align-items:start}.career-answer-comparison-column{padding:20px;min-width:0;overflow-wrap:anywhere}.career-answer-comparison-column .career-attempt-text{white-space:pre-wrap;color:var(--ink);padding:14px;background:var(--green-soft);border-radius:8px}.career-answer-comparison-column details{margin-top:18px}.career-answer-comparison-column .career-research-column{padding:0;border:0}.career-answer-history{margin:20px 0}.career-answer-history>.career-attempt{margin:12px 0}.career-answer-history .career-answer-comparison-column{border:0;padding:16px 0 0}.career-interview-replay>.result-actions{flex-wrap:wrap}
 @media(max-width:800px){.career-answer-comparison{grid-template-columns:minmax(0,1fr)}.career-answer-comparison-column{padding:16px}}
 .career-investigation{display:grid;gap:20px;min-width:0}

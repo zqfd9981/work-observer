@@ -227,6 +227,20 @@ EXTRA_TOOLS = [
     ),
 ]
 LEARNING_TOOLS = [
+    tool(
+        "search_inquiries",
+        "查找本目标保存的调查问题、结论、待补证据、两种解释及原文摘录标注；"
+        "包括还没开展研究的问题。关键词任一命中，空列表看目录，每页6条。",
+        {"terms": {"type": "array", "items": {"type": "string", "maxLength": 100},
+                   "maxItems": 10}, "offset": {"type": "integer", "minimum": 0}},
+        ["terms", "offset"],
+    ),
+    tool(
+        "read_inquiry",
+        "按question_id读取一条完整调查记录、原解释、用户标注和原文位置。"
+        "读取不改变焦点与状态，用户标注不是已验证事实，仍须回读原文。",
+        {"question_id": {"type": "string"}}, ["question_id"],
+    ),
     {
         "type": "function", "name": "run_retry_experiment", "strict": True,
         "description": "先写一句待检验的预期，再给出最多6组、合计20条请求输入。"
@@ -1588,6 +1602,11 @@ async def _research(
             "再read_research_history读取完整旧判断、工作关系、末尾限定和未知。"
             "旧分析只是待重核的线索，不能用搜索预览替代全文，也不能当成本轮证据。"
             "按source_references_to_reread回读当前可用原文，范围外资料保留无法核对。"
+            "尚未开过研究的问题、用户收集的反例与待补证据也能帮助确定调查方向："
+            "用search_inquiries按问题、解释或摘录标注查找，再read_inquiry读完整记录。"
+            "两种解释、用户结论和摘录标注都只是待核判断；先读对应原文上下文，"
+            "再判断它是否支持、挑战或只补充条件，不把用户的challenges标注当作已证伪。"
+            "暂不研究的问题可供回看，但本轮仍回答当前问题，不自动恢复旧调查或改变焦点。"
             "\n需要开头未带入的个人认识时，可search_learning_notes查目录或关键词，"
             "再read_learning_note读完整原话、观察与末尾限制；可沿replaces_insight_id重查开放的旧记录。"
             "这些是用户理解，不是原文证据，不能把认识ID当作引用，也不能因读取而宣布它已证实或恢复选用。"
@@ -1972,6 +1991,7 @@ async def _research(
                         }
                     queried = True
                 elif name in {"search_learning_notes", "read_learning_note",
+                              "search_inquiries", "read_inquiry",
                               "search_research_history", "read_research_history",
                               "search_experiments", "read_experiments", "run_retry_experiment"}:
                     if not learning_enabled:
@@ -2003,6 +2023,26 @@ async def _research(
                                 len(case.requests) for case in probe.cases
                             ))
                             learning.setdefault("local_experiments", []).append(data)
+                    elif name == "search_inquiries" and set(arguments) == {"terms", "offset"}:
+                        data = learning_notebook.search_inquiries(**arguments)
+                        entry.update(terms=arguments["terms"], matched=data["matching_count"])
+                        learning.setdefault("inquiry_searches", []).append({
+                            **arguments, "matching_count": data["matching_count"],
+                            "returned_question_ids": [row["id"] for row in data["inquiries"]],
+                        })
+                    elif name == "read_inquiry" and set(arguments) == {"question_id"}:
+                        data = learning_notebook.read_inquiry(arguments["question_id"])
+                        inquiry = data["inquiry"]
+                        for reference in [inquiry.get("source_passage"),
+                                          *inquiry["evidence_passages"]]:
+                            if reference:
+                                reference["in_current_scope"] = (
+                                    reference.get("public_document_id")
+                                    in scope.get("archived_public_ids", [])
+                                    or reference.get("job_id") in candidates
+                                )
+                        entry["question_id"] = arguments["question_id"]
+                        learning.setdefault("read_inquiries", []).append(inquiry)
                     elif name == "search_research_history" and set(arguments) == {
                         "terms", "offset",
                     }:

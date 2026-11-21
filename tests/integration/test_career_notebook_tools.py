@@ -164,7 +164,8 @@ def test_agent_pages_and_reads_old_understanding_then_returns_to_original_source
         assert client.get(base).json()["insights"] == notes_before
         run_stage(client, identity, auth, "role")
         assert not {"search_learning_notes", "read_learning_note"} & model.toolsets[-1]
-        assert not {"search_research_history", "read_research_history", "run_retry_experiment"} & (
+        assert not {"search_research_history", "read_research_history", "run_retry_experiment",
+                    "search_inquiries", "read_inquiry"} & (
             model.toolsets[-1]
         )
         assert "learning_notes" not in model.contexts[-1]["project_context"]["career_evidence"]

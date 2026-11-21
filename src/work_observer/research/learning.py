@@ -173,6 +173,77 @@ class LearningNotebook:
             "预期与计划不等于实际观察；用read_experiments读取完整设计、观察和产物定位。",
         }
 
+    def search_inquiries(self, terms, offset=0):
+        if terms != []:
+            terms = validated_terms(terms)
+        if type(offset) is not int or offset < 0:
+            raise ProbeError("INVALID_INQUIRY_OFFSET")
+        ranked = []
+        for row in self.project_reader().get("career", {}).get("questions", []):
+            fields = {key: row.get(key, "") for key in (
+                "question", "why_matters", "next_evidence", "conclusion",
+                "hypothesis_a", "hypothesis_b",
+            )}
+            for index, passage in enumerate([
+                row.get("source_passage"), *row.get("evidence_passages", []),
+            ]):
+                if passage:
+                    fields[f"passage_{index}"] = "\n".join(passage.get(key, "") for key in (
+                        "title", "quote", "user_note", "target_view",
+                    ))
+            hits = [term for term in terms
+                    if any(match_text(term) in match_text(value) for value in fields.values())]
+            if terms and not hits:
+                continue
+            ranked.append((len(hits), row.get("updated_at") or row["created_at"], row["id"], {
+                "id": row["id"], "question_preview": row["question"][:160],
+                "preview_is_partial": len(row["question"]) > 160,
+                "state": row["state"], "parent_question_id": row.get("parent_question_id"),
+                "evidence_passage_count": len(row.get("evidence_passages", [])),
+                "recorded_at": row.get("updated_at") or row["created_at"],
+                "matched_terms": hits,
+                "matched_fields": [key for key, value in fields.items()
+                                   if any(match_text(term) in match_text(value) for term in terms)],
+            }))
+        ranked.sort(key=lambda row: row[:3], reverse=True)
+        page = ranked[offset:offset + 6]
+        return {
+            "inquiries": [row[3] for row in page], "matching_count": len(ranked),
+            "offset": offset,
+            "next_offset": offset + len(page) if offset + len(page) < len(ranked) else None,
+            "notice": "本目标保存的调查问题目录，包括尚未研究和暂不研究的记录。"
+            "关键词也检索摘录与用户标注；预览不是全文或原文证据，用read_inquiry读取。"
+            "状态只代表用户整理方式，读取不会改变研究焦点或恢复暂不研究的问题。",
+        }
+
+    def read_inquiry(self, question_id):
+        project = self.project_reader()
+        career = project.get("career", {})
+        row = next((row for row in career.get("questions", [])
+                    if row["id"] == question_id), None)
+        if row is None:
+            raise ProbeError("INQUIRY_NOT_AVAILABLE")
+        record = {key: deepcopy(row.get(key)) for key in (
+            "id", "question", "why_matters", "next_evidence", "state", "conclusion",
+            "hypothesis_a", "hypothesis_b", "parent_question_id", "source_step_id",
+            "conclusion_step_id", "source_passage", "evidence_passages", "material_ids",
+            "selected_job_ids", "carried_understanding", "reused_from", "created_at", "updated_at",
+        )}
+        record["evidence_passages"] = record["evidence_passages"] or []
+        record["child_question_ids"] = [item["id"] for item in career.get("questions", [])
+                                        if item.get("parent_question_id") == question_id]
+        record["linked_experiment_ids"] = [item["id"] for item in career.get("tasks", [])
+                                           if item.get("question_id") == question_id]
+        record["linked_research_step_ids"] = [item["step_id"] for item in career.get("runs", [])
+                                               if item.get("question_id") == question_id]
+        return {
+            "inquiry": record,
+            "notice": "本次读取时的完整用户调查记录，包括两种解释、原文摘录及标注。"
+            "用户结论和supports/challenges/conditions标注均是待核判断，不代表原文已经支持或推翻解释。"
+            "摘录不能代替上下文；按正文定位读取本轮可用原文，再引用本轮证据ID。"
+            "保留旧原句、反例和限制，不自动恢复已移出资料，不修改问题、焦点或研究状态。",
+        }
+
     def read_experiments(self, experiment_ids):
         if (not isinstance(experiment_ids, list) or not 1 <= len(experiment_ids) <= 6
                 or any(not isinstance(key, str) for key in experiment_ids)
