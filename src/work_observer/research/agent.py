@@ -1118,9 +1118,12 @@ async def _research(
         if public_document_ids is not None:
             archived_public_ids = public_document_ids
             archived_public_total = len(public_document_ids)
-        if learning_enabled:
+        source_library = (conversation_context or {}).get("career_evidence", {}).get(
+            "source_document_ids", []
+        )
+        if source_library:
             archived_public_ids = list(dict.fromkeys([
-                *archived_public_ids, *learning_notebook.source_document_ids(),
+                *archived_public_ids, *source_library,
             ]))
             archived_public_total = max(archived_public_total, len(archived_public_ids))
         work_material_ids = [
@@ -1821,7 +1824,8 @@ async def _research(
                     + ([BATCH_JOB_TOOL] if batch_jobs_enabled else [])
                     + (LEARNING_TOOLS if learning_enabled else [])
                     + ([archive_history.TOOL] if archive_enabled else [])
-                    + ([archived_reads.TOOL] if archived_read_enabled else [])
+                    + ([archived_reads.TOOL, archived_reads.CATALOG_TOOL]
+                       if archived_read_enabled else [])
                     + ([archived_reads.BATCH_TOOL] if batch_archives_enabled else [])
                     + ([historical_reads.TOOL] if historical_read_enabled else [])
                     + ([PUBLIC_TOOL, PUBLIC_READ_TOOL] if allow_public else [])
@@ -2014,6 +2018,12 @@ async def _research(
                         limit=10,
                     )
                     entry["terms"] = arguments["terms"]
+                elif (name == "list_archived_sources" and archived_read_enabled
+                      and set(arguments) == {"offset"}):
+                    data = archived_reads.catalog_page(
+                        repository, scope.get("archived_public_ids", []), arguments["offset"],
+                    )
+                    entry.update(offset=arguments["offset"], total=data["total"], local_only=True)
                 elif (name == "read_archived_documents" and batch_archives_enabled
                       and set(arguments) == {"reads"}):
                     data = archived_reads.read_many(

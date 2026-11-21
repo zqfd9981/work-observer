@@ -183,7 +183,8 @@ def test_experiment_notebook_keeps_goal_and_explicit_inquiry_scopes():
         "questions": [{"id": "q", "question": "问题"}],
     }}
     notebook = LearningNotebook(lambda: project, None)
-    assert notebook.source_document_ids() == ["local-log", "unrelated-material"]
+    assert notebook.read_experiments(["local"])["experiments"][0][
+        "artifact_document"]["available_in_goal"]
     assert notebook.search_experiments([], question_id="q")["matching_count"] == 2
     assert not notebook.read_experiments(["local"])["experiments"][0]["reported_observation"]
     assert not notebook.read_experiments(["detached"])["experiments"][0][

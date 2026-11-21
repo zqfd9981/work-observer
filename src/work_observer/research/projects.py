@@ -1838,8 +1838,9 @@ class ProjectService:
                 if step.get("career_answer_document_id")
                 else None,
                 "omitted_documents": step.get("career_omitted_documents", 0),
-                "document_selection_notice": "omitted_documents是本轮未带入的长期材料数量，"
-                "未带入不表示没有或不相关；本轮可读范围以归档目录为准。",
+                "document_selection_notice": "omitted_documents是未放入开头优先选择的资料数量，"
+                "不表示资料不存在、无关或不可读取。可读范围见fixed_scope.archived_public_ids，"
+                "开头目录未列完时可分页查看；正文仍须另行读取。",
                 "selected_material": {
                     "document_id": step["career_material_id"],
                     "notice": "用户明确选中的归档资料，需读取正文后回答；标题不是证据。",
@@ -1955,6 +1956,14 @@ class ProjectService:
                     } if selected_inquiry else None,
                     "notice": "本轮只理解岗位工作。个人简历、经历、练习和认识不作为岗位要求依据。",
                 }
+                from work_observer.research.career import personal_documents
+
+                private = personal_documents(career)
+            else:
+                private = set()
+            context["career_evidence"]["source_document_ids"] = [
+                key for key in record.get("public_document_ids", []) if key not in private
+            ]
         return context
 
 

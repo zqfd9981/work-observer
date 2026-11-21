@@ -124,10 +124,6 @@ class LearningNotebook:
             "旧引用只供定位，形成判断仍须读取当前可用原文；不改变记录或选用状态。",
         }
 
-    def source_document_ids(self):
-        """The attached source library, independent of the short opening catalog."""
-        return list(dict.fromkeys(self.project_reader().get("public_document_ids", [])))
-
     def search_experiments(self, terms, offset=0, question_id=""):
         if terms != []:
             terms = validated_terms(terms)

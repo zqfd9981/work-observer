@@ -983,3 +983,12 @@ console.log('Map-change inquiry targets the actual history context for linked an
 const emptyMapChanges=ctx.window.journeyTest.mapChanges([relationMap('empty-a',[]),relationMap('empty-b',[])]);
 assert.ok(emptyMapChanges.includes('尚无可对照的工作关系'));
 assert.ok(!emptyMapChanges.includes('均同文'));
+
+const longLibraryIds=Array.from({length:25},(_,index)=>'library-'+index);
+const longLibraryData={id:'library',jobs:[],materials:longLibraryIds.map(id=>({id,title:id})),stories:[],tasks:[],results:[]};
+const longLibraryScope=ctx.window.journeyTest.researchScope({kind:'map',document_ids:longLibraryIds.slice(0,20),omitted_documents:5,result:{status:'completed',scope:{archived_public_ids:longLibraryIds,public_document_titles:[]},evidence:[]}},longLibraryData);
+assert.ok(longLibraryScope.includes('本轮可查阅 25 份'));
+assert.ok(longLibraryScope.includes('开头优先 20 份'));
+assert.ok(longLibraryScope.includes('library-24'));
+assert.ok(!longLibraryScope.includes('份未带入'));
+console.log('Research source scope displays the saved readable library separately from its opening selection.');
