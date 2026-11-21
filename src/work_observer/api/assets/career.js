@@ -983,23 +983,42 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
         if(latest.has(jobId))continue;
         const changed=evidence.find(item=>{const issue=issues.get(item.id);return issue?.reason==="job_current_version_changed"&&issue.retained_evidence_valid===true;});
         if(!changed&&evidence.some(item=>issues.has(item.id)))continue;
-        latest.set(jobId,{job:jobs.get(jobId),study,evidence:changed||evidence[0],changed:Boolean(changed)});
+        latest.set(jobId,{kind:"job",job:jobs.get(jobId),study,evidence:changed||evidence[0],changed:Boolean(changed)});
       }
+    }
+    const materials=data.materials||[],attached=new Set(materials.map(row=>row.id));
+    for(const material of materials){
+      const family=new Set([material.id,...(material.related_document_ids||[]).filter(id=>!attached.has(id))]);
+      if(family.size<2)continue;
+      let latestRead=null;
+      for(const study of studies){
+        const audit=study.result.audit||{},invalid=new Set((audit.changed_sources||[]).filter(row=>row.retained_evidence_valid===false).map(row=>row.evidence_id));
+        const evidence=(study.result.evidence||[]).filter(row=>family.has(row.public_document_id));
+        if(!evidence.length||evidence.some(row=>invalid.has(row.id)))continue;
+        latestRead={kind:"material",material,study,evidence:evidence.find(row=>row.public_document_id===material.id)||evidence[0],changed:!evidence.some(row=>row.public_document_id===material.id)};break;
+      }
+      if(!latestRead){const passage=[question.source_passage,...(question.evidence_passages||[])].find(row=>row&&family.has(row.public_document_id));if(passage)latestRead={kind:"material",material,study:null,evidence:passage,changed:passage.public_document_id!==material.id};}
+      if(latestRead?.changed)latest.set("material:"+material.id,latestRead);
     }
     return [...latest.values()].filter(item=>item.changed);
   }
   function questionSourceNotice(question,data,exporting=false){
     const changes=questionSourceChanges(question,data);if(!changes.length)return "";
-    return `<aside class="career-question-source-changes"><strong>引用过的岗位有新原文可回看</strong><p class="form-note">这条调查引用的JD与现在保存的正文不同。查看差异后再判断是否影响原结论；重查不会自动改写你保存的结论。</p><ul>${changes.map(item=>`<li>${e(jobText(item.job))}${exporting?"":` <button type="button" class="text-button" data-career-show-source-change="${e(item.job.id)}">查看原文差异 ↗</button>`}<details><summary>回看这条调查此前引用的原文摘录</summary><blockquote>${e(item.evidence.quote)}</blockquote>${exporting?"":sourceContextButton(item.evidence)}</details></li>`).join("")}</ul>${exporting?"":`<button type="button" class="secondary small" data-career-review-sources="${e(question.id)}">准备带着新原文重查 ↗</button>`}</aside>`;
+    const materialCount=changes.filter(row=>row.kind==="material").length;
+    return `<aside class="career-question-source-changes"><strong>引用过的资料有不同正文可回看</strong><p class="form-note">这条调查此前引用的资料记录与本目标现在选用的资料不同。先读原文，再判断是否影响原结论；资料较新不代表更准确，重查不会自动改写你保存的结论。</p><ul>${changes.map(item=>`<li>${e(item.kind==="material"?item.material.title:jobText(item.job))}${item.kind==="material"?` · 工作资料${exporting?"":` <button type="button" class="text-button" data-public-source="${e(item.material.id)}">读当前正文 ↗</button> <button type="button" class="text-button" data-career-material-review="${e(item.material.id)}" data-material-question="${e(question.id)}">带着这份资料继续查证 ↗</button>`}`:exporting?"":` <button type="button" class="text-button" data-career-show-source-change="${e(item.job.id)}">查看原文差异 ↗</button>`}<details><summary>回看这条调查此前引用的原文摘录</summary><blockquote>${e(item.evidence.quote)}</blockquote>${exporting?"":sourceContextButton(item.evidence)}</details></li>`).join("")}</ul>${materialCount>6?'<p class="form-note">本轮先选前 6 份工作资料；其余资料可逐份准备查证。</p>':""}${exporting?"":`<button type="button" class="secondary small" data-career-review-sources="${e(question.id)}">准备带着新原文重查 ↗</button>`}</aside>`;
   }
+
   function sourceFollowups(data,exporting=false){
     const questions=(data.questions||[]).filter(question=>question.state!=="parked"&&questionSourceChanges(question,data).length);
     if(!questions.length)return "";
-    return `<section class="panel career-source-followups"><div class="section-heading"><h3>有新原文，哪些调查值得回看？</h3><span class="quiet-tag">${questions.length} 个调查问题</span></div><p class="form-note">从已读引用找回相关调查，可先查看差异，再决定是否重查。查看提醒和准备问题都不调用模型。</p>${questions.map(question=>`<details class="career-source-followup" data-source-followup="${e(question.id)}"><summary>${e(question.question)}</summary>${question.conclusion?`<details><summary>原先保存的结论与限制，仍然保留</summary><p>${e(question.conclusion)}</p></details>`:""}${questionSourceNotice(question,data,exporting)}</details>`).join("")}</section>`;
+    return `<section class="panel career-source-followups"><div class="section-heading"><h3>有新原文，哪些调查值得回看？</h3><span class="quiet-tag">${questions.length} 个调查问题</span></div><p class="form-note">从已读引用或保存过的摘录找回相关调查，可先读新旧正文，再决定是否重查。完成一次引用当前正文的研究后，对应提醒会收起；旧结论仍需你判断。查看提醒和准备问题都不调用模型。</p>${questions.map(question=>`<details class="career-source-followup" data-source-followup="${e(question.id)}"><summary>${e(question.question)}</summary>${question.conclusion?`<details><summary>原先保存的结论与限制，仍然保留</summary><p>${e(question.conclusion)}</p></details>`:""}${questionSourceNotice(question,data,exporting)}</details>`).join("")}</section>`;
   }
-  function sourceReviewDraft(question){
-    return {question:"这条调查引用过的岗位原文已有变化。请先读取本轮当前JD，再对照这条调查此前的判断、依据与限定：哪些只是文字或样本变化，哪些会改变解释，哪些仍未知？如果原问题指定过历史时点，请保留原来的对照，另说明当前资料的新增影响。保留个人经历与岗位要求的区别，不因资料较新就自动推翻旧结论。",question_id:question.id,selected_job_ids:question.selected_job_ids||[],source_step_id:"",material_id:"",insight_id:"",task_id:"",story_id:"",comparison_step_ids:[]};
+  function sourceReviewDraft(question,data=null,materialId=""){
+    const changes=data?questionSourceChanges(question,data):[],chosen=materialId?changes.filter(row=>row.material?.id===materialId):changes;
+    const materials=materialId?[materialId]:chosen.filter(row=>row.kind==="material").map(row=>row.material.id).slice(0,6),source=chosen.map(row=>row.study).filter(Boolean).sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""))[0];
+    return {question:"这条调查引用的已保存资料与当前选用的资料记录不同。请先读取本轮当前JD和点选工作资料，再对照明确选定的旧讨论及原调查问题：哪些只是文字或样本变化，哪些会改变解释，哪些仍未知？保留原来的适用条件、反例和历史时点。旧摘录只用于定位，未回读的原文保留未知；来源说明和个人笔记不等于独立核实。不要因为资料较新就自动推翻旧结论，也不要把工作资料直接当作岗位个人责任或必备要求。",question_id:question.id,selected_job_ids:question.selected_job_ids||[],source_step_id:source?.step_id||"",material_id:materials.length===1?materials[0]:"",material_ids:materials.length>1?materials:materials.length?[]:[...(question.material_ids||[])],insight_id:"",counter_insight_id:"",task_id:"",story_id:"",comparison_step_ids:[]};
   }
+
   function inquiryNextAction(question,data){
     const records=questionJourneyRecords(question,data),studies=[...records.studies].sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""));
     const pending=studies.find(row=>["queued","running","interrupted"].includes(row.state)||row.state==="failed"&&row.continuation?.available);
@@ -1564,7 +1583,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.dataset.careerConversationNote)startConversationNote(target.dataset.careerConversationNote);
       if(target.hasAttribute("data-career-cancel-conversation")){captureDrafts();delete storyDraft().conversation_note;renderDetail();}
       if(target.dataset.careerReviseAnswer){const [questionId,stepId]=target.dataset.careerReviseAnswer.split(":");startAnswerRevision(questionId,stepId);}
-      if(target.dataset.careerReviewSources){captureDrafts();const question=career.data.questions.find(row=>row.id===target.dataset.careerReviewSources);if(question){career.tab="requirements";const draft=storyDraft();draft.inquiries={...draft.inquiries,requirements:sourceReviewDraft(question)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
+      if(target.dataset.careerReviewSources){captureDrafts();const question=career.data.questions.find(row=>row.id===target.dataset.careerReviewSources);if(question){career.tab="requirements";const draft=storyDraft();draft.inquiries={...draft.inquiries,requirements:sourceReviewDraft(question,career.data)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
       if(target.dataset.careerShowSourceChange){captureDrafts();career.tab="requirements";await loadJobChanges(target.dataset.careerShowSourceChange);$(".career-job-changes").scrollIntoView({block:"start",behavior:"smooth"});}
       if(target.dataset.careerPlanRequirement){captureDrafts();if(storyDraft().proof?.requirement_key===target.dataset.careerPlanRequirement){notify("先保存这项证据对照，再设计实验，避免漏掉未保存的缺口说明。");return;}career.tab="experiments";renderDetail();await research("plan","",0,null,null,"",{requirement_key:target.dataset.careerPlanRequirement});}
       if(target.dataset.careerTaskRequirement){captureDrafts();const task=career.data.tasks.find(row=>row.id===target.dataset.careerTaskRequirement);if(task?.target_requirement){const draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:taskRequirementInquiry(task,career.data)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
@@ -1582,7 +1601,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.hasAttribute("data-career-clear-material-focus")){captureDrafts();const draft=storyDraft();if(draft.inquiries?.[career.tab])draft.inquiries[career.tab].material_id="";renderDetail();}
       if(target.dataset.careerEditMaterial)await editMaterial(target.dataset.careerEditMaterial);
       if(target.hasAttribute("data-career-cancel-material-revision")){captureDrafts();delete storyDraft().material_revision;renderDetail();}
-      if(target.dataset.careerMaterialQuestion||target.dataset.careerMaterialReview){captureDrafts();const material=career.data.materials.find(row=>row.id===(target.dataset.careerMaterialQuestion||target.dataset.careerMaterialReview)),question=(career.data.questions||[]).find(row=>row.id===target.dataset.materialQuestion);if(material){const draft=storyDraft();const pending=draft.inquiries?.[career.tab]||{};draft.inquiries={...draft.inquiries,[career.tab]:question?materialInquiryDraft(material,question):{...pending,question:pending.question?.trim()?pending.question:materialInquiryDraft(material).question,material_id:material.id,material_ids:[]}};renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
+      if(target.dataset.careerMaterialQuestion||target.dataset.careerMaterialReview){captureDrafts();const material=career.data.materials.find(row=>row.id===(target.dataset.careerMaterialQuestion||target.dataset.careerMaterialReview)),question=(career.data.questions||[]).find(row=>row.id===target.dataset.materialQuestion);if(material){const draft=storyDraft();const pending=draft.inquiries?.[career.tab]||{};draft.inquiries={...draft.inquiries,[career.tab]:question?(questionSourceChanges(question,career.data).some(item=>item.material?.id===material.id)?sourceReviewDraft(question,career.data,material.id):materialInquiryDraft(material,question)):{...pending,question:pending.question?.trim()?pending.question:materialInquiryDraft(material).question,material_id:material.id,material_ids:[]}};renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
 
       if(target.dataset.careerAttachMaterial||target.dataset.careerRemoveMaterial){captureDrafts();target.disabled=true;const id=career.id,doc=target.dataset.careerAttachMaterial||target.dataset.careerRemoveMaterial,attach=Boolean(target.dataset.careerAttachMaterial);const updated=await api("career/"+id+"/materials/"+(attach?"attach":doc),{method:attach?"POST":"DELETE",...(attach?{body:JSON.stringify({document_id:doc})}:{})});if(career.id===id){captureDrafts();career.data=updated;if(!attach)for(const draft of Object.values(storyDraft().inquiries||{}))if(draft.material_id===doc)draft.material_id="";renderDetail();}notify(attach?"资料已加入当前目标，可以选择围绕原文提问。":"资料已移出本目标，原归档仍可在证据书架找回。");}
       if(target.hasAttribute("data-career-reuse-library")){captureDrafts();const draft=storyDraft();draft.library={...draft.library,scope:"all",open:true};career.drafts.set(career.id,draft);renderDetail();$("#career-library").scrollIntoView({block:"start",behavior:"smooth"});$("#career-library-form [name=q]").focus();}

@@ -1122,3 +1122,47 @@ console.log("Personal-view synthesis: exact chosen group, independent query focu
   assert.equal(JSON.stringify(local),before);
   console.log('Per-claim source inspection and editable numbered recheck preserve full long claims and existing scope without running research.');
 }
+
+
+{
+ const api=ctx.window.journeyTest,oldQuote='<old>Complete condition; authority unknown.</old>';
+ const question={id:'material-q',question:'Who reviews the failure record?',state:'answered',conclusion:'Keep the original qualified conclusion.',conclusion_step_id:'old-material-read'};
+ const material={id:'current-raw',title:'Corrected work note <check>',related_document_ids:['old-raw','current-raw']};
+ const old=result('old-material-read',stamp(1),{question_id:question.id,result:{status:'completed',claims:[{text:'Old explanation.'}],evidence:[{id:'old-fragment',public_document_id:'old-raw',quote:oldQuote,start:0,end:oldQuote.length}],audit:{}}});
+ const local={...data,questions:[question],materials:[material],document_ids:['current-raw'],results:[old]};
+ const before=JSON.stringify(local),changes=api.questionSourceChanges(question,local);
+ assert.equal(changes.length,1);assert.equal(changes[0].kind,'material');assert.equal(changes[0].material.id,'current-raw');
+ const panel=api.sourceFollowups(local),notice=api.questionSourceNotice(question,local);
+ assert.ok(panel.includes('Corrected work note &lt;check&gt;')&&panel.includes('&lt;old&gt;Complete condition; authority unknown.&lt;/old&gt;'));
+ assert.ok(panel.includes('Keep the original qualified conclusion.')&&notice.includes('data-public-source="current-raw"'));
+ assert.ok(notice.includes('data-career-material-review="current-raw"')&&notice.includes('data-public-source="old-raw"'));
+ const draft=api.sourceReviewDraft(question,local);
+ assert.equal(draft.material_id,'current-raw');assert.equal(draft.source_step_id,'old-material-read');
+ assert.equal(draft.question_id,question.id);assert.deepEqual(Array.from(draft.material_ids),[]);
+ assert.ok(draft.question.length<1500&&draft.question.includes('未回读的原文保留未知'));
+ const fresh=result('fresh-material-read',stamp(3),{question_id:question.id,result:{status:'completed',claims:[],evidence:[{id:'new-fragment',public_document_id:'current-raw',quote:'Read current material.'}]}});
+ assert.equal(api.questionSourceChanges(question,{...local,results:[fresh,old]}).length,0);
+ // A different inquiry reading the update does not silently settle this one.
+ assert.equal(api.questionSourceChanges(question,{...local,results:[{...fresh,question_id:'different-question'},old]}).length,1);
+ assert.equal(api.questionSourceChanges(question,{...local,results:[{...fresh,state:'abandoned'},old]}).length,1);
+ assert.equal(api.questionSourceChanges(question,{...local,results:[{...fresh,result:{...fresh.result,status:'incomplete'}},old]}).length,1);
+ // Another goal retaining its original material should not adopt a correction on its own.
+ assert.equal(api.questionSourceChanges(question,{...local,materials:[{...material,id:'old-raw'}],document_ids:['old-raw']}).length,0);
+ // Deliberately attaching both originals keeps the old one in the current readable choice.
+ assert.equal(api.questionSourceChanges(question,{...local,materials:[material,{...material,id:'old-raw'}],document_ids:['current-raw','old-raw']}).length,0);
+ const retainedPassage={...question,conclusion_step_id:'',source_passage:{public_document_id:'old-raw',quote:oldQuote,start:0,end:oldQuote.length}};
+ assert.equal(api.questionSourceChanges(retainedPassage,{...local,questions:[retainedPassage],results:[]}).length,1);
+ assert.equal(api.sourceReviewDraft(retainedPassage,{...local,results:[]}).source_step_id,'');
+ const secondMaterial={id:'second-current',title:'Second correction',related_document_ids:['second-old','second-current']};
+ const bothOld={...old,result:{...old.result,evidence:[...old.result.evidence,{id:'second-fragment',public_document_id:'second-old',quote:'Another old condition.'}]}};
+ const together={...local,materials:[material,secondMaterial],document_ids:['current-raw','second-current'],results:[bothOld]};
+ const group=api.sourceReviewDraft(question,together);
+ assert.deepEqual(Array.from(group.material_ids),['current-raw','second-current']);assert.equal(group.material_id,'');
+ const single=api.sourceReviewDraft(question,together,'second-current');
+ assert.equal(single.material_id,'second-current');assert.equal(single.source_step_id,'old-material-read');
+ const exported=api.sourceFollowups(local,true);
+ assert.ok(exported.includes('Corrected work note &lt;check&gt;')&&exported.includes(oldQuote.replace('<old>','&lt;old&gt;').replace('</old>','&lt;/old&gt;')));
+ assert.ok(!exported.includes('<button')&&!exported.includes('data-public-source'));
+ assert.equal(JSON.stringify(local),before);
+ console.log('Corrected work material followups: linked current versus old sources, exact old discussion, one/group drafts, fresh-read dismissal, explicit old-source retention and safe export passed.');
+}
