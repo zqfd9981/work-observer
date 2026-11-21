@@ -8,7 +8,7 @@ const token = $('meta[name="wo-token"]').content;
 const demoMode = $('meta[name="wo-demo"]')?.content === "true";
 const state = {importAsset:null,csvRows:[],operations:null, filters:{}, offset:0, limit:20, jobs:new Map(), selected:new Map(), researchIds:null,
   activeRun:null, lastRun:null, lastResult:null, memories:new Map(), overview:null, page:"career", querySerial:0};
-const statusLabels = {analysis_draft:"开发分析样稿（待核对）",completed:"回答已生成", partial:"已保留部分结果", evidence_only:"原文证据包", failed:"研究未完成", incomplete:"达到研究上限", insufficient_evidence:"正文不足"};
+const statusLabels = {running:"研究中",interrupted:"已暂停",analysis_draft:"开发分析样稿（待核对）",completed:"回答已生成", partial:"已保留部分结果", evidence_only:"原文证据包", failed:"研究未完成", incomplete:"达到研究上限", insufficient_evidence:"正文不足"};
 const originLabels = {website:"网站响应", unknown:"新鲜度未知", cache:"缓存资料", replay:"回放资料", manual:"人工资料", test:"测试资料", client_error:"获取失败"};
 const requirementLabels = {required:"必备", preferred:"加分", unspecified:"未明确性质"};
 const domainLabels = {business_application:"业务应用开发",agent_platform:"执行平台与 Harness",domain_decision:"领域决策系统",model_serving:"模型与推理部署",configuration_delivery:"平台配置与实施",other:"其他待定义领域"};
