@@ -1949,6 +1949,10 @@ class ProjectService:
                     "public_research_policy": context["career_evidence"]["public_research_policy"],
                     "selected_material": None,
                     "selected_materials": context["career_evidence"]["selected_materials"],
+                    "selected_inquiry": {
+                        "id": selected_inquiry["id"], "question": selected_inquiry["question"],
+                        "notice": "用户要继续解释的调查问题，只作为研究方向，不代表结论已成立。",
+                    } if selected_inquiry else None,
                     "notice": "本轮只理解岗位工作。个人简历、经历、练习和认识不作为岗位要求依据。",
                 }
         return context

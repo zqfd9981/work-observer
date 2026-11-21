@@ -105,11 +105,16 @@ def test_selected_work_materials_form_a_map_and_continue_with_original_scope(tmp
         for index in range(22):
             save(base + "/materials", {"title": f"其他合成说明{index}", "text": "其他背景。"})
         custom = "对照所选业务核对和执行平台的任务、交付物与迁移前提。末尾关注：验收权仍未知。"
-        mapped = run_stage(client, identity, auth, "map", material_ids=materials,
+        question = save(base + "/questions", {"question": "这两条工作线怎样产生不同的交付物？",
+                        "material_ids": materials, "state": "answered",
+                        "conclusion": "先保留两条工作线，验收权仍未知。"})["questions"][0]
+        mapped = run_stage(client, identity, auth, "map", question_id=question["id"],
                            question=custom)["results"][0]
         result = mapped["result"]
         assert result["status"] == "completed", result.get("stop_reason")
         assert mapped["material_ids"] == materials and mapped["user_question"] == custom
+        assert mapped["question_id"] == question["id"]
+        assert client.get(base).json()["questions"][0] == question
         assert custom in model.contexts[0]["question"]
         assert len(result["work_map"]["work_relations"]) == 2
         for relation in result["work_map"]["work_relations"]:

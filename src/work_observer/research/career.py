@@ -1674,14 +1674,14 @@ class CareerService:
                     None,
                 )
                 if not saved_question or kind not in {
-                    "ask", "plan", "reflect", "teachback", "answer", "followup", "challenge"
+                    "ask", "map", "plan", "reflect", "teachback", "answer", "followup", "challenge"
                 }:
                     raise ValueError("请选择已保存的调查问题，再继续提问、设计验证或反思。")
                 parent_question = next(
                     (row for row in project["career"].get("questions", [])
                      if row["id"] == saved_question.get("parent_question_id")), None
                 )
-                if (kind == "ask" and not material_focus_supplied
+                if (kind in {"ask", "map"} and not material_focus_supplied
                     and not material_ids and not material_id):
                     material_ids = list(saved_question.get("material_ids") or [])
                 if kind == "challenge":
@@ -2035,7 +2035,13 @@ class CareerService:
                     "说明看法差异是否来自适用条件、观察或解释，不预设互斥，也不因较新而判定正确。"
                     "两条记录都只是用户理解；无从核实的部分保留未知，不把认识ID当作原文引用。"
                 )
-            if question_id:
+            if question_id and kind == "map":
+                question += (
+                    "本地图关联career_evidence.selected_inquiry中的调查问题，"
+                    "以问题定位要解释的工作关系，仍需读取原文。"
+                    "关联不会修改用户结论或状态，不能把个人理解当作已验证的事实。"
+                )
+            elif question_id:
                 question += (
                     "本次围绕career_evidence.selected_inquiry中的持续调查问题展开，"
                     "结合用户本次提问、关心它的理由和希望补充的证据，回读相关原文。"
