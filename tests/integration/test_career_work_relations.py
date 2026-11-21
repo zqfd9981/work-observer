@@ -126,6 +126,45 @@ def test_saved_relations_keep_scope_claims_sources_full_limits_and_independent_p
         assert client.get(endpoint, params={"goal_id": goals[1]["id"]}).json()["total_count"] == 2
         assert client.get(endpoint, params={"goal_id": "0" * 32}).status_code == 422
         assert client.get(endpoint, params={"node_kind": "invented"}).status_code == 422
+        # Unified search must find the maps themselves, including limits beyond previews.
+        def search(query, identity=None):
+            path = "/api/career/" + identity + "/search" if identity else "/api/career/search"
+            response = client.get(path, params={"q": query, "record_kind": "discussion"})
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        matching = search("末尾迁移前提")
+        assert matching["record_count"] == 2
+        assert {row["project_id"] for row in matching["records"]} == set(by_goal)
+        for row in matching["records"]:
+            expected = 14 if row["project_id"] == goals[0]["id"] else 2
+            assert row["map_match_count"] == expected
+            assert len(row["map_matches"]) == expected
+            assert {part["index"] for part in row["map_matches"]} == set(range(expected))
+            for part in row["map_matches"]:
+                assert part["section"] == "relation" and part["covers_all_terms"]
+                assert part["fields"]["transfer_limit"].startswith(LIMIT)
+                assert part["matched_fields"] == ["transfer_limit"]
+                assert len(part["claims"]) == 2 and len(part["evidence"]) == 1
+        assert search("末尾迁移前提", goals[0]["id"])["record_count"] == 1
+        comparison = search("对象不同")["records"][0]["map_matches"][0]
+        assert comparison["section"] == "comparison"
+        assert len(comparison["claims"]) == 4 and len(comparison["evidence"]) == 2
+        assert "不能只凭名称迁移" in comparison["fields"]["transfer_conditions"]
+        boundary = search("核对该说明中的工作对象与产出")["records"][0]["map_matches"]
+        assert len(boundary) == 2 and all(row["section"] == "boundary" for row in boundary)
+        assert all(row["fields"]["next_check"] for row in boundary)
+        scopes = search("未选JD")["records"][0]["map_matches"]
+        assert len(scopes) == 1 and scopes[0]["section"] == "scope"
+        assert not scopes[0]["claims"] and not scopes[0]["evidence"]
+        unknowns = search("验收权")["records"][0]["map_matches"]
+        assert {row["section"] for row in unknowns} >= {"unknown", "boundary", "comparison"}
+        assert all(not row["evidence"] for row in unknowns if row["section"] == "unknown")
+        title_only = search("合成关系库长页")["records"][0]
+        assert not title_only["map_matches"]
+        split = search("对象不同 末尾迁移前提")["records"][0]["map_matches"]
+        assert {row["section"] for row in split} == {"comparison", "relation"}
+        assert all(not row["covers_all_terms"] for row in split)
         assert len(model.contexts) == calls
         assert [client.get("/api/career/" + goal["id"]).json() for goal in goals] == snapshots
         response = client.patch("/api/career/" + goals[0]["id"], headers=auth, json={

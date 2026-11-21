@@ -148,6 +148,32 @@ def relevant_documents(repository, identities, query):
     return [identity for _, _, identity in sorted(ranked, reverse=True)]
 
 
+def work_map_search_parts(work_map):
+    """Expose saved text fields with their report-local positions, without interpreting them."""
+    parts = []
+    for section, collection, fields in (
+        ("boundary", "work_types", ("name", "problem", "tasks", "deliverables",
+                                    "boundary", "next_check")),
+        ("relation", "work_relations", ("source_text", "target_text", "rationale",
+                                        "transfer_limit")),
+        ("ability", "ability_relations", ("task", "ability", "rationale", "transfer_limit")),
+        ("comparison", "comparisons", ("common_ground", "differences", "transfer_conditions",
+                                       "unknowns")),
+    ):
+        for index, item in enumerate(work_map.get(collection, [])):
+            values = {key: "\n".join(item[key]) if isinstance(item.get(key), list)
+                      else item.get(key, "") for key in fields}
+            parts.append({"section": section, "index": index, "fields": values,
+                          "basis": item.get("basis"),
+                          "claim_indices": item.get("claim_indices", [])})
+    parts.extend({"section": "unknown", "index": index, "fields": {"unknown": text},
+                  "claim_indices": []} for index, text in enumerate(work_map.get("unknowns", [])))
+    if work_map.get("scope_note"):
+        parts.append({"section": "scope", "index": 0,
+                      "fields": {"scope_note": work_map["scope_note"]}, "claim_indices": []})
+    return parts
+
+
 def research_documents(project, kind, preferred=(), *, repository=None, query=""):
     career = project["career"]
     library = list(dict.fromkeys(project.get("public_document_ids") or []))
@@ -551,6 +577,9 @@ class CareerService:
                 if not run or run["state"] == "invalidated":
                     continue
                 result = run.get("result") or {}
+                map_parts = work_map_search_parts(result.get("work_map") or {}) if (
+                    result.get("status") == "completed"
+                ) else []
                 section = row.get("section") or {
                     "role": "requirements",
                     "map": "requirements",
@@ -565,6 +594,7 @@ class CareerService:
                         row.get("answer", ""),
                         *[claim["text"] for claim in result.get("claims", [])],
                         *result.get("gaps", []),
+                        *[value for part in map_parts for value in part["fields"].values()],
                     ]
                 )
                 title = (
@@ -609,6 +639,25 @@ class CareerService:
                         })
                     matched["claim_matches"] = claims[:3]
                     matched["claim_match_count"] = len(claims)
+                    map_matches = []
+                    for part in map_parts:
+                        fields = {key: value for key, value in part["fields"].items()
+                                  if any(term in match_text(value) for term in terms)}
+                        if not fields:
+                            continue
+                        full_text = match_text("\n".join(part["fields"].values()))
+                        linked = [{"index": index, **result["claims"][index]}
+                                  for index in part["claim_indices"]
+                                  if 0 <= index < len(result.get("claims", []))]
+                        cited = {key for claim in linked for key in claim["evidence_ids"]}
+                        map_matches.append({
+                            **part, "matched_fields": list(fields),
+                            "covers_all_terms": all(term in full_text for term in terms),
+                            "claims": linked,
+                            "evidence": [value for key, value in evidence.items() if key in cited],
+                        })
+                    matched["map_matches"] = map_matches
+                    matched["map_match_count"] = len(map_matches)
 
         records.sort(
             key=lambda row: (row["recorded_at"] or "", row["project_id"], row["kind"], row["id"]),
