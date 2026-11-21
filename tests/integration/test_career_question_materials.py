@@ -27,7 +27,10 @@ class QuestionMaterialModel(ModelClient):
             assert not selected
             selected = [personal["selected_material"]["document_id"]]
         if not selected:
-            selected = [next(iter(catalog))]
+            experiment = next((row for row in personal.get("experiments", [])
+                               if row["id"] == personal.get("selected_experiment_id")), {})
+            artifact = (experiment.get("artifact_document") or {}).get("document_id")
+            selected = [artifact or next(iter(catalog))]
         assert set(selected) <= set(catalog)
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
