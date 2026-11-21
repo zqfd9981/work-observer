@@ -1424,6 +1424,7 @@ class CareerService:
         question_id=None,
         requirement_key="",
         comparison_step_ids=None,
+        synthesis_question_ids=None,
         selected_job_ids=None,
         inherit_focus=True,
         autonomous=False,
@@ -1438,6 +1439,7 @@ class CareerService:
                 raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
             sources = None
             source_job_ids = []
+            synthesis_sources = []
             if kind == "ask" and source_step_id:
                 sources = [
                     row for row in self.get(identity)["results"]
@@ -1446,6 +1448,11 @@ class CareerService:
                 source = next((row for row in sources if row["step_id"] == source_step_id), None)
                 if not source:
                     raise ValueError("这份分析已不是当前目标下的结果，请重新选择或直接提问。")
+                if synthesis_question_ids is None and not any((
+                    question_id, task_id, story_id, insight_id,
+                    counter_insight_id, comparison_step_ids,
+                )):
+                    synthesis_sources = source.get("synthesis_sources", [])
                 if inherit_focus and (not question_id or question_id == source.get("question_id")):
                     source_job_ids = source.get("selected_job_ids", [])
                     question_ids = {row["id"] for row in project["career"].get("questions", [])}
@@ -1476,6 +1483,25 @@ class CareerService:
                     )
                     if question_id == source.get("question_id") and not comparison_step_ids:
                         comparison_step_ids = source.get("comparison_step_ids", [])
+            if synthesis_question_ids is not None:
+                identities = list(dict.fromkeys(synthesis_question_ids))
+                questions_by_id = {row["id"]: row for row in project["career"].get("questions", [])}
+                if not 2 <= len(identities) <= 4 or any(
+                    key not in questions_by_id for key in identities
+                ):
+                    raise ValueError("请选择当前目标中的2至4个不同调查问题。")
+                completed = [row for row in self.get(identity)["results"]
+                             if row["result"] and row["result"]["status"] == "completed"
+                             and row["state"] != "abandoned"]
+                synthesis_sources = [{
+                    "question_id": key,
+                    "step_id": next((row["step_id"] for row in completed
+                                     if row.get("question_id") == key), None),
+                } for key in identities]
+            if synthesis_sources and (kind != "ask" or any((
+                question_id, task_id, story_id, insight_id, counter_insight_id, comparison_step_ids,
+            ))):
+                raise ValueError("综合调查请直接围绕所选问题提问，其他单项焦点可另行研究。")
             if kind in {"reflect", "challenge", "ask", "plan"} and task_id:
                 task = next(
                     (row for row in project["career"]["tasks"] if row["id"] == task_id), None
@@ -1742,6 +1768,18 @@ class CareerService:
                         "本次用户已选定一份资料，优先按career_evidence.selected_material中的"
                         "document_id读取归档正文，再结合岗位原文回答；不能把标题当证据，"
                         "也不能把业务或技术说明推成所选岗位个人职责。"
+                    )
+                if synthesis_sources:
+                    question += (
+                        "本轮综合career_evidence.synthesis_inquiries中明确选定的多个调查。"
+                        "把业务问题、任务、交付物和能力关系连起来，比较它们在哪些条件下相互支持、"
+                        "冲突或尚不能连接；不要逐条改写成互不相关的摘要。"
+                        "每个inquiry的结论和learning_notes是个人理解，discussion是旧分析，"
+                        "experiments的hypothesis是预期，outcome才是用户报告的观察。"
+                        "保留原来的岗位范围、必备或加分性质、推断性质和末尾限定。"
+                        "回读本轮可用原文与实验产物，用本轮读取所得引用支撑综合判断；"
+                        "原资料不在当前范围时说明无法重核，不能靠多份旧回答互相证明。"
+                        "明确共同盲区和最有价值的下一项查证，不自动修改问题结论或状态。"
                     )
                 reply = previous["step_id"] if previous else None
             elif kind == "followup":
@@ -2049,6 +2087,26 @@ class CareerService:
                 raise ValueError("本目标的模型调用或时间额度已用完，仍可整理资料、记录观察和认识。")
             preferred = [material_id, focused_document_id]
             topic = [user_question]
+            if synthesis_sources:
+                from work_observer.research.inquiry_synthesis import synthesis_inquiries
+
+                for item in synthesis_inquiries(project, self.store, synthesis_sources):
+                    inquiry = item["inquiry"]
+                    topic.extend((inquiry["question"], inquiry.get("conclusion", "")))
+                    passages = [inquiry.get("source_passage") or {},
+                                *inquiry.get("evidence_passages", [])]
+                    preferred.extend(passage.get("public_document_id") for passage in passages)
+                    preferred.extend(reference.get("public_document_id")
+                                     for reference in (item["discussion"] or {}).get(
+                                         "source_references_to_reread", []))
+                    preferred.extend(task["artifact_document"]["document_id"]
+                                     for task in item["experiments"] if task["artifact_document"])
+                    preferred.extend(reference.get("public_document_id")
+                                     for note in item["learning_notes"]
+                                     for reference in note.get("source_locators", []))
+                    carried = inquiry.get("carried_understanding") or {}
+                    preferred.extend(reference.get("public_document_id")
+                                     for reference in carried.get("source_references", []))
             for row in project["career"]["stories"]:
                 if row["id"] == story_id:
                     preferred.append(row["document_id"])
@@ -2187,6 +2245,7 @@ class CareerService:
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
+                    "synthesis_sources": synthesis_sources,
                     "selected_job_ids": selected_job_ids[:],
                     "autonomous_rounds": 3 if autonomous else 0,
                     "materials_only": not bool(project["job_ids"]),
@@ -2210,6 +2269,8 @@ class CareerService:
                 project["steps"][-1]["career_question_id"] = question_id
             if comparison_step_ids:
                 project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
+            if synthesis_sources:
+                project["steps"][-1]["career_synthesis"] = synthesis_sources
             if autonomous:
                 project["steps"][-1]["career_auto_rounds"] = 3
             if understanding_check:

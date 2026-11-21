@@ -207,6 +207,8 @@ def learning_record(row, record, store):
             store.get(source_step["run_id"]) if source_step and source_step.get("run_id") else None
         )
         result = (run or {}).get("result") or {}
+        if (run or {}).get("state") == "invalidated":
+            result = {}
         claims = result.get("claims", [])
         selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
             claims if inquiry and index is None else []

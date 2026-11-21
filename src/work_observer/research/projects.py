@@ -1877,6 +1877,12 @@ class ProjectService:
                 "omitted_stories": max(0, len(stories) - 3),
                 "omitted_experiments": max(0, len(observations) - 3),
             }
+            if step.get("career_synthesis"):
+                from work_observer.research.inquiry_synthesis import synthesis_inquiries
+
+                context["career_evidence"]["synthesis_inquiries"] = synthesis_inquiries(
+                    record, self.store, step["career_synthesis"],
+                )
             if step.get("career_action") in {"role", "map"}:
                 context["career_evidence"] = {
                     "public_research_policy": context["career_evidence"]["public_research_policy"],

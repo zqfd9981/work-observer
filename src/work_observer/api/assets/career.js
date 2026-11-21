@@ -20,7 +20,7 @@
     career.drafts.set(career.id,draft);career.tab="stories";renderDetail();$("#career-story").scrollIntoView({block:"center",behavior:"smooth"});
   }
   const researchUnavailable=data=>Boolean(data?.running||career.busy||data?.results?.some(row=>["queued","running","interrupted"].includes(row.state)));
-  const researchLabel=row=>row.understanding_check&&row.kind==="answer"?"理解自测反馈":row.understanding_check&&row.kind==="followup"?"针对理解继续追问":row.materials_only&&row.kind==="role"?"理解工作资料":labels[row.kind];
+  const researchLabel=row=>row.synthesis_sources?.length?"综合调查":row.understanding_check&&row.kind==="answer"?"理解自测反馈":row.understanding_check&&row.kind==="followup"?"针对理解继续追问":row.materials_only&&row.kind==="role"?"理解工作资料":labels[row.kind];
   const button=(kind,text)=>`<button type="button" class="secondary" data-career-research="${kind}" ${researchUnavailable(career.data)?"disabled":""}>${text||labels[kind]} ↗</button>`;
   const jobText=job=>{const row=job.current||job;return [row.title,row.company_name_raw||row.company||""].filter(Boolean).join(" · ");};
   const apiPath=()=>"career/"+encodeURIComponent(career.id);
@@ -71,6 +71,7 @@
     for(const panel of $$("[data-career-question-passages]"))data.passages_open={...data.passages_open,[panel.dataset.careerQuestionPassages]:panel.open};
     const questionHistory=$(".career-question-history");if(questionHistory)data.question_history_open=questionHistory.open;
     const focusDetails=$("[data-career-focus-details]");if(focusDetails)data.focus_details_open=focusDetails.open;
+    const synthesis=$("#career-synthesis");if(synthesis)data.synthesis={question:synthesis.elements.question.value,question_ids:new FormData(synthesis).getAll("question_ids"),open:synthesis.closest("details").open};
     for(const panel of $$("[data-career-carried-discussion]"))data.carried_discussions={...data.carried_discussions,[panel.dataset.careerCarriedDiscussion]:panel.open};
     const questionBoard=$(".career-question-board");if(questionBoard)data.question_board_open=questionBoard.open;
     const insight=$("#career-insight");if(insight){const values=Object.fromEntries(new FormData(insight));values.source_claim_index=values.source_claim_index===""?null:Number(values.source_claim_index);data.insight={...data.insight,...values};}
@@ -512,7 +513,7 @@
     return `<details class="career-learning-recall"><summary>本轮带入的个人认识 · ${total} 份</summary>${current?learningChangeNotice(result,current,exporting):""}<p class="form-note">以下是本轮模型上下文中的当时记录；带入不代表模型已经采用或核实。${!notes.size?"开头没有自动找到相关的选用记录，可从认识记录中点选重查。":""}${saved.omitted_count?`另有 ${saved.omitted_count} 份选用记录未自动带入。`:""}</p>${searches.length||reads.length?`<p class="form-note">Agent另检索 ${searches.length} 次，完整读取 ${reads.length} 次。搜索预览没有当作全文，也没有计为原文证据。</p>`:""}${initial}${reads.length?`<h4>Agent主动读取的完整记录</h4>${reads.map((note,index)=>learningRecallCard(note,`主动阅读全文 · 第 ${index+1} 次读取`,goalId,exporting,true)).join("")}`:""}</details>`;
   }
   function researchScope(row,data,exporting=false){
-    const focused=returnedInquirySource(row,data,exporting)+selectedJobFocus(row.selected_job_ids||[],data,exporting,row.result?.scope?.jobs||[]);
+    const focused=synthesisSources(row,data,exporting)+returnedInquirySource(row,data,exporting)+selectedJobFocus(row.selected_job_ids||[],data,exporting,row.result?.scope?.jobs||[]);
     const comparison=!exporting&&row.result?.status==="completed"&&row.selected_job_ids?.length===2&&row.selected_job_ids.every(id=>data.jobs.some(job=>job.id===id))?`<p><button type="button" class="secondary small" data-career-job-comparison="${e(row.step_id)}">并排查看本轮两岗判断 ↗</button></p>`:"";
     if(!row.omitted_documents)return focused+comparison;
     const names=new Map([...(data.materials||[]),...(data.discovered_materials||[]),...(data.stories||[]).map(item=>({id:item.document_id,title:item.title})),...(data.tasks||[]).map(item=>({id:item.artifact_document_id,title:item.artifact_title})),...(data.resume?[{id:data.resume.document_id,title:data.resume.title}]:[]),...(row.result?.evidence||[]).map(item=>({id:item.public_document_id,title:item.title}))].map(item=>[item.id,item.title]));
@@ -824,6 +825,24 @@
   async function setResearchFocus(questionId){
     captureDrafts();const id=career.id,updated=await api(apiPath()+"/focus",{method:"PATCH",body:JSON.stringify({question_id:questionId||null})});if(career.id===id){captureDrafts();career.data=updated;renderDetail();await loadGoals();}
   }
+  function synthesisPanel(data){
+    const questions=data.questions||[];
+    if(questions.length<2)return "";
+    const draft=storyDraft().synthesis||{},selected=new Set(draft.question_ids||[]);
+    const prompt=draft.question??"请把所选调查连成整体理解：它们解释了什么业务问题、任务与交付物？哪些判断互相支持或存在冲突，适用范围有什么不同？结合原文和实验观察，指出共同盲区，以及下一步最值得查证的一个问题。";
+    return `<details class="panel career-synthesis-panel" ${draft.open?"open":""}><summary>综合几个调查问题 · 把零散发现连起来</summary><p class="form-note">选择2至4个问题，带入最近完整答复、个人结论及关联的实验与认识。Agent会重新查阅当前可用原文，研究它们的联系、冲突和共同盲区。</p><form id="career-synthesis"><fieldset><legend>这次一起研究哪些问题？</legend>${questions.map(question=>{
+      const latest=data.results.find(row=>row.question_id===question.id&&row.result?.status==="completed"&&row.state!=="abandoned");
+      return `<div class="career-synthesis-choice"><label><input type="checkbox" name="question_ids" value="${e(question.id)}" ${selected.has(question.id)?"checked":""}><span>${e(question.question)}<small>${e(questionStates[question.state])} · ${latest?e(when(latest.created_at))+" 的完整答复"+(latest.current===false?"，使用前需重核":""):"暂无完整答复，带入问题与个人记录"}</small></span></label><a href="#career/${e(data.id)}/question/${e(question.id)}" aria-label="回看问题：${e(question.question)}">回看 ↗</a></div>`;
+    }).join("")}</fieldset><label>希望从整体上弄清楚什么？<textarea name="question" rows="4" maxlength="1500" required>${e(prompt)}</textarea></label><p class="form-note">目前选了 ${selected.size} 个。选择和编辑不调用模型；开始研究才会调用。综合答复单独保存，原问题的结论与状态由你决定是否修改。</p><button class="primary" ${researchUnavailable(data)||career.offline?"disabled":""}>综合这些调查</button></form></details>`;
+  }
+  function synthesisSources(row,data,exporting=false){
+    if(!row.synthesis_sources?.length)return "";
+    return `<details class="career-synthesis-sources" ${exporting?"open":""}><summary>本轮综合了 ${row.synthesis_sources.length} 个调查问题</summary><p class="form-note">以下记录是本轮的研究起点；综合答复仍需以本轮读到的原文为依据，不会自动改写原问题。</p><ul>${row.synthesis_sources.map(source=>{
+      const question=(data.questions||[]).find(item=>item.id===source.question_id),answer=data.results.find(item=>item.step_id===source.step_id);
+      const title=question?.question||"原调查问题",stamp=answer?.result?when(answer.created_at):source.step_id?"原答复已不可用":"当时尚无完整答复";
+      return `<li>${exporting?e(title):`<a href="#career/${e(data.id)}/question/${e(source.question_id)}">${e(title)} ↗</a>`}<p class="form-note">${e(stamp)}${answer?.current===false?" · 来自当时资料或背景，使用前需重核。":""}</p>${!exporting&&answer?.result?`<a class="text-button" href="#career/${e(data.id)}/discussion/${e(source.step_id)}">回看本轮采用的那次答复 ↗</a>`:""}</li>`;
+    }).join("")}</ul></details>`;
+  }
   function questionBoard(data){
     const draft=storyDraft(),editor=draft.question_editor,questions=data.questions||[],open=questions.filter(row=>row.state==="open"),other=questions.filter(row=>row.state!=="open");
     const card=row=>{
@@ -958,7 +977,7 @@
     const data=career.data;if(!data)return;
     const resultsSection='<section class="career-result-area"><div class="section-heading"><h2>研究与反馈</h2><button type="button" class="text-button" id="career-refresh">刷新</button></div><div id="career-results"></div></section>';
     $("#career-onboarding").hidden=true;const root=$("#career-detail");root.hidden=false;
-    root.innerHTML=`<article class="career-target panel"><div><span class="eyebrow">MY NEXT CHAPTER</span><h2>${e(data.title)}</h2><p>${e(data.goal)}</p><div class="career-target-jobs">${data.jobs.map(job=>`<button class="quiet-tag" data-job="${e(job.id)}">${e(jobText(job))} ↗</button>`).join("")}</div></div><div class="career-target-aside"><button type="button" class="text-button" id="career-open-library">找回资料与认识 ↗</button><button type="button" class="secondary" id="career-export">导出求职准备包 ↧</button><div class="career-progress"><span><strong>${data.stories.length}</strong> 份经历记录</span><span><strong>${data.tasks.filter(task=>task.state==="done").length}</strong> 项练习有结果</span><span><strong>${(data.insights||[]).length}</strong> 次认识复盘</span></div></div></article>${workspaceShortcuts(data)}<div class="career-research-bar"><p>${data.running?'正在查阅资料与研究…':`已用 ${data.usage.calls} / ${data.budget.max_calls} 次${demoMode?"演示脚本":"模型"}调用`} <a class="text-button" href="#research/${e(data.id)}">打开完整研究记录 ↗</a></p><label class="checkbox-line"><input id="career-offline" type="checkbox" ${career.offline?"checked":""}>只整理原文</label><label class="checkbox-line"><input id="career-public" type="checkbox" ${storyDraft().allow_public&&!career.offline&&!demoMode?"checked":""} ${career.offline||demoMode?"disabled":""}>补查公开业务与技术资料</label><small>${demoMode?"预置脚本演示，不调用真实模型；新问题也只得到演示脚本响应。":`以上选择用于新研究，续跑沿用原设置。所选研究资料会发送至已配置模型；岗位理解不读取已导入的简历、经历与练习材料；每轮最多6次研究调用、2分半。公开补查使用已配置搜索服务，可能计费；本目标最多 ${data.budget.max_public||8} 次搜索或正文读取，已用 ${data.usage.public||0} 次。`}</small></div>${researchControls(data)}${researchFocus(data)}${sourceFollowups(data)}${passageEditor(data)}${conversationNoteEditor(data)}<nav class="career-tabs" aria-label="求职成长步骤">${[["requirements","01","看清工作"],["stories","02","经历与差距"],["experiments","03","工作样本"],["interview","04","理解与面试"]].map(([key,n,title])=>`<button type="button" data-career-tab="${key}" class="${career.tab===key?"active":""}" aria-pressed="${career.tab===key}"><span>${n}</span>${title}</button>`).join("")}</nav>${career.tab==="requirements"?resultsSection:""}<div id="career-tab-content">${({requirements,stories,experiments,interview})[career.tab](data)}${career.tab==="interview"?pitchCards(data):""}</div>${career.tab!=="requirements"?resultsSection:""}<section class="career-workspace-materials" aria-label="资料与目标管理">${evidenceLibrary(data)}${goalSettings(data)}</section>${questionBoard(data)}${inquiryPanel(data)}`;
+    root.innerHTML=`<article class="career-target panel"><div><span class="eyebrow">MY NEXT CHAPTER</span><h2>${e(data.title)}</h2><p>${e(data.goal)}</p><div class="career-target-jobs">${data.jobs.map(job=>`<button class="quiet-tag" data-job="${e(job.id)}">${e(jobText(job))} ↗</button>`).join("")}</div></div><div class="career-target-aside"><button type="button" class="text-button" id="career-open-library">找回资料与认识 ↗</button><button type="button" class="secondary" id="career-export">导出求职准备包 ↧</button><div class="career-progress"><span><strong>${data.stories.length}</strong> 份经历记录</span><span><strong>${data.tasks.filter(task=>task.state==="done").length}</strong> 项练习有结果</span><span><strong>${(data.insights||[]).length}</strong> 次认识复盘</span></div></div></article>${workspaceShortcuts(data)}<div class="career-research-bar"><p>${data.running?'正在查阅资料与研究…':`已用 ${data.usage.calls} / ${data.budget.max_calls} 次${demoMode?"演示脚本":"模型"}调用`} <a class="text-button" href="#research/${e(data.id)}">打开完整研究记录 ↗</a></p><label class="checkbox-line"><input id="career-offline" type="checkbox" ${career.offline?"checked":""}>只整理原文</label><label class="checkbox-line"><input id="career-public" type="checkbox" ${storyDraft().allow_public&&!career.offline&&!demoMode?"checked":""} ${career.offline||demoMode?"disabled":""}>补查公开业务与技术资料</label><small>${demoMode?"预置脚本演示，不调用真实模型；新问题也只得到演示脚本响应。":`以上选择用于新研究，续跑沿用原设置。所选研究资料会发送至已配置模型；岗位理解不读取已导入的简历、经历与练习材料；每轮最多6次研究调用、2分半。公开补查使用已配置搜索服务，可能计费；本目标最多 ${data.budget.max_public||8} 次搜索或正文读取，已用 ${data.usage.public||0} 次。`}</small></div>${researchControls(data)}${researchFocus(data)}${sourceFollowups(data)}${passageEditor(data)}${conversationNoteEditor(data)}<nav class="career-tabs" aria-label="求职成长步骤">${[["requirements","01","看清工作"],["stories","02","经历与差距"],["experiments","03","工作样本"],["interview","04","理解与面试"]].map(([key,n,title])=>`<button type="button" data-career-tab="${key}" class="${career.tab===key?"active":""}" aria-pressed="${career.tab===key}"><span>${n}</span>${title}</button>`).join("")}</nav>${career.tab==="requirements"?resultsSection:""}<div id="career-tab-content">${({requirements,stories,experiments,interview})[career.tab](data)}${career.tab==="interview"?pitchCards(data):""}</div>${career.tab!=="requirements"?resultsSection:""}<section class="career-workspace-materials" aria-label="资料与目标管理">${evidenceLibrary(data)}${goalSettings(data)}</section>${questionBoard(data)}${synthesisPanel(data)}${inquiryPanel(data)}`;
     showGoalJobs();
     const shown=data.results.filter(inCareerSection).sort((a,b)=>Number(a.state==="abandoned")-Number(b.state==="abandoned")),defaultResult=shown.find(row=>row.state!=="abandoned");
     $("#career-results").closest(".career-result-area").hidden=!shown.length;
@@ -1015,6 +1034,7 @@
     const form=event.target.closest("form"),length=event.target.value.length;form.querySelector("[data-conclusion-length]").textContent=length+" / 2000 字"+(length>2000?" · 请精简后保存；原答复仍可回看。":"");form.querySelector("button.primary").disabled=length>2000;
   });
   document.addEventListener("change",event=>{
+    if(event.target.matches?.('#career-synthesis [name="question_ids"]')){captureDrafts();renderDetail();return;}
     if(event.target.matches?.('[data-career-focus-choice]')){setResearchFocus(event.target.value).catch(error=>notify(error.message,true));return;}
 
     if(event.target.matches?.('#career-challenge [name="counter_insight_id"]')){
@@ -1169,10 +1189,15 @@
     }catch(error){target.disabled=false;notify(error.message,true);}
   });
   document.addEventListener("submit",async event=>{
-    const form=event.target;if(!["career-conversation-note","career-job-observation","career-passage-editor","career-story","career-interview-answer","career-resume-form","career-insight","career-manual-experiment","career-settings","career-inquiry","career-library-form","career-challenge","career-material-form","career-pitch-form","career-question-editor","career-proof-editor"].includes(form.id)&&!form.dataset.careerTaskForm)return;
+    const form=event.target;if(!["career-synthesis","career-conversation-note","career-job-observation","career-passage-editor","career-story","career-interview-answer","career-resume-form","career-insight","career-manual-experiment","career-settings","career-inquiry","career-library-form","career-challenge","career-material-form","career-pitch-form","career-question-editor","career-proof-editor"].includes(form.id)&&!form.dataset.careerTaskForm)return;
     event.preventDefault();const submit=event.submitter||form.querySelector("button");submit.disabled=true;captureDrafts();
     try{
-      if(form.id==="career-library-form")await searchLibrary();
+      if(form.id==="career-synthesis"){
+        const question_ids=new FormData(form).getAll("question_ids");
+        if(question_ids.length<2||question_ids.length>4)throw new Error("请选择2至4个调查问题，再开始综合研究。");
+        await research("ask","",0,null,null,form.elements.question.value,{inherit_focus:false,synthesis_question_ids:question_ids});
+      }
+      else if(form.id==="career-library-form")await searchLibrary();
       else if(form.id==="career-conversation-note")await saveConversationNote(form);
       else if(form.id==="career-job-observation")await saveJobObservation(form);
       else if(form.id==="career-proof-editor"){const values=Object.fromEntries(new FormData(form)),records=[0,1,2].map(index=>values["record_"+index]).filter(Boolean).map(value=>{const [kind,id]=value.split(":");return {kind,id};});const id=career.id,updated=await api("career/"+id+"/requirement-evidence",{method:"POST",body:JSON.stringify({requirement_key:values.requirement_key,records,relevance:values.relevance,missing:values.missing})});if(career.id===id){captureDrafts();career.data=updated;delete storyDraft().proof;renderDetail();}notify("证据对照已保存；相关性、实际结果和适用边界仍需回查材料。");}
