@@ -69,19 +69,32 @@ class DemoModel:
         documents.extend(
             row["artifact_document"]["document_id"]
             for row in career.get("experiments", [])
-            if row.get("artifact_document")
+            if row.get("artifact_document") and row["id"] == career.get("selected_experiment_id")
         )
         previous = career.get("previous_experiment")
         if previous and previous.get("artifact_document"):
             documents.append(previous["artifact_document"]["document_id"])
-        if action in {"gaps", "interview", "plan", "pitch"} and career.get("stories"):
+        inquiry = career.get("selected_inquiry") or {}
+        allowed = {row["id"] for row in context["fixed_scope"].get("public_document_titles", [])}
+        for passage in [inquiry.get("source_passage") or {}, *inquiry.get("evidence_passages", [])]:
+            if passage.get("public_document_id") in allowed:
+                documents.append(passage["public_document_id"])
+        if (
+            action in {"gaps", "interview", "plan", "pitch"}
+            and not inquiry
+            and career.get("stories")
+        ):
             documents.append(career["stories"][-1]["document_id"])
+        if not context["fixed_scope"]["jobs"] and not documents:
+            documents.extend(
+                row["id"] for row in context["fixed_scope"].get("public_document_titles", [])[:2]
+            )
         for document in dict.fromkeys(documents):
             if not any(ev.get("public_document_id") == document for ev in evidence):
                 return self.call(
                     history, "read_archived_document", {"document_id": document, "start": 0}
                 )
-        claims, relations = [], []
+        claims, relations, work_types = [], [], []
         for ev in evidence:
             if not ev.get("job_id"):
                 continue
@@ -112,12 +125,49 @@ class DemoModel:
                         "transfer_limit": "工具与任务相关，不表示胜任或拥有生产审批权限。",
                     }
                 )
+            if "task" in group and "deliverable" in group:
+                task, deliverable = (
+                    claims[group["task"]]["text"],
+                    claims[group["deliverable"]]["text"],
+                )
+                application = "知识库" in task
+                work_types.append(
+                    {
+                        "name": "虚构示例：业务应用接入"
+                        if application
+                        else "虚构示例：执行平台开发",
+                        "problem": "把知识与接口接入业务，定位失败样例。"
+                        if application
+                        else ("让工具调用与任务执行可追踪，运行规模尚未说明。"),
+                        "tasks": task,
+                        "deliverables": deliverable,
+                        "claim_indices": list(group.values()),
+                        "basis": "inference",
+                        "boundary": "这是虚构样本的预置分类；生产权限与独立验收责任仍未知。",
+                        "next_check": "核对真实业务目标、验收口径与交接分工。",
+                    }
+                )
+                relations.append(
+                    {
+                        "source_claim_index": group["task"],
+                        "target_claim_index": group["deliverable"],
+                        "predicate": "produces",
+                        "basis": "inference",
+                        "rationale": "预置示例：把JD列出的任务与相应交付物联系起来。",
+                        "transfer_limit": "只能解释这份虚构资料，不推断实际验收权或业务收益。",
+                    }
+                )
         args = {"claims": claims[:8], "gaps": ["上线审批由谁负责，哪些失败需要人工接管？"]}
         if action == "map":
             args["work_map"] = {
                 "version": "work-map-v3-work-relations",
-                "scope_note": "虚构JD的预置关系示例，不代表真实模型研究效果。",
-                "work_types": [],
+                "scope_note": (
+                    "虚构JD的预置关系示例，不代表真实模型研究效果。"
+                    if context["fixed_scope"]["jobs"]
+                    else "工作资料的预置流程示例，未选择JD；"
+                    "不能据此补造招聘资格或声称模型已理解新资料。"
+                ),
+                "work_types": work_types[:4],
                 "work_relations": relations[:4],
                 "comparisons": [],
                 "unknowns": ["生产权限、实际验收标准与运行规模仍未说明。"],
@@ -137,7 +187,13 @@ class DemoModel:
                         "【预置示例】正常响应也有两次写入，挑战了只归因于重试的解释。"
                         "并发尚未控制，具体原因仍未知。"
                     )
-            if action in {"answer", "followup"}:
+            if action in {"answer", "followup"} and career.get("understanding_check"):
+                text = (
+                    "【预置示例】概念解释应区分观察、原因与适用条件，"
+                    "并说明还需要什么反例；解释不证明亲自完成了生产工作。"
+                    "这是固定示范，不是对本次输入的模型评价。"
+                )
+            elif action in {"answer", "followup"}:
                 text = (
                     "【预置示例】可核对亲自行动、实际观察和未验证的边界。"
                     "这是固定提示，不是对本次输入的模型评价。"
@@ -159,9 +215,14 @@ class DemoModel:
                     "请结合亲自做过的本地样例，说明怎么检查失败、留下了什么运行记录，哪些结果还不能确定？",
                     "业务应用与执行平台使用相似工具时，交付物和责任有什么不同？",
                 ]
+            if action == "teachback":
+                args["gaps"] = [
+                    "为什么正常响应也出现重复写入，会挑战只归因于重试的解释？还有哪些原因未排除？",
+                    "如果固定请求标识但改变并发条件，怎样设计一次可能推翻原解释的检查？",
+                ]
             if action == "followup":
                 args["gaps"] = ["你说的观察排除了哪些其他原因？下一步最小的对照是什么？"]
-            if action == "plan" and context.get("application_background"):
+            if action in {"plan", "challenge"} and context.get("application_background"):
                 args["application_plan"] = {
                     "background_memory_id": context["application_background"]["memory_id"],
                     "actions": [
@@ -268,22 +329,61 @@ async def populate(settings, model):
 
         await run("role")
         mapped = await run("map")
-        await run("gaps")
+        work_text = "虚构操作说明：超时后可重试，需记录输入、请求标识与写入次数；重复原因未说明。"
+        book = career.add_material(identity, title="虚构操作说明", text=work_text)
+        work_document = book["materials"][-1]["id"]
+        question_values = {
+            "question": "超时重试足以解释重复写入吗？",
+            "why_matters": "避免用工具关键词替代因果检查。",
+            "next_evidence": "需要正常与超时两组输入输出，并控制并发。",
+            "hypothesis_a": "重复写入只会发生在超时重试时；仍需核实。",
+            "hypothesis_b": "正常响应下的重复提交或并发也可能有关，具体原因未知。",
+            "state": "open",
+            "conclusion": "",
+            "source_step_id": None,
+            "conclusion_step_id": None,
+        }
         book = career.save_question(
             identity,
             {
-                "question": "超时重试足以解释重复写入吗？",
-                "why_matters": "避免用工具关键词替代因果检查。",
-                "next_evidence": "需要正常与超时两组输入输出，并控制并发。",
-                "state": "open",
-                "conclusion": "",
-                "source_step_id": None,
-                "conclusion_step_id": None,
+                **question_values,
+                "source_passage": {
+                    "public_document_id": work_document,
+                    "start": 0,
+                    "end": len(work_text),
+                },
             },
         )
         question = book["questions"][0]
-        await run("ask", question_id=question["id"], question=question["question"])
-        plan = await run("plan", question_id=question["id"])
+        career.focus_question(identity, question["id"])
+        old = career.add_insight(
+            identity,
+            {
+                "question_id": question["id"],
+                "previous_view": "只看到工具说明。",
+                "observation": "还没有做对照。",
+                "current_view": "重试应该能解释重复写入。",
+                "open_question": "正常响应会怎样？",
+            },
+        )["insights"][-1]
+        initial = await run("ask", question_id=question["id"], question=question["question"])
+        counter_text = "虚构排查说明：正常响应也应检查重复提交；并发相关原因仍需受控观察。"
+        book = career.add_material(identity, title="虚构排查说明", text=counter_text)
+        counter_document = book["materials"][-1]["id"]
+        career.save_question_passage(
+            identity,
+            question["id"],
+            {
+                "passage": {
+                    "public_document_id": counter_document,
+                    "start": 0,
+                    "end": len(counter_text),
+                },
+                "relation": "challenges",
+                "user_note": "可能挑战只归因于重试的解释；这仍是排查建议，不是实验结果。",
+            },
+        )
+        plan = await run("challenge", question_id=question["id"])
         book = career.import_tasks(identity, plan["step_id"])
         task = book["tasks"][0]
         book = career.update_task(
@@ -297,21 +397,12 @@ async def populate(settings, model):
             artifact_text="情境A：正常响应，write=2；情境B：超时重试，write=2。并发条件未控制，本记录未独立执行。",
         )
         task = book["tasks"][0]
-        reviewed = await run("ask", task_id=task["id"], question=question["question"])
-        await run("reflect", task_id=task["id"])
-        old = career.add_insight(
-            identity,
-            {
-                "previous_view": "只看到工具说明。",
-                "observation": "还没有做对照。",
-                "current_view": "重试应该能解释重复写入。",
-                "open_question": "正常响应会怎样？",
-            },
-        )["insights"][-1]
+        reviewed = await run("reflect", task_id=task["id"])
         book = career.add_insight(
             identity,
             {
                 "previous_view": old["current_view"],
+                "question_id": question["id"],
                 "observation": task.get("outcome") or "虚构对照中，正常响应也出现两次写入。",
                 "current_view": "原解释不足；还需要控制并发和请求去重，不能仅凭两次输出判断原因。",
                 "open_question": "这套检查方法迁移到平台工作还需要什么条件？",
@@ -321,14 +412,33 @@ async def populate(settings, model):
             },
         )
         insight = book["insights"][-1]
-        interview = await run("interview")
+        career.save_question(
+            identity,
+            {
+                **question_values,
+                "conclusion": insight["current_view"],
+                "conclusion_step_id": reviewed["step_id"],
+            },
+            question["id"],
+        )
+        await run(
+            "ask",
+            question_id=question["id"],
+            task_id=task["id"],
+            source_step_id=initial["step_id"],
+            question="带着新观察与修正后的认识，重新检查原解释还有哪些未解决部分？",
+        )
+        interview = await run("teachback", question_id=question["id"])
         answer = await run(
             "answer",
             source_step_id=interview["step_id"],
-            answer="虚构回答：我亲自构造输入并记录输出，正常响应也出现两次写入。但并发未控制，所以还不能确定原因，也没有生产效果证据。",
+            answer=(
+                "虚构回答（理解自测）：正常响应也重复写入，只能挑战把重试当作唯一原因的解释。"
+                "还需要固定请求标识、控制并发；没有排除其他原因，也不证明生产有效。"
+            ),
         )
         await run("followup", source_step_id=answer["step_id"])
-        career.save_pitch(
+        book = career.save_pitch(
             identity,
             {
                 "title": "虚构项目讲述：行动、观察与限制",
@@ -341,6 +451,7 @@ async def populate(settings, model):
                 "source_step_id": None,
             },
         )
+        pitch = book["pitches"][-1]
         next_goal = career.create(
             title="示例：带着旧认识转向平台岗位",
             goal="核对旧理解在新岗位中的适用条件。",
@@ -351,11 +462,15 @@ async def populate(settings, model):
         copied = career.reuse(
             next_goal["id"], source_project_id=identity, kind="insight", record_id=insight["id"]
         )
+        career.focus_question(next_goal["id"], copied["questions"][0]["id"])
         return {
             "main": identity,
             "map": mapped["step_id"],
             "question": question["id"],
             "answer": answer["step_id"],
+            "teachback": interview["step_id"],
+            "insight": insight["id"],
+            "pitch": pitch["id"],
             "next_goal": next_goal["id"],
             "next_question": copied["questions"][0]["id"],
         }
@@ -400,10 +515,15 @@ class DemoSurface:
                 )
                 for title, target in [
                     ("① 看懂工作", f"career/{links['main']}/discussion/{links['map']}"),
-                    ("② 验证与认知变化", f"career/{links['main']}/question/{links['question']}"),
-                    ("③ 面试与讲述", f"career/{links['main']}/discussion/{links['answer']}"),
+                    ("② 原文、反例与实验", f"career/{links['main']}/journey/{links['question']}"),
+                    ("③ 检查自己的理解", f"career/{links['main']}/discussion/{links['answer']}"),
                     (
-                        "④ 迁移到新岗位",
+                        "④ 认识修正后回看研究",
+                        f"career/{links['main']}/understanding/{links['insight']}",
+                    ),
+                    ("⑤ 讲清行动与边界", f"career/{links['main']}/pitch/{links['pitch']}"),
+                    (
+                        "⑥ 迁移到新岗位",
                         f"career/{links['next_goal']}/question/{links['next_question']}",
                     ),
                 ]:

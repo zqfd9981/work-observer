@@ -47,11 +47,41 @@ def test_demo_walkthrough_ignores_user_configuration_and_keeps_provider_calls_at
         assert data["tasks"][0]["state"] == "done"
         assert data["insights"][0]["use_for_research"] is False
         assert data["insights"][1]["use_for_research"] is True
+        inquiry = next(row for row in data["questions"] if row["id"] == app.links["question"])
+        assert data["focus_question_id"] == inquiry["id"]
+        assert inquiry["hypothesis_a"] and inquiry["hypothesis_b"]
+        assert inquiry["source_passage"]["quote"] and inquiry["evidence_passages"][0]["quote"]
+        assert inquiry["state"] == "open" and "原解释不足" in inquiry["conclusion"]
+        mapped = next(row for row in data["results"] if row["step_id"] == app.links["map"])
+        assert len(mapped["result"]["work_map"]["work_types"]) == 2
+        assert {row["predicate"] for row in mapped["result"]["work_map"]["work_relations"]} == {
+            "requires",
+            "produces",
+        }
+        old_id, revised_id = (row["id"] for row in data["insights"])
+        recalled = [
+            note["id"]
+            for row in data["results"]
+            for note in (row.get("result") or {})
+            .get("career_learning_context", {})
+            .get("notes", [])
+        ]
+        assert old_id in recalled and revised_id in recalled
+        challenge = next(row for row in data["results"] if row["kind"] == "challenge")
+        assert challenge["question_id"] == inquiry["id"]
+        assert inquiry["evidence_passages"][0]["public_document_id"] in {
+            row.get("public_document_id") for row in challenge["result"]["evidence"]
+        }
         assert (
             len([row for row in data["results"] if row.get("question_id") == app.links["question"]])
             >= 3
         )
         answer = next(row for row in data["results"] if row["kind"] == "answer")
+        assert answer["understanding_check"] and answer["question_id"] == inquiry["id"]
+        assert any(
+            row.get("public_document_id") == answer["answer_document_id"]
+            for row in answer["result"]["evidence"]
+        )
         original = client.get("/api/public-documents/" + answer["answer_document_id"]).json()
         assert "虚构回答" in original["text"]
         transferred = client.get("/api/career/" + app.links["next_goal"]).json()
@@ -76,6 +106,33 @@ def test_demo_walkthrough_ignores_user_configuration_and_keeps_provider_calls_at
             == 403
         )
         assert client.post("/api/operations/tick", headers=auth, json={}).status_code == 403
+        # The walkthrough must also support starting from working material before choosing a JD.
+        material_goal = client.post(
+            "/api/career",
+            headers=auth,
+            json={
+                "title": "虚构资料起步",
+                "goal": "先理解交付与未知",
+                "material_title": "虚构操作说明",
+                "material_text": "虚构说明：保留失败样例与运行记录。",
+            },
+        ).json()
+        prepared = client.post(
+            f"/api/career/{material_goal['id']}/prepare", headers=auth, json={"kind": "role"}
+        )
+        assert prepared.status_code == 201, prepared.text
+        client.post(
+            f"/api/projects/{material_goal['id']}/run",
+            headers=auth,
+            json={"step_id": prepared.json()["step_id"]},
+        )
+        for _ in range(200):
+            current = client.get(f"/api/career/{material_goal['id']}").json()
+            if not current["running"] and current["results"][0]["result"]:
+                break
+            time.sleep(0.01)
+        assert current["results"][0]["result"]["status"] == "completed"
+        assert current["results"][0]["result"]["evidence"]
     assert protected.read_bytes() == b"Existing user data must remain untouched."
 
 

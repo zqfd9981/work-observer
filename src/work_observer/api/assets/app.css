@@ -129,7 +129,7 @@
 
 .career-demo-banner{padding:20px 24px;background:#eaf1e3;border:1px solid #cbd9c1;border-radius:12px;margin:0 0 24px;color:#35543e}
 .career-demo-banner>strong{font-size:16px}.career-demo-banner p{font-size:13px;line-height:1.8;margin:10px 0}
-.career-demo-banner nav{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px}.career-demo-banner a{padding:7px 12px;background:white;border:1px solid #cbd9c1;border-radius:8px;font-size:13px;color:#31563e;text-decoration:none}
+.career-demo-banner nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}.career-demo-banner a{display:flex;align-items:center;min-height:44px;line-height:1.6;white-space:normal;padding:7px 12px;background:white;border:1px solid #cbd9c1;border-radius:8px;font-size:13px;color:#31563e;text-decoration:none}
 
 .work-graph-panel{min-width:0}.work-graph-scroll{min-width:0}.work-graph-scroll svg{margin:0 auto}
 .work-graph-controls{display:grid;grid-template-columns:minmax(0,1fr) 130px;gap:14px;align-items:end}.work-graph-controls label{display:block;min-width:0}.work-graph-controls select{width:100%}
@@ -170,3 +170,5 @@
 .source-reader-question select{width:100%;min-width:0}.career-passage-editor{padding:22px;margin:18px 0}.career-passage-editor p,.career-collected-passage p{white-space:pre-wrap;overflow-wrap:anywhere}.career-question-passages{margin:16px 0}.career-question-passages>summary{font-weight:600;cursor:pointer}.career-collected-passage{padding:16px;margin:12px 0;background:#f4f7ef;border-radius:9px}.career-collected-passage .result-actions{flex-wrap:wrap}
 .career-learning-changes{padding:14px 16px;margin:16px 0;background:#fff4df;border-left:3px solid #cfa65a;border-radius:7px}.career-learning-changes p,.career-learning-changes li{overflow-wrap:anywhere}.career-learning-impact{margin:24px 0 8px}.career-learning-impact>article{padding:16px;border:1px solid #dde6d7;border-radius:9px;margin:12px 0}.career-learning-impact h5{font-size:15px;line-height:1.7;margin:8px 0;overflow-wrap:anywhere}.career-learning-impact .result-actions{flex-wrap:wrap}
 .career-learning-changes ul{padding-left:20px;margin:8px 0}.career-understanding-journey .career-learning-changes li,.career-learning-changes li{padding:0;margin:8px 0;border:0;background:transparent}.career-understanding-journey>.section-heading{flex-wrap:wrap}.career-understanding-journey>.section-heading>.result-actions{flex-wrap:wrap}.career-learning-impact details p{white-space:pre-wrap;overflow-wrap:anywhere}
+
+@media(max-width:900px){.career-demo-banner nav{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:580px){.career-demo-banner nav{grid-template-columns:1fr}}
