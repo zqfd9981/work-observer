@@ -205,7 +205,12 @@ class CareerService:
         material_title="起始工作资料",
         material_text="",
         first_question="",
+        first_question_job_ids=None,
     ):
+        question_jobs = list(first_question_job_ids or [])
+        if (len(set(question_jobs)) != len(question_jobs) or not set(question_jobs) <= set(job_ids)
+                or question_jobs and not first_question.strip()):
+            raise ValueError("请为起始调查选择当前目标中的不同岗位，并写下调查问题。")
         for identity in job_ids:
             self.repository.job(identity)
         project = self.projects.create(
@@ -258,7 +263,7 @@ class CareerService:
                 "why_matters": "", "next_evidence": "", "hypothesis_a": "", "hypothesis_b": "",
                 "state": "open", "conclusion": "", "source_step_id": None,
                 "conclusion_step_id": None, "parent_question_id": None,
-                "source_passage": None, "selected_job_ids": [],
+                "source_passage": None, "selected_job_ids": question_jobs,
             })
             return self.focus_question(project["id"], started["questions"][-1]["id"])
         return self.get(project["id"])
