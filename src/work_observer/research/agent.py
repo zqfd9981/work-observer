@@ -227,6 +227,21 @@ EXTRA_TOOLS = [
 ]
 LEARNING_TOOLS = [
     tool(
+        "search_research_history",
+        "查找同一目标已完成的旧研究，按问题、判断和未知检索；关键词任一命中，"
+        "空列表看目录，每页6条，可按next_offset继续。预览不等于完整判断或新证据。",
+        {"terms": {"type": "array", "items": {"type": "string", "maxLength": 100},
+                   "maxItems": 10}, "offset": {"type": "integer", "minimum": 0}},
+        ["terms", "offset"],
+    ),
+    tool(
+        "read_research_history",
+        "按step_id读取一份完整旧研究的判断、要求性质、地图限定、未知与来源定位。"
+        "旧分析不提供可引用证据；需要本轮读取原文，不能恢复已移出或其他目标的资料。",
+        {"step_id": {"type": "string"}},
+        ["step_id"],
+    ),
+    tool(
         "search_experiments",
         "查找本目标保存的实验设计与用户观察，包括开头未带入的较早记录；"
         "关键词任一命中，空列表看目录。question_id为空查整个目标，否则只查该问题；"
@@ -1554,6 +1569,10 @@ async def _research(
         system += feedback_policy
     if learning_enabled:
         system += (
+            "\n需要找回以前研究过的问题或判断时，可search_research_history检索同一目标，"
+            "再read_research_history读取完整旧判断、工作关系、末尾限定和未知。"
+            "旧分析只是待重核的线索，不能用搜索预览替代全文，也不能当成本轮证据。"
+            "按source_references_to_reread回读当前可用原文，范围外资料保留无法核对。"
             "\n需要开头未带入的个人认识时，可search_learning_notes查目录或关键词，"
             "再read_learning_note读完整原话、观察与末尾限制；可沿replaces_insight_id重查开放的旧记录。"
             "这些是用户理解，不是原文证据，不能把认识ID当作引用，也不能因读取而宣布它已证实或恢复选用。"
@@ -1935,11 +1954,29 @@ async def _research(
                         }
                     queried = True
                 elif name in {"search_learning_notes", "read_learning_note",
+                              "search_research_history", "read_research_history",
                               "search_experiments", "read_experiments"}:
                     if not learning_enabled:
                         raise ProbeError("RESEARCH_TOOL_DENIED")
                     learning = result.setdefault("career_learning_context", {})
-                    if name == "search_learning_notes" and set(arguments) == {"terms", "offset"}:
+                    if name == "search_research_history" and set(arguments) == {"terms", "offset"}:
+                        data = learning_notebook.search_research_history(**arguments)
+                        entry.update(terms=arguments["terms"], matched=data["matching_count"])
+                        learning.setdefault("history_searches", []).append({
+                            **arguments, "matching_count": data["matching_count"],
+                            "returned_step_ids": [row["step_id"] for row in data["research"]],
+                        })
+                    elif name == "read_research_history" and set(arguments) == {"step_id"}:
+                        data = learning_notebook.read_research_history(arguments["step_id"])
+                        for reference in data["research"]["source_references_to_reread"]:
+                            reference["in_current_scope"] = (
+                                reference.get("public_document_id")
+                                in scope.get("archived_public_ids", [])
+                                or reference.get("job_id") in candidates
+                            )
+                        entry["step_id"] = arguments["step_id"]
+                        learning.setdefault("read_history", []).append(data["research"])
+                    elif name == "search_learning_notes" and set(arguments) == {"terms", "offset"}:
                         data = learning_notebook.search(**arguments)
                         entry.update(terms=arguments["terms"], matched=data["matching_count"])
                         learning.setdefault("searches", []).append({

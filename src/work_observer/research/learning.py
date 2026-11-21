@@ -223,6 +223,95 @@ class LearningNotebook:
             "未保留的产物只能作为旧定位，不能假装已核对。保留条件、反例与未知。",
         }
 
+    def _research_history(self):
+        project = self.project_reader()
+        steps = {row["id"]: row for row in project.get("steps", [])}
+        records = []
+        for entry in project.get("career", {}).get("runs", []):
+            step = steps.get(entry["step_id"], {})
+            if not step.get("run_id") or step.get("state") == "abandoned":
+                continue
+            run = self.store.get(step["run_id"])
+            result = run.get("result") or {}
+            if (run["state"] == "invalidated" or result.get("status") != "completed"
+                    or (result.get("business_review") or {}).get("status") == "rejected"):
+                continue
+            records.append((entry, result))
+        return records
+
+    def search_research_history(self, terms, offset=0):
+        if terms != []:
+            terms = validated_terms(terms)
+        if type(offset) is not int or offset < 0:
+            raise ProbeError("INVALID_RESEARCH_HISTORY_OFFSET")
+        ranked = []
+        for entry, result in self._research_history():
+            question = entry.get("user_question") or entry.get("interview_question") or ""
+            claims = result.get("claims", [])
+            text = match_text("\n".join([
+                question, *(row["text"] for row in claims), *result.get("gaps", []),
+            ]))
+            hits = [term for term in terms if match_text(term) in text]
+            if terms and not hits:
+                continue
+            matches = [index for index, claim in enumerate(claims)
+                       if not terms or any(match_text(term) in match_text(claim["text"])
+                                           for term in terms)]
+            ranked.append((len(hits), entry["created_at"], entry["step_id"], {
+                "step_id": entry["step_id"], "kind": entry["kind"], "question": question,
+                "question_id": entry.get("question_id"), "recorded_at": entry["created_at"],
+                "claim_previews": [{
+                    "position": index + 1, "text_preview": claims[index]["text"][:180],
+                    "preview_is_partial": len(claims[index]["text"]) > 180,
+                    "basis": claims[index].get("basis"),
+                    "requirement": claims[index].get("requirement"),
+                } for index in matches[:3]],
+                "matching_claim_count": len(matches), "matched_terms": hits,
+            }))
+        ranked.sort(key=lambda row: row[:3], reverse=True)
+        page = ranked[offset:offset + 6]
+        return {
+            "research": [row[3] for row in page], "matching_count": len(ranked),
+            "offset": offset,
+            "next_offset": offset + len(page) if offset + len(page) < len(ranked) else None,
+            "notice": "本目标已完成研究的关键词预览，不是新证据或已确认的结论。"
+            "先read_research_history读取完整判断与限定，再回读本轮可用原文。",
+        }
+
+    def read_research_history(self, step_id):
+        found = next(((entry, result) for entry, result in self._research_history()
+                      if entry["step_id"] == step_id), None)
+        if not found:
+            raise ProbeError("RESEARCH_HISTORY_NOT_AVAILABLE")
+        entry, result = found
+        references = {row["id"]: {key: row[key] for key in (
+            "title", "job_id", "document_id", "snapshot_id", "public_document_id",
+            "start", "end", "evidence_kind",
+        ) if row.get(key) is not None} for row in result.get("evidence", [])}
+        record = {
+            "step_id": entry["step_id"], "kind": entry["kind"],
+            "question": entry.get("user_question") or entry.get("interview_question") or "",
+            "question_id": entry.get("question_id"), "recorded_at": entry["created_at"],
+            "scope_then": deepcopy(result.get("scope")),
+            "claim_details_to_recheck": [{
+                "position": index + 1,
+                **{key: claim.get(key) for key in ("text", "category", "basis", "requirement")},
+                "source_references_to_reread": [references[key]
+                                                for key in claim.get("evidence_ids", [])
+                                                if key in references],
+            } for index, claim in enumerate(result.get("claims", []))],
+            "work_map_then": deepcopy(result.get("work_map")),
+            "unknowns_then": list(result.get("gaps", [])),
+            "source_references_to_reread": list(references.values()),
+        }
+        return {
+            "research": record,
+            "notice": "完整旧分析，只供重新核对；原范围、判断性质和末尾限定仍需保留。"
+            "旧来源仅用于定位，不提供旧引用ID，须本轮读取原文后再引用。"
+            "当前范围以fixed_scope为准；已移出或只属于其他目标的资料不自动恢复。"
+            "计划不等于实际结果，旧研究不能证明当前事实或个人能力，不修改原记录。",
+        }
+
 
 def recall_learning_notes(career, step, goal, *, limit=3):
     runs = {row["step_id"]: row for row in career.get("runs", [])}
