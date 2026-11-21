@@ -1630,6 +1630,11 @@ async def _research(
             "notes": personal["learning_notes"],
             "selected_note": personal["selected_learning_note"],
             "counter_note": personal.get("selected_counter_learning_note"),
+            "comparison_inputs": [
+                row for row in [*personal.get("experiments", []),
+                                personal.get("previous_experiment")]
+                if row and row.get("comparison_rows")
+            ],
             "notice": personal["learning_selection_notice"],
         }
     # 冻结候选正文池：重启后仍引用启动时版本，不把新版本混进旧研究。

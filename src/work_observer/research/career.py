@@ -2140,6 +2140,9 @@ class CareerService:
                 )
             if kind in {"reflect", "ask", "challenge", "plan"} and task_id:
                 question += (
+                    "若包含comparison_rows，逐组区分expected预期与observed实际记录；"
+                    "observed为空的组尚无结果，不能用预期补齐。comparison_conditions是用户称保持的条件，"
+                    "不保证已控制变量；比较结果时指出缺少的条件、反例和仍不能推出的结论。"
                     "若career_evidence.previous_experiment存在，它是本次实验所接续的上次记录。"
                     "对照两次设计、design_change与实际观察，有两份作品原文时都应读取。"
                     "说明哪些条件改变或未说明，不能仅因后一结果不同就证明因果或能力提升。"
@@ -2594,6 +2597,8 @@ class CareerService:
         task_or_ability=None,
         deliverable=None,
         completion_check=None,
+        comparison_conditions=None,
+        comparison_rows=None,
     ):
         plan = {
             key: value.strip()
@@ -2605,13 +2610,17 @@ class CareerService:
         }
         if any(not value for value in plan.values()):
             raise ValueError("请填写实验名称、要验证的工作、交付物和检查方法。")
-        if state == "done" and not outcome.strip():
-            raise ValueError("请先记录实际做了什么或观察到什么，再标记为已记录结果。")
         with self.store.lock, self.store.db:
             project = self._project(identity)
             task = next((row for row in project["career"]["tasks"] if row["id"] == task_id), None)
             if not task:
                 raise ValueError("未找到这项练习。")
+            rows = task.get("comparison_rows", []) if comparison_rows is None else comparison_rows
+            if state == "done" and not outcome.strip():
+                observed = sum(bool(row.get("observed", "").strip()) for row in rows)
+                if not observed:
+                    raise ValueError("请先记录实际做了什么或观察到什么，再标记为已记录结果。")
+                outcome = f"用户记录了 {observed} 组实际观察，详情见条件对照；尚未独立执行或验证。"
             if artifact_text.strip():
                 if any(step["state"] == "running" for step in project["steps"]):
                     raise ValueError("请等本轮研究结束后再保存作品材料，输入仍保留。")
@@ -2637,5 +2646,9 @@ class CareerService:
                 design_change=design_change,
                 updated_at=now(),
             )
+            if comparison_conditions is not None:
+                task["comparison_conditions"] = comparison_conditions.strip()
+            if comparison_rows is not None:
+                task["comparison_rows"] = comparison_rows
             self.projects._write(project)
         return self.get(identity)

@@ -1522,6 +1522,9 @@ class ProjectService:
                     else row.get("hypothesis", "")[:400],
                     "previous_task_id": row.get("previous_task_id"),
                     "design_change": row.get("design_change", ""),
+                    "comparison_conditions": row.get("comparison_conditions", "") if full else "",
+                    "comparison_rows": deepcopy(row.get("comparison_rows", [])) if full else [],
+                    "comparison_row_count": len(row.get("comparison_rows", [])),
                     "artifact": row["artifact"][:200],
                     "artifact_document": {
                         "document_id": row["artifact_document_id"],

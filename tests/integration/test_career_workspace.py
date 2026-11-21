@@ -97,7 +97,7 @@ class CareerModel:
             project_context = context.get("project_context") or {}
             if project_context.get("previous_findings") or project_context.get("historical_reply"):
                 arguments["revisions"] = []
-            if "工作样本实验" in question:
+            if project_context.get("career_action") == "plan":
                 arguments["application_plan"] = {
                     "background_memory_id": context["application_background"]["memory_id"],
                     "actions": [

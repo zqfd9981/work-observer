@@ -257,6 +257,14 @@ class ExperimentInput(BaseModel):
     design_change: str = Field(default="", max_length=1500)
 
 
+class ExperimentComparisonRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    condition: str = Field(min_length=1, max_length=300)
+    input: str = Field(default="", max_length=600)
+    expected: str = Field(default="", max_length=600)
+    observed: str = Field(default="", max_length=1000)
+
+
 class TaskUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, min_length=1, max_length=150)
@@ -270,6 +278,8 @@ class TaskUpdate(BaseModel):
     artifact_title: str = Field(default="工作样本材料", max_length=150)
     artifact_text: str = Field(default="", max_length=20_000)
     design_change: str = Field(default="", max_length=1500)
+    comparison_conditions: str | None = Field(default=None, max_length=1000)
+    comparison_rows: list[ExperimentComparisonRow] | None = Field(default=None, max_length=8)
 
 
 def career_routes(*, repository, store, settings, response, read_json, busy, tasks,

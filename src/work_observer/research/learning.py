@@ -1,5 +1,7 @@
 """Recall personal understanding for the current question without adopting it as fact."""
 
+from copy import deepcopy
+
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.memory.service import _tokens
 from work_observer.retrieval.enhanced import validated_terms
@@ -140,8 +142,10 @@ class LearningNotebook:
                 continue
             text = match_text("\n".join(row.get(key, "") for key in (
                 "title", "task_or_ability", "deliverable", "completion_check",
-                "hypothesis", "outcome", "design_change", "artifact",
-            )))
+                "hypothesis", "outcome", "design_change", "artifact", "comparison_conditions",
+            )) + "\n" + "\n".join(
+                value for case in row.get("comparison_rows", []) for value in case.values()
+            ))
             hits = [term for term in terms if match_text(term) in text]
             if hits or not terms:
                 ranked.append((len(hits), row.get("updated_at") or row["created_at"],
@@ -189,6 +193,8 @@ class LearningNotebook:
                 "proposed_check": row["completion_check"], "state": row["state"],
                 "prior_expectation": row.get("hypothesis", ""),
                 "reported_observation": row.get("outcome", ""),
+                "comparison_conditions": row.get("comparison_conditions", ""),
+                "comparison_rows": deepcopy(row.get("comparison_rows", [])),
                 "design_change": row.get("design_change", ""),
                 "previous_task_id": row.get("previous_task_id"),
                 "source_step_id": row.get("source_step_id"),
