@@ -87,6 +87,8 @@ class HistoryService:
         *,
         observed_before=None,
         before_cutoff=None,
+        before_observation_id=None,
+        after_observation_id=None,
     ):
         """比较所选版本；面板对照可分别限定两侧观察时间，避免重现版本漂移到后次观察。"""
         with Session(self.repository.engine) as session:
@@ -96,10 +98,13 @@ class HistoryService:
                 (
                     row
                     for row in reversed(rows)
-                    if after_snapshot_id is None or row[1].id == after_snapshot_id
+                    if (after_snapshot_id is None or row[1].id == after_snapshot_id)
+                    and (after_observation_id is None or row[0].id == after_observation_id)
                 ),
                 None,
             )
+            if after_observation_id is not None and after is None:
+                raise ProbeError("HISTORY_OBSERVATION_NOT_FOUND")
             if after_snapshot_id is not None and after is None:
                 raise ProbeError("HISTORY_SNAPSHOT_NOT_FOUND")
             after_index = rows.index(after) if after else -1
@@ -107,8 +112,9 @@ class HistoryService:
                 (
                     row
                     for row in reversed(rows[:after_index])
-                    if row[1].id != after[1].id
+                    if (row[1].id != after[1].id or before_observation_id is not None)
                     and (before_snapshot_id is None or row[1].id == before_snapshot_id)
+                    and (before_observation_id is None or row[0].id == before_observation_id)
                     and (
                         before_cutoff is None
                         or row[0].observed_at <= before_cutoff
@@ -117,6 +123,10 @@ class HistoryService:
                 ),
                 None,
             )
+            if before_observation_id is not None and before is None:
+                if before_observation_id not in {row[0].id for row in rows}:
+                    raise ProbeError("HISTORY_OBSERVATION_NOT_FOUND")
+                raise ProbeError("HISTORY_VERSION_ORDER_INVALID")
             if before_snapshot_id is not None and before is None:
                 if before_snapshot_id not in {row[1].id for row in rows}:
                     raise ProbeError("HISTORY_SNAPSHOT_NOT_FOUND")
@@ -184,6 +194,7 @@ class HistoryService:
             chunks.append(
                 {
                     "id": f"{snapshot.id}:{start}:{start + len(quote)}",
+                    "observation_id": observation.id,
                     "job_id": job.id,
                     "title": snapshot.payload.get("title") or job.title,
                     "company": snapshot.payload.get("company") or job.company_name_raw,

@@ -35,6 +35,12 @@ class PublicDocumentQuery(BaseModel):
     offset: int = Field(default=0, ge=0)
 
 
+class HistoryComparisonQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    before_observation_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    after_observation_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
 class MatchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filters: Filters = Field(default_factory=Filters)
@@ -73,7 +79,8 @@ def product_routes(*, repository, settings, model, response, read_json, busy, op
 
         identity = request.path_params["id"]
         repo = repository()
-        result = HistoryService(repo).compare(identity)
+        query = HistoryComparisonQuery.model_validate(dict(request.query_params))
+        result = HistoryService(repo).compare(identity, **query.model_dump())
         return response(result)
 
     async def public_document(request):

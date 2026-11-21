@@ -694,6 +694,8 @@ def create_app(
                     "请单独核对地图的分组、能力关系与边界；逐条判断通过不能替代地图核对。"
                 ),
                 "JOB_NOT_FOUND": "找不到该岗位，请刷新资料列表。",
+                "HISTORY_OBSERVATION_NOT_FOUND": "找不到该岗位的这次详情记录，请重新读取原文历史。",
+                "HISTORY_VERSION_ORDER_INVALID": "请按取得先后选择两次不同的详情记录。",
                 "REPORT_NOT_FOUND": "找不到这份已存研究。",
                 "CSV_TOO_LARGE": "CSV内容请控制在500KB以内。",
                 "CSV_ROW_LIMIT": "每批最多20行，请分批预览。",
