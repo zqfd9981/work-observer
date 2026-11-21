@@ -429,7 +429,8 @@ def project_routes(
                 },
                 409,
             )
-        max_steps = 1 if project.get("career") else 3
+        selected_step = next((step for step in project["steps"] if step["id"] == data.step_id), {})
+        max_steps = (selected_step.get("career_auto_rounds") or 1) if project.get("career") else 3
         tasks["project:" + identity] = asyncio.create_task(
             execute_project(
                 service(),

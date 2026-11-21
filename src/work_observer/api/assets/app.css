@@ -158,3 +158,5 @@
 .career-map-comparison{padding:22px}.career-map-comparison>summary{font-weight:600;cursor:pointer;font-size:14px}.career-map-comparison select{min-width:0;width:100%}.career-comparison-map{margin:18px 0;padding:14px;background:#f1f6ed;border-radius:8px}.career-comparison-map article{padding:14px 0;border-top:1px solid #dbe5d7}.career-comparison-map h5{font-size:13px;margin:8px 0;white-space:pre-wrap;overflow-wrap:anywhere}.career-comparison-map p{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:650px){.career-map-comparison{padding:14px}}
 
 .career-question-origin{margin:14px 0}.career-question-origin>summary{cursor:pointer;font-weight:600}
+
+.career-autonomy{padding:14px 18px;margin:0 0 18px;background:#edf4e8;border-radius:9px}.career-autonomy p{white-space:pre-wrap;overflow-wrap:anywhere}.career-autonomy details{margin:10px 0}

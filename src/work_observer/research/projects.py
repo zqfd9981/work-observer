@@ -1725,6 +1725,8 @@ class ProjectService:
                     })
 
             context["career_evidence"] = {
+                "autonomous_inquiry": {"rounds_remaining": step["career_auto_rounds"]}
+                if step.get("career_auto_rounds") else None,
                 "selected_requirement": step.get("career_requirement"),
                 "selected_inquiry": selected_inquiry,
                 "selected_map_comparison": selected_maps,
@@ -1888,17 +1890,18 @@ async def _execute_project_locked(
     remaining = dict(worker_caps) if worker_caps is not None else None
     reserved = {"calls": 0, "seconds": 0, "public": 0}
     worker_run_ids, worker_stop_reason = [], "step_limit"
-    for index in range(max_steps):
+    for _index in range(max_steps):
         outcome = {}
         step = service.claim(
             identity,
             worker_caps=remaining,
             claim_outcome=outcome,
-            preferred_step_id=preferred_step_id if index == 0 else None,
+            preferred_step_id=preferred_step_id,
         )
         if step is None:
             worker_stop_reason = outcome.get("stop_reason", "no_ready_steps")
             break
+        preferred_step_id = None
         reservation = step_reservation(step)
         for key in reserved:
             reserved[key] += reservation[key]
@@ -1983,9 +1986,20 @@ async def _execute_project_locked(
             service.finish(identity, step["id"], state="failed", reason=code)
         else:
             if status == "completed":
+                if step.get("career_auto_rounds"):
+                    from work_observer.research.career import CareerService
+
+                    preferred_step_id = CareerService(
+                        service.store, repository, settings.raw_directory
+                    ).advance_inquiry(identity, step, result)
+                    if preferred_step_id is None:
+                        break
+                    continue
                 from work_observer.research.investigations import arrange_proposals
 
                 arrange_proposals(service, identity, step, result)
+        if step.get("career_auto_rounds"):
+            break
     result = service.get(identity)
     if worker_caps is not None:
         result["worker_batch"] = {

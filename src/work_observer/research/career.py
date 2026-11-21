@@ -1136,6 +1136,7 @@ class CareerService:
         requirement_key="",
         comparison_step_ids=None,
         inherit_focus=True,
+        autonomous=False,
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
@@ -1222,6 +1223,8 @@ class CareerService:
                 )
                 if not saved_question or kind not in {"ask", "plan", "reflect"}:
                     raise ValueError("请选择已保存的调查问题，再继续提问、设计验证或反思。")
+            if autonomous and (kind != "ask" or not question_id or offline):
+                raise ValueError("请选一个已保存的问题，并取消只整理原文，再开始连续查证。")
             comparison_step_ids = comparison_step_ids or []
             if comparison_step_ids:
                 candidates = {
@@ -1718,6 +1721,7 @@ class CareerService:
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
+                    "autonomous_rounds": 3 if autonomous else 0,
                     "requirement_key": requirement_key if kind == "evidence" else "",
                     "requirement_text": selected_requirement["text"]
                     if selected_requirement
@@ -1737,6 +1741,8 @@ class CareerService:
                 project["steps"][-1]["career_question_id"] = question_id
             if comparison_step_ids:
                 project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
+            if autonomous:
+                project["steps"][-1]["career_auto_rounds"] = 3
             if selected_requirement:
                 project["steps"][-1]["career_requirement"] = {
                     **{
@@ -1755,6 +1761,48 @@ class CareerService:
                 project["steps"][-1]["career_story_id"] = story_id
             self.projects._write(project)
             return {"project_id": identity, "step_id": project["steps"][-1]["id"]}
+
+    def advance_inquiry(self, identity, step, result):
+        """Continue one chosen question, using the existing research steps and budgets."""
+        remaining = step.get("career_auto_rounds", 0)
+        proposals = result.get("investigation_proposals", [])
+
+        def stop(reason):
+            with self.store.lock, self.store.db:
+                current = self._project(identity)
+                entry = next(row for row in current["career"]["runs"]
+                             if row["step_id"] == step["id"])
+                entry["autonomous_stop"] = reason
+                self.projects._write(current)
+
+        if remaining <= 1 or not proposals:
+            return stop("已到本批三轮上限，保留当前判断与未知。" if remaining <= 1
+                        else "本轮未提出可继续的补查，保留判断与仍需补充的材料或行动。")
+        project = self._project(identity)
+        source = next(row for row in project["career"]["runs"] if row["step_id"] == step["id"])
+        proposal = proposals[0]
+        if proposal["question"].strip() == source["user_question"].strip():
+            return stop("后续问题与本轮相同，本批停止，避免重复查证。")
+        try:
+            prepared = self.prepare(
+                identity, "ask", question=proposal["question"], question_id=source["question_id"],
+                source_step_id=step["id"], section=source.get("section") or "requirements",
+                allow_public=step["allow_public"],
+            )
+        except ValueError as exc:
+            return stop(str(exc))
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            following = next(row for row in project["steps"] if row["id"] == prepared["step_id"])
+            following.update(
+                career_auto_rounds=remaining - 1, origin="agent", kind=proposal["kind"],
+                completion=proposal["completion"], evidence_needed=proposal["evidence_needed"],
+            )
+            entry = next(row for row in project["career"]["runs"]
+                         if row["step_id"] == following["id"])
+            entry.update(autonomous_rounds=remaining - 1, investigation_reason=proposal)
+            self.projects._write(project)
+        return following["id"]
 
     def import_tasks(self, identity, step_id, action_indices=None):
         with self.store.lock, self.store.db:
