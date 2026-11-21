@@ -1184,13 +1184,24 @@ class CareerService:
             if data.get("source_passage"):
                 data = {**data, "source_passage": self._source_passage(data["source_passage"])}
             questions = project["career"].setdefault("questions", [])
+            by_id = {row["id"]: row for row in questions}
+            parent_id = data.get("parent_question_id")
+            if parent_id and parent_id not in by_id:
+                raise ValueError("请选择当前目标中的原调查问题。")
+            visited = {question_id} if question_id else set()
+            ancestor = parent_id
+            while ancestor:
+                if ancestor in visited:
+                    raise ValueError("后续问题不能再成为原问题的起点。")
+                visited.add(ancestor)
+                ancestor = by_id.get(ancestor, {}).get("parent_question_id")
             runs = {row["step_id"]: row for row in project["career"]["runs"]}
             for key in ("source_step_id", "conclusion_step_id"):
                 if data.get(key) and data[key] not in runs:
                     raise ValueError("未找到所选讨论，请重新选择或取消关联。")
             if not question_id and "selected_job_ids" not in data:
-                source = runs.get(data.get("source_step_id"), {})
-                if source.get("selected_job_ids"):
+                source = by_id.get(parent_id) or runs.get(data.get("source_step_id"), {})
+                if "selected_job_ids" in source:
                     data = {**data, "selected_job_ids": source["selected_job_ids"][:]}
             selected = data.get("selected_job_ids", [])
             if len(selected) != len(set(selected)) or not set(selected) <= set(project["job_ids"]):
@@ -1504,6 +1515,10 @@ class CareerService:
                     "ask", "plan", "reflect", "teachback", "answer", "followup", "challenge"
                 }:
                     raise ValueError("请选择已保存的调查问题，再继续提问、设计验证或反思。")
+                parent_question = next(
+                    (row for row in project["career"].get("questions", [])
+                     if row["id"] == saved_question.get("parent_question_id")), None
+                )
                 if kind == "challenge":
                     hypothesis_a = hypothesis_a or saved_question.get("hypothesis_a", "")
                     hypothesis_b = hypothesis_b or saved_question.get("hypothesis_b", "")
@@ -1845,6 +1860,14 @@ class CareerService:
                         "先从本轮目录读取对应原文及前后条件，不能把摘录当作已经核对全文。"
                         "若原资料不在本轮可读范围，明确无法重核，不自动恢复资料、不用旧摘录冒充新引用。"
                     )
+                if parent_question:
+                    question += (
+                        "selected_inquiry.parent_inquiry是本问题直接承接的原调查，保留原问题、"
+                        "用户结论与末尾限定、竞争解释和待补证据，帮助说明为什么拆出当前问题。"
+                        "本轮回答当前后续问题，勿重复整套原调查；原结论只是用户记录，"
+                        "不能直接作为事实或新证据。按本轮目录回读相关原文；原资料已移出或不在"
+                        "当前岗位范围时，明确无法重核，不扩大范围。后续答案不自动改写原问题结论。"
+                    )
                 if saved_question.get("evidence_passages"):
                     question += (
                         "selected_inquiry.evidence_passages是用户为同一问题收集的原文线索，"
@@ -1972,15 +1995,16 @@ class CareerService:
                              if row["id"] in {task_id, chosen_task.get("previous_task_id")})
             topic.extend((chosen_task.get("title"), chosen_task.get("task_or_ability")))
             if question_id:
-                topic.append(saved_question["question"])
-                passage = saved_question.get("source_passage") or {}
-                if passage.get("public_document_id") in project["public_document_ids"]:
-                    preferred.append(passage["public_document_id"])
-                topic.append(passage.get("quote", ""))
-                for collected in reversed(saved_question.get("evidence_passages", [])):
-                    if collected.get("public_document_id") in project["public_document_ids"]:
-                        preferred.append(collected["public_document_id"])
-                    topic.extend((collected.get("quote", ""), collected.get("user_note", "")))
+                for inquiry in [saved_question, *([parent_question] if parent_question else [])]:
+                    topic.append(inquiry["question"])
+                    passage = inquiry.get("source_passage") or {}
+                    if passage.get("public_document_id") in project["public_document_ids"]:
+                        preferred.append(passage["public_document_id"])
+                    topic.append(passage.get("quote", ""))
+                    for collected in reversed(inquiry.get("evidence_passages", [])):
+                        if collected.get("public_document_id") in project["public_document_ids"]:
+                            preferred.append(collected["public_document_id"])
+                        topic.extend((collected.get("quote", ""), collected.get("user_note", "")))
                 preferred.extend(row.get("artifact_document_id") for row in [
                     item for item in project["career"]["tasks"]
                     if item.get("question_id") == question_id
@@ -1992,6 +2016,10 @@ class CareerService:
             related_steps = {source_step_id, *comparison_step_ids}
             if question_id:
                 related_steps.add(saved_question.get("source_step_id"))
+                if parent_question:
+                    related_steps.update(parent_question.get(key) for key in (
+                        "source_step_id", "conclusion_step_id",
+                    ))
             if insight_id:
                 chosen_note = next(row for row in project["career"]["insights"]
                                    if row["id"] == insight_id)

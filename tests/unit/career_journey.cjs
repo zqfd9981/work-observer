@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={recentResearch,workspaceShortcuts,conversationNoteEditor,answerRevisionChoice,answerRevisionDraft,questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},conversation_note:draft.conversation_note,jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={branchQuestionDraft,questionBranches,recentResearch,workspaceShortcuts,conversationNoteEditor,answerRevisionChoice,answerRevisionDraft,questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},conversation_note:draft.conversation_note,jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -519,3 +519,26 @@ assert.ok(shortcuts.includes('data-career-workspace-jump="recent" disabled'));
 assert.ok(shortcuts.includes('data-career-workspace-jump="inquiry"')&&shortcuts.includes('data-career-workspace-jump="questions"'));
 console.log('Workspace navigation: unfinished research stays reachable, abandoned rows do not become the latest result, and empty workspaces retain question entry.');
 }
+
+const branchParent={id:'parent-inquiry',question:'Who accepts this work?',state:'answered',conclusion:'Saved user view. '+('Only local observations. '.repeat(120))+'Final condition: cross-team production authority unknown.',next_evidence:'Ask the actual accepting party.',selected_job_ids:['second-job'],conclusion_step_id:'chosen-parent-answer',hypothesis_a:'Advice only.',hypothesis_b:'A limited acceptance role.'};
+const branchChild={id:'child-inquiry',parent_question_id:branchParent.id,question:'<script>What would distinguish these roles?</script>',state:'open',conclusion:''};
+const branchOther={id:'other-inquiry',parent_question_id:branchChild.id,question:'Grandchild should not be pulled into the parent list.',state:'parked'};
+const branchData={...data,questions:[branchParent,branchChild,branchOther],results:[]};
+const branchBefore=JSON.stringify(branchData);
+const branchDraft=ctx.window.journeyTest.branchQuestionDraft(branchParent,branchData);
+assert.equal(branchDraft.parent_question_id,branchParent.id);
+assert.equal(branchDraft.source_step_id,'chosen-parent-answer');
+assert.deepEqual(Array.from(branchDraft.selected_job_ids),['second-job']);
+assert.equal(branchDraft.question,'');assert.equal(branchDraft.conclusion,'');assert.equal(branchDraft.state,'open');
+assert.equal(branchDraft.conclusion_step_id,'');
+const branchParentHtml=ctx.window.journeyTest.questionBranches(branchParent,branchData);
+assert.ok(branchParentHtml.includes('从这里继续追问 · 1')&&branchParentHtml.includes('#career/goal/question/child-inquiry'));
+assert.ok(!branchParentHtml.includes(branchOther.question));
+assert.ok(branchParentHtml.includes('&lt;script&gt;What would distinguish')&&!branchParentHtml.includes('<script>'));
+const branchChildExport=ctx.window.journeyTest.questionBranches(branchChild,branchData,true);
+assert.ok(branchChildExport.includes(branchParent.conclusion)&&branchChildExport.includes(branchParent.next_evidence));
+assert.ok(branchChildExport.includes('Advice only.')&&branchChildExport.includes('A limited acceptance role.'));
+assert.ok(!branchChildExport.includes('<a ')&&!branchChildExport.includes('<button'));
+assert.ok(ctx.window.journeyTest.questionJourneyPackage(branchChild,branchData).includes(branchParent.conclusion));
+assert.equal(JSON.stringify(branchData),branchBefore);
+console.log('Follow-up inquiries: explicit parent and scope, no adopted conclusion, full parent limits, direct navigation, escaped text and read-only export passed.');

@@ -1557,6 +1557,17 @@ class ProjectService:
                 None,
             )
             if selected_inquiry:
+                parent = next(
+                    (row for row in career.get("questions", [])
+                     if row["id"] == selected_inquiry.get("parent_question_id")), None
+                )
+                selected_inquiry["parent_inquiry"] = {
+                    key: parent.get(key) for key in (
+                        "id", "question", "why_matters", "state", "conclusion", "next_evidence",
+                        "hypothesis_a", "hypothesis_b", "source_step_id", "conclusion_step_id",
+                        "source_passage", "evidence_passages", "selected_job_ids",
+                    )
+                } if parent else None
                 origin_step = next(
                     (row for row in record["steps"]
                      if row["id"] == selected_inquiry.get("source_step_id")), None
