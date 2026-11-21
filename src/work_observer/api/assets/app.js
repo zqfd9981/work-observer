@@ -852,31 +852,49 @@ function renderWorkRelationGraph(result,refs,claims,basis) {
     if(line)lines.push(line);
     return lines.length>3?[...lines.slice(0,2),lines[2].slice(0,-1)+"…"]:lines;
   };
-  const boxes=[...nodes.values()].map(node=>`<g class="work-graph-node" data-graph-node="${node.id}" transform="translate(${node.x},${node.y})"><title>${e(workDimensionLabels[node.kind]||"维度未说明")}：${e(node.text)}</title><rect width="170" height="66" rx="9"/><text x="11" y="${wrap(node.text).length===1?38:22}">${wrap(node.text).map((line,index)=>`<tspan x="11" dy="${index?17:0}">${e(line)}</tspan>`).join("")}</text></g>`).join("");
-  return `<details class="work-graph-panel" open data-work-graph><summary>本轮工作关系图 <span>${nodes.size} 个内容节点 · ${relations.length} 条关系</span></summary><p class="form-note">选择一条关系或点击连线，查看解释、边界和原文依据。连线只表示本轮研究的解释，仍需核对。</p><div class="work-graph-controls"><label>查看哪条关系<select data-graph-choice><option value="">显示全部关系</option>${relations.map((row,index)=>`<option value="${index}">${index+1}. ${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</option>`).join("")}</select></label><label>显示大小<select data-graph-zoom><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label></div><div class="work-graph-scroll"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" data-graph-size="${width}" width="${width}" height="${height}" role="group" aria-label="本轮工作关系图"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#869d86"/></marker></defs>${columns.map((kind,column)=>`<text class="work-graph-column" x="${column*210+110}" y="30" text-anchor="middle">${e(workDimensionLabels[kind]||"维度未说明")}</text>`).join("")}${edges}${boxes}</svg></div><div class="work-graph-explanations">${relations.map((row,index)=>`<section data-graph-detail="${index}" data-graph-from="${row.source.id}" data-graph-to="${row.target.id}" hidden><h3>${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>适用与迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}${claims(row)}${mapInvestigationButton(result,row.kind,row.index,"继续查证这条关系")}</section>`).join("")}</div></details>`;
+  const boxes=[...nodes.values()].map(node=>`<g class="work-graph-node" data-graph-node="${node.id}" data-graph-kind="${e(node.kind)}" data-graph-text="${e(node.text)}" data-graph-node-pick="${node.id}" role="button" tabindex="0" aria-label="从${e(workDimensionLabels[node.kind]||"工作内容")}探索：${e(node.text)}" transform="translate(${node.x},${node.y})"><title>${e(workDimensionLabels[node.kind]||"维度未说明")}：${e(node.text)}</title><rect width="170" height="66" rx="9"/><text x="11" y="${wrap(node.text).length===1?38:22}">${wrap(node.text).map((line,index)=>`<tspan x="11" dy="${index?17:0}">${e(line)}</tspan>`).join("")}</text></g>`).join("");
+  return `<details class="work-graph-panel" open data-work-graph><summary>本轮工作关系图 <span>${nodes.size} 个内容节点 · ${relations.length} 条关系</span></summary><p class="form-note">点一个工作内容，或选一条关系，查看任务与能力的联系、解释边界和原文依据。每条连线仍是本轮研究的解释。</p><div class="work-graph-controls"><label>从工作内容探索<select data-graph-node-choice><option value="">查看全部工作内容</option>${columns.map(kind=>`<optgroup label="${e(workDimensionLabels[kind]||"维度未说明")}">${groups.get(kind).map(node=>`<option value="${node.id}">${e(node.text)}</option>`).join("")}</optgroup>`).join("")}</select></label><label>查看哪条关系<select data-graph-choice><option value="">显示全部关系</option>${relations.map((row,index)=>`<option value="${index}">${index+1}. ${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</option>`).join("")}</select></label><label>显示大小<select data-graph-zoom><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select></label></div><div class="work-graph-scroll"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" data-graph-size="${width}" width="${width}" height="${height}" role="group" aria-label="本轮工作关系图"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#869d86"/></marker></defs>${columns.map((kind,column)=>`<text class="work-graph-column" x="${column*210+110}" y="30" text-anchor="middle">${e(workDimensionLabels[kind]||"维度未说明")}</text>`).join("")}${edges}${boxes}</svg></div><section class="work-graph-focus" data-graph-focus hidden><h3 data-graph-focus-title></h3><p data-graph-focus-count></p><p class="form-note">逐条查看下面的解释与引用。沿同一任务找到的关系只是研究线索，不能自动合成新的必备条件或迁移结论。</p></section><div class="work-graph-explanations">${relations.map((row,index)=>`<section data-graph-detail="${index}" data-graph-from="${row.source.id}" data-graph-to="${row.target.id}" hidden><p class="form-note work-graph-hop" data-graph-hop hidden></p><h3>${e(row.source_text)} → ${e(row.label)} → ${e(row.target_text)}</h3><p>${basis(row)} ${e(row.rationale)}</p><p><strong>适用与迁移边界：</strong>${e(row.transfer_limit)}</p>${refs(row)}${claims(row)}${mapInvestigationButton(result,row.kind,row.index,"继续查证这条关系")}</section>`).join("")}</div></details>`;
 }
 function selectWorkGraphRelation(select) {
   const root=select.closest("[data-work-graph]"),value=select.value;
   if(!root)return;
+  const nodeChoice=root.querySelector("[data-graph-node-choice]"),focus=root.querySelector("[data-graph-focus]");if(nodeChoice)nodeChoice.value="";if(focus)focus.hidden=true;
   const selected=$$("[data-graph-detail]",root).find(item=>item.dataset.graphDetail===value);
   for(const item of $$("[data-graph-detail]",root))item.hidden=item!==selected;
   for(const edge of $$("[data-graph-edge]",root)){
     edge.classList.toggle("is-dimmed",Boolean(selected)&&edge.dataset.graphEdge!==value);
     edge.classList.toggle("is-selected",Boolean(selected)&&edge.dataset.graphEdge===value);
   }
-  for(const node of $$("[data-graph-node]",root))node.classList.toggle("is-dimmed",Boolean(selected)&&![selected.dataset.graphFrom,selected.dataset.graphTo].includes(node.dataset.graphNode));
+  for(const node of $$("[data-graph-node]",root)){node.classList.toggle("is-dimmed",Boolean(selected)&&![selected.dataset.graphFrom,selected.dataset.graphTo].includes(node.dataset.graphNode));node.classList.toggle("is-focused",false);}
+  for(const hint of $$("[data-graph-hop]",root))hint.hidden=true;
+}
+function selectWorkGraphNode(select){
+  const root=select.closest("[data-work-graph]"),identity=select.value;if(!root)return;
+  const relationChoice=root.querySelector("[data-graph-choice]");if(!identity){if(relationChoice){relationChoice.value="";selectWorkGraphRelation(relationChoice);}return;}
+  const nodes=$$("[data-graph-node]",root),details=$$("[data-graph-detail]",root),selected=nodes.find(node=>node.dataset.graphNode===identity);if(!selected)return;
+  const incident=row=>[row.dataset.graphFrom,row.dataset.graphTo],direct=details.filter(row=>incident(row).includes(identity));
+  const taskIds=new Set(selected.dataset.graphKind==="task"?[]:direct.flatMap(incident).filter(id=>nodes.some(node=>node.dataset.graphNode===id&&node.dataset.graphKind==="task")));
+  const related=details.filter(row=>!direct.includes(row)&&incident(row).some(id=>taskIds.has(id))),shown=new Set([...direct,...related].map(row=>row.dataset.graphDetail)),visibleNodes=new Set([...direct,...related].flatMap(incident));
+  const explanations=root.querySelector(".work-graph-explanations");if(explanations)for(const detail of [...direct,...related,...details.filter(row=>!shown.has(row.dataset.graphDetail))])explanations.append(detail);
+  if(relationChoice)relationChoice.value="";
+  for(const detail of details){detail.hidden=!shown.has(detail.dataset.graphDetail);const hint=detail.querySelector("[data-graph-hop]");if(hint){hint.hidden=detail.hidden;hint.textContent=direct.includes(detail)?"与所选内容直接关联的记录":"沿同一任务找到的另一条关系，各自仍需核对";}}
+  for(const edge of $$("[data-graph-edge]",root)){edge.classList.toggle("is-dimmed",!shown.has(edge.dataset.graphEdge));edge.classList.toggle("is-selected",direct.some(row=>row.dataset.graphDetail===edge.dataset.graphEdge));}
+  for(const node of nodes){node.classList.toggle("is-dimmed",!visibleNodes.has(node.dataset.graphNode));node.classList.toggle("is-focused",node===selected);}
+  const scroll=root.querySelector(".work-graph-scroll");if(scroll){const box=selected.getBoundingClientRect(),viewport=scroll.getBoundingClientRect();scroll.scrollLeft+=box.left-viewport.left-(scroll.clientWidth-box.width)/2;}
+  const focus=root.querySelector("[data-graph-focus]");if(focus){focus.hidden=false;focus.querySelector("[data-graph-focus-title]").textContent=(workDimensionLabels[selected.dataset.graphKind]||"工作内容")+"："+selected.dataset.graphText;focus.querySelector("[data-graph-focus-count]").textContent=`${direct.length} 条直接关系${related.length?`，另有 ${related.length} 条沿同一任务关联的记录`:""}。`;}
 }
 function selectWorkGraphZoom(select){
   const svg=select.closest("[data-work-graph]")?.querySelector("[data-graph-size]");if(!svg)return;
   const scale=Number(select.value);svg.setAttribute("width",String(svg.viewBox.baseVal.width*scale));svg.setAttribute("height",String(svg.viewBox.baseVal.height*scale));
 }
-document.addEventListener("change",event=>{if(event.target.matches?.("[data-graph-choice]"))selectWorkGraphRelation(event.target);if(event.target.matches?.("[data-graph-zoom]"))selectWorkGraphZoom(event.target);});
+document.addEventListener("change",event=>{if(event.target.matches?.("[data-graph-choice]"))selectWorkGraphRelation(event.target);if(event.target.matches?.("[data-graph-node-choice]"))selectWorkGraphNode(event.target);if(event.target.matches?.("[data-graph-zoom]"))selectWorkGraphZoom(event.target);});
 function pickWorkGraphEdge(edge) {
   const root=edge.closest("[data-work-graph]"),select=root?.querySelector("[data-graph-choice]");
   if(select){select.value=edge.dataset.graphPick;selectWorkGraphRelation(select);}
 }
-document.addEventListener("click",event=>{const edge=event.target.closest("[data-graph-pick]");if(edge)pickWorkGraphEdge(edge);});
-document.addEventListener("keydown",event=>{const edge=event.target.closest?.("[data-graph-pick]");if(edge&&["Enter"," "].includes(event.key)){event.preventDefault();pickWorkGraphEdge(edge);}});
+function pickWorkGraphNode(node){const select=node.closest("[data-work-graph]")?.querySelector("[data-graph-node-choice]");if(select){select.value=node.dataset.graphNodePick;selectWorkGraphNode(select);}}
+document.addEventListener("click",event=>{const node=event.target.closest("[data-graph-node-pick]"),edge=event.target.closest("[data-graph-pick]");if(node)pickWorkGraphNode(node);else if(edge)pickWorkGraphEdge(edge);});
+document.addEventListener("keydown",event=>{const node=event.target.closest?.("[data-graph-node-pick]"),edge=event.target.closest?.("[data-graph-pick]");if((node||edge)&&["Enter"," "].includes(event.key)){event.preventDefault();node?pickWorkGraphNode(node):pickWorkGraphEdge(edge);}});
 function renderWorkMap(result, evidence) {
   const map = result.work_map;
   if (!map) return "";
