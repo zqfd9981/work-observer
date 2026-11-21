@@ -1728,20 +1728,10 @@ class CareerService:
                     answer_document_id = previous.get("answer_document_id")
                     answer_record = previous if previous.get("answer") else None
                     previous_text = (
-                        "\n用户希望接着讨论的旧分析（不是新证据，请重新核对原文）：\n"
-                        + "\n".join(
-                            ([previous["user_question"]] if previous.get("user_question") else [])
-                            + (
-                                [
-                                    "当时的问题：" + previous["interview_question"],
-                                    "当时用户自述的回答：" + previous["answer"],
-                                ]
-                                if previous.get("answer")
-                                else []
-                            )
-                            + [claim["text"] for claim in previous["result"]["claims"]]
-                            + previous["result"].get("gaps", [])
-                        )[:1000]
+                        "\n本轮接着career_evidence.continued_discussion中明确选定的完整讨论。"
+                        "保留当时判断的性质、限定、未知与地图关系；先按本轮可用原文重核。"
+                        "当时的实验建议不是已发生的结果。原讨论若已不可用，说明无法重核旧答复，"
+                        "仍可依据当前资料回答本次问题，不补造旧内容。"
                     )
                     section = previous.get("section") or {
                         "role": "requirements",

@@ -1877,6 +1877,58 @@ class ProjectService:
                 "omitted_stories": max(0, len(stories) - 3),
                 "omitted_experiments": max(0, len(observations) - 3),
             }
+            current_entry = next(
+                (row for row in career["runs"] if row["step_id"] == step["id"]), {},
+            )
+            if step.get("career_action") == "ask" and current_entry.get("source_step_id"):
+                source_id = current_entry["source_step_id"]
+                source_step = next((row for row in record["steps"] if row["id"] == source_id), {})
+                source_run = (
+                    self.store.get(source_step["run_id"]) if source_step.get("run_id") else {}
+                ) or {}
+                source_result = source_run.get("result") or {}
+                continued = {"step_id": source_id, "unavailable": True}
+                if (source_run.get("state") != "invalidated"
+                        and source_result.get("status") == "completed"):
+                    source_entry = next((row for row in career["runs"]
+                                         if row["step_id"] == source_id), {})
+                    plan = deepcopy(source_result.get("application_plan"))
+                    cited = {identity for claim in source_result.get("claims", [])
+                             for identity in claim.get("evidence_ids", [])}
+                    if plan:
+                        for action in plan.get("actions", []):
+                            cited.update(action.pop("evidence_ids", []))
+                    continued = {
+                        **{key: source_entry.get(key) for key in (
+                            "step_id", "kind", "user_question", "interview_question", "created_at",
+                            "question_id", "selected_job_ids", "task_id", "story_id", "insight_id",
+                            "hypothesis_a", "hypothesis_b", "synthesis_sources",
+                        )},
+                        "source_cutoff": source_result.get("created_at"),
+                        "scope": source_result.get("scope"),
+                        "user_reported_answer": source_entry.get("answer", ""),
+                        "claim_details_to_recheck": [
+                            {key: claim.get(key) for key in (
+                                "text", "category", "basis", "requirement",
+                            )}
+                            for claim in source_result.get("claims", [])
+                        ],
+                        "work_map": source_result.get("work_map"),
+                        "application_plan": plan,
+                        "unresolved_then": source_result.get("gaps", []),
+                        "source_references_to_reread": [
+                            {key: source.get(key) for key in (
+                                "title", "evidence_kind", "job_id", "public_document_id",
+                                "document_id", "snapshot_id", "historical_cutoffs", "start", "end",
+                            )}
+                            for source in source_result.get("evidence", []) if source["id"] in cited
+                        ],
+                        "notice": "这是用户指定的那次旧讨论，不能用最新一次替代，也不是新证据。"
+                        "scope是当时的资料范围，当前范围以fixed_scope为准。保留判断性质、"
+                        "地图迁移限制及未知；个人回答仍为自述，application_plan仍是当时的建议。"
+                        "旧引用仅供定位，须从本轮读取获得新引用，不能把旧判断或建议当作已验证结果。",
+                    }
+                context["career_evidence"]["continued_discussion"] = continued
             if step.get("career_synthesis"):
                 from work_observer.research.inquiry_synthesis import synthesis_inquiries
 

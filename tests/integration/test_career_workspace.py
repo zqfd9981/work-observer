@@ -528,7 +528,10 @@ def test_target_evidence_experiment_and_interview_survive_reopen(tmp_path):
         assert inquiry["user_question"] == "为何接口测试不能证明重复写入已解决？"
         assert inquiry["section"] == "interview"
         assert inquiry["answer_document_id"] == retried["results"][0]["answer_document_id"]
-        assert retried["results"][0]["answer"] in model.contexts[-1]["question"]
+        continued = model.contexts[-1]["project_context"]["career_evidence"]["continued_discussion"]
+        assert continued["step_id"] == retried["results"][0]["step_id"]
+        assert continued["user_reported_answer"] == retried["results"][0]["answer"]
+        assert continued["interview_question"] == retried["results"][0]["interview_question"]
         assert inquiry["user_question"] in model.contexts[-1]["question"]
         assert model.contexts[-1]["project_context"]["previous_findings"] == []
         temporary = client.post(
