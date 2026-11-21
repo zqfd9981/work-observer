@@ -1569,6 +1569,7 @@ class ProjectService:
                 selected_inquiry["origin_discussion"] = {
                     "step_id": origin_step["id"],
                     "question": origin_step["question"],
+                    "source_cutoff": origin_result.get("created_at"),
                     "same_job_scope": origin_step["scope_version"] == record["scope_version"],
                     "work_map": origin_result.get("work_map"),
                     "claim_details_to_recheck": [
@@ -1581,7 +1582,7 @@ class ProjectService:
                     "source_references_to_reread": [
                         {key: source.get(key) for key in (
                             "title", "evidence_kind", "job_id", "public_document_id",
-                            "start", "end",
+                            "document_id", "snapshot_id", "historical_cutoffs", "start", "end",
                         )}
                         for source in origin_result.get("evidence", [])
                     ],
@@ -1651,6 +1652,7 @@ class ProjectService:
                             "step_id": entry["step_id"],
                             "question": entry.get("user_question"),
                             "recorded_at": entry["created_at"],
+                            "source_cutoff": result.get("created_at"),
                             "claims_to_recheck": [
                                 claim["text"] for claim in result.get("claims", [])
                             ],
@@ -1675,14 +1677,15 @@ class ProjectService:
                                         "evidence_kind",
                                         "job_id",
                                         "public_document_id",
+                                        "document_id",
+                                        "snapshot_id",
+                                        "historical_cutoffs",
                                         "start",
                                         "end",
                                     )
                                 }
                                 for source in result.get("evidence", [])
-                            ]
-                            if comparison_steps
-                            else [],
+                            ],
                         }
                     )
                 selected_inquiry["earlier_discussions"] = (
@@ -1694,6 +1697,10 @@ class ProjectService:
                 selected_inquiry["history_notice"] = (
                     "先前分析只供对照问题如何推进，不是新证据。"
                     "须重读本轮可用原文；指出新材料改变或未能改变哪些判断，不能直接沿用旧结论。"
+                    "source_cutoff是当时研究的来源截止，不是网站发布时间。"
+                    "回读旧JD可用read_historical_job；原引用有historical_cutoffs时按其时点读取，"
+                    "否则使用该讨论的source_cutoff。当前JD使用read_job。两侧原文分别引用，"
+                    "不能仅因回答措辞变化就说岗位发生了变化。"
                 )
 
             selected_maps = []
