@@ -1725,6 +1725,7 @@ class ProjectService:
                     })
 
             context["career_evidence"] = {
+                "understanding_check": bool(step.get("career_understanding_check")),
                 "autonomous_inquiry": {"rounds_remaining": step["career_auto_rounds"]}
                 if step.get("career_auto_rounds") else None,
                 "selected_requirement": step.get("career_requirement"),

@@ -21,6 +21,15 @@ from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.text_match import match_text
 
 QUESTIONS = {
+    "teachback": (
+        "围绕career_evidence.selected_inquiry做一次理解自测，检验用户能否用自己的话解释工作。"
+        "先读取相关工作资料，参考原问题、地图关系、个人认识中的待验证解释与限定。"
+        "在gaps给出最多三道完整问题，每道使用问号：先解释为什么，再改变一个条件或提供反例，"
+        "最后追问哪些证据能支持或挑战解释。问题应可根据当前资料作有限判断，缺信息可以回答未知。"
+        "这是概念理解练习，不是个人经历核实；不要求虚构做过的项目，不替用户作答。"
+        "claims只列有原文依据的背景，requirement使用unspecified，不打掌握分或宣称学会。"
+        "不生成行动计划，不安排额外调查；等待用户回答再反馈。"
+    ),
     "evidence": (
         "逐项核对用户针对一项岗位要求选中的证据，不做笼统匹配打分。"
         "本次要求和材料在career_evidence.selected_requirement，先回读该要求引用的JD原文，"
@@ -1269,6 +1278,22 @@ class CareerService:
                         question_id = question_id or insight.get("question_id") or (
                             observed_task.get("question_id") if observed_task else None
                         )
+            understanding_check = kind == "teachback"
+            if kind in {"answer", "followup"} or kind == "plan" and source_step_id:
+                if sources is None:
+                    sources = [row for row in self.get(identity)["results"]
+                               if row["current"] and row["result"]["status"] == "completed"]
+                previous_assessment = next(
+                    (row for row in sources
+                     if row["kind"] in ({"interview", "teachback", "followup"}
+                                        if kind == "answer" else {"answer"})
+                     and (not source_step_id or row["step_id"] == source_step_id)), None
+                )
+                if previous_assessment and previous_assessment.get("understanding_check"):
+                    if question_id and question_id != previous_assessment["question_id"]:
+                        raise ValueError("请沿用这组理解自测对应的调查问题，或另开一组自测。")
+                    question_id = previous_assessment["question_id"]
+                    understanding_check = True
             if question_id:
                 saved_question = next(
                     (
@@ -1278,8 +1303,12 @@ class CareerService:
                     ),
                     None,
                 )
-                if not saved_question or kind not in {"ask", "plan", "reflect"}:
+                if not saved_question or kind not in {
+                    "ask", "plan", "reflect", "teachback", "answer", "followup"
+                }:
                     raise ValueError("请选择已保存的调查问题，再继续提问、设计验证或反思。")
+            if kind == "teachback" and (not question_id or story_id or task_id):
+                raise ValueError("请选择一个已保存的调查问题做理解自测，不绑定个人经历或工作样本。")
             if autonomous and (kind != "ask" or not question_id or offline):
                 raise ValueError("请选一个已保存的问题，并取消只整理原文，再开始连续查证。")
             comparison_step_ids = comparison_step_ids or []
@@ -1476,7 +1505,7 @@ class CareerService:
                     (
                         row
                         for row in sources
-                        if row["kind"] in {"interview", "followup"}
+                        if row["kind"] in {"interview", "teachback", "followup"}
                         and (not source_step_id or row["step_id"] == source_step_id)
                     ),
                     None,
@@ -1510,8 +1539,33 @@ class CareerService:
                     QUESTIONS[kind]
                 )
                 reply = None
+            if understanding_check and kind == "answer":
+                question = (
+                    "理解自测题：" + questions[question_index] + "\n"
+                    "请先读取career_evidence.selected_answer的用户回答全文与相关工作资料。"
+                    "对照所选题目，反馈解释的推理、适用条件、反例和不确定性：哪里有依据，"
+                    "哪里过度概括或混淆概念；用最多三条简短判断指出具体回答与依据。"
+                    "这是用户的概念解释，不证明做过某项目或具备生产经验；不编造经历或指标，"
+                    "不打掌握分，不替用户补成正确答案。gaps保留最值得追问或实际验证的部分。"
+                    "反馈需引用回答原话及相关原文，属于分析解释，不生成行动计划。"
+                )
+            elif understanding_check and kind == "followup":
+                question = (
+                    "围绕这份理解自测回答继续追问。原题：" + previous["interview_question"] + "\n"
+                    "先读取career_evidence.selected_answer中的用户回答全文与工作资料，"
+                    "针对上一轮暴露的推理或边界问题，在gaps给出最多两道完整追问，每道使用问号。"
+                    "优先改变一个条件、提出反例，或让用户解释怎样检验；允许明确未知。"
+                    "不要重出通用经历面试题，不替用户作答，不把概念解释写成实际工作经历。"
+                    "claims仅列有引用的依据，保持用户未运行、未参与和不确定的限定。"
+                )
+            elif understanding_check and kind == "plan":
+                question = QUESTIONS["plan"] + (
+                    "本次只针对理解自测中暴露的一个解释设计最小验证。先读取selected_answer全文，"
+                    "结合selected_inquiry与工作资料，说明什么观察可以支持或挑战原解释。"
+                    "用户的解释不是已执行的实验或个人履历；保留未运行和未知的边界，不补造结果。"
+                )
             focused_document_id = None
-            interview_kinds = {"interview", "answer", "followup"}
+            interview_kinds = {"interview", "teachback", "answer", "followup"}
             if kind in interview_kinds:
                 if story_id and task_id:
                     raise ValueError("本轮请选择一份经历或一个工作样本作为面试重点。")
@@ -1715,16 +1769,19 @@ class CareerService:
             project["steps"][-1]["public_document_ids"] = documents
             project["steps"][-1]["career_omitted_documents"] = omitted
             if answer_record and not answer_document_id:
+                answer_label = "理解自测回答" if understanding_check else "模拟面试回答"
                 document = PublicDocumentService(
                     self.repository, self.raw_directory / "public"
                 ).archive_text(
-                    "模拟面试回答 · " + project["title"],
-                    "用户模拟面试回答，未经独立核实，不是招聘原文或能力认证。\n"
-                    "面试问题："
+                    answer_label + " · " + project["title"],
+                    "用户" + answer_label + "，未经独立核实，不是招聘原文或能力认证。\n"
+                    + ("理解自测问题：" if understanding_check else "面试问题：")
                     + answer_record["interview_question"]
                     + "\n用户回答：\n"
                     + answer_record["answer"],
-                    "用户的模拟面试回答，仅作为原话依据；经历及效果未经独立核实。",
+                    ("用户的理解自测回答，仅作为原话依据；不独立证明经历或实际能力。"
+                     if understanding_check else
+                     "用户的模拟面试回答，仅作为原话依据；经历及效果未经独立核实。"),
                 )["document"]
                 answer_document_id = document["id"]
                 if answer_record.get("step_id"):
@@ -1767,6 +1824,7 @@ class CareerService:
                     "comparison_step_ids": comparison_step_ids,
                     "autonomous_rounds": 3 if autonomous else 0,
                     "materials_only": not bool(project["job_ids"]),
+                    "understanding_check": understanding_check,
                     "requirement_key": requirement_key if kind == "evidence" else "",
                     "requirement_text": selected_requirement["text"]
                     if selected_requirement
@@ -1788,6 +1846,8 @@ class CareerService:
                 project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
             if autonomous:
                 project["steps"][-1]["career_auto_rounds"] = 3
+            if understanding_check:
+                project["steps"][-1]["career_understanding_check"] = True
             if selected_requirement:
                 project["steps"][-1]["career_requirement"] = {
                     **{

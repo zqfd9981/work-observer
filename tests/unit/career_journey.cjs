@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -206,3 +206,16 @@ const relatedRecords=ctx.window.journeyTest.questionJourneyRecords(question,rela
 assert.ok(relatedRecords.insights.some(row=>row.id==='question-linked'));
 assert.ok(!relatedRecords.insights.some(row=>row.id==='another-inquiry'));
 console.log('Inquiry conclusion to personal understanding: full draft, explicit question, whole-discussion origin and journey links passed.');
+
+const quizRow=result('teachback-source',stamp(1),{kind:'teachback',question_id:'q',understanding_check:true,result:{status:'completed',claims:[],evidence:[],gaps:['Explain the boundary?']}});
+const ownAttempt=result('own-attempt',stamp(2),{kind:'answer',question_id:'q',understanding_check:true,interview_question:'Explain the boundary?',answer:'Own explanation with unknowns.'});
+const foreignAttempt={...ownAttempt,step_id:'other-attempt',question_id:'other',answer:'OTHER INQUIRY ANSWER MUST NOT MIX'};
+const quizData={...inquiryData,questions:[question,{id:'other',question:'Another concept.'}],tasks:[],stories:[],results:[foreignAttempt,ownAttempt,quizRow]};
+ctx.window.journeyTest.setDraft(quizData,{next_source_step_id:quizRow.step_id});
+assert.equal(ctx.window.journeyTest.interviewSources(quizData)[0].step_id,quizRow.step_id);
+assert.ok(ctx.window.journeyTest.interviewFocusLabel(quizRow,quizData).startsWith('理解自测：'));
+const quizHtml=ctx.window.journeyTest.interview(quizData);
+assert.ok(quizHtml.includes('把理解讲清楚，再检查边界')&&quizHtml.includes('检查我的理解与推理'));
+assert.ok(quizHtml.includes('Own explanation with unknowns.')&&!quizHtml.includes('OTHER INQUIRY ANSWER MUST NOT MIX'));
+assert.equal(ctx.window.journeyTest.researchLabel(ownAttempt),'理解自测反馈');
+console.log('Understanding practice: clear mode, inquiry focus, answer grouping and feedback labels passed.');

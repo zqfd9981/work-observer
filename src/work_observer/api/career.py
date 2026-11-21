@@ -123,6 +123,7 @@ class CareerResearchInput(BaseModel):
         "plan",
         "reflect",
         "interview",
+        "teachback",
         "answer",
         "followup",
         "ask",
