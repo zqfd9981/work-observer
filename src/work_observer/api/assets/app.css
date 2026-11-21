@@ -162,3 +162,5 @@
 .career-autonomy{padding:14px 18px;margin:0 0 18px;background:#edf4e8;border-radius:9px}.career-autonomy p{white-space:pre-wrap;overflow-wrap:anywhere}.career-autonomy details{margin:10px 0}
 
 .career-material-start{padding:22px}.career-material-start .result-actions{flex-wrap:wrap}.career-material-start p{overflow-wrap:anywhere}
+
+.career-question-answer{margin:18px 0;padding:16px;background:#f2f6ec;border-radius:9px}.career-question-answer>summary{font-weight:600;cursor:pointer}.career-question-answer select{width:100%;min-width:0}.career-question-answer .career-research-column{margin:14px 0}.career-question-answer p{white-space:pre-wrap;overflow-wrap:anywhere}
