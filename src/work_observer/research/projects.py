@@ -1846,6 +1846,11 @@ class ProjectService:
                 }
                 if step.get("career_material_id")
                 else None,
+                "selected_materials": [
+                    {"document_id": key,
+                     "notice": "用户选定的重点原文之一；需分别读取条件，再进行对读。"}
+                    for key in step.get("career_material_ids", [])
+                ],
                 "resume": {
                     "document_id": career["resume_document_id"],
                     "title": career["resume_title"],

@@ -205,6 +205,9 @@ class CareerResearchInput(BaseModel):
     hypothesis_a: str = Field(default="", max_length=700)
     hypothesis_b: str = Field(default="", max_length=700)
     material_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    material_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] = Field(
+        default_factory=list, max_length=6
+    )
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     counter_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")

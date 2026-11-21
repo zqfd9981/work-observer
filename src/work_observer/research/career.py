@@ -1469,6 +1469,7 @@ class CareerService:
         hypothesis_a="",
         hypothesis_b="",
         material_id=None,
+        material_ids=None,
         allow_public=False,
         story_id=None,
         insight_id=None,
@@ -1483,6 +1484,11 @@ class CareerService:
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
+        material_ids = list(material_ids or [])
+        if material_ids and (kind != "ask" or material_id):
+            raise ValueError("多份资料对读请直接提问，并取消单份重点资料。")
+        if len(material_ids) > 6 or len(set(material_ids)) != len(material_ids):
+            raise ValueError("每轮请选择最多6份不同的重点资料。")
         with self.store.lock, self.store.db:
             project = self._project(identity)
             if any(
@@ -1529,10 +1535,13 @@ class CareerService:
                         source.get("counter_insight_id")
                         if source.get("counter_insight_id") in insight_ids else None
                     )
-                    material_id = material_id or (
-                        source.get("material_id")
-                        if source.get("material_id") in project["public_document_ids"] else None
-                    )
+                    if not material_id and not material_ids:
+                        material_ids = list(source.get("material_ids") or [])
+                        material_id = (
+                            source.get("material_id")
+                            if not material_ids and source.get("material_id")
+                            in project["public_document_ids"] else None
+                        )
                     if question_id == source.get("question_id") and not comparison_step_ids:
                         comparison_step_ids = source.get("comparison_step_ids", [])
             if synthesis_question_ids is not None:
@@ -1701,6 +1710,8 @@ class CareerService:
             answer_document_id, answer_record = None, None
             if material_id and material_id not in (project.get("public_document_ids") or []):
                 raise ValueError("这份资料已不在当前目标中，请重新选择或先加入资料。")
+            if any(key not in (project.get("public_document_ids") or []) for key in material_ids):
+                raise ValueError("重点对读的资料中有已移出的原文，请重新加入或调整资料选择。")
             if sources is None and (
                 kind in {"answer", "followup", "ask"} or (kind == "plan" and source_step_id)
             ):
@@ -1810,6 +1821,17 @@ class CareerService:
                         "本次用户已选定一份资料，优先按career_evidence.selected_material中的"
                         "document_id读取归档正文，再结合岗位原文回答；不能把标题当证据，"
                         "也不能把业务或技术说明推成所选岗位个人职责。"
+                    )
+                if material_ids:
+                    question += (
+                        "本次用户明确选定career_evidence.selected_materials列出的重点资料。"
+                        "按各自document_id读取相关原文与限定；可用read_archived_documents批读，"
+                        "按需要续读，不靠标题或旧回答代替正文。把各份资料的工作对象、任务、"
+                        "交付物和条件放在一起解释，说明共同点、分歧与尚不能连接之处。"
+                        "同一资料的不同工作线分别保留，不能把一侧任务接到另一侧交付物上；"
+                        "一侧的条件不能覆盖其他资料。未读部分保留未知，不凑齐比较项或选胜者。"
+                        "重点选择不表示资料来自独立来源；用户笔记和业务说明保留来源性质，"
+                        "涉及岗位个人责任或招聘要求时仍需该岗位原文支持。"
                     )
                 if synthesis_sources:
                     question += (
@@ -2131,7 +2153,7 @@ class CareerService:
             seconds_left = int(project["budget"]["max_seconds"] - used["reserved_seconds"])
             if not offline and (calls_left < 2 or seconds_left < 1):
                 raise ValueError("本目标的模型调用或时间额度已用完，仍可整理资料、记录观察和认识。")
-            preferred = [material_id, focused_document_id]
+            preferred = [*material_ids, material_id, focused_document_id]
             topic = [user_question]
             if synthesis_sources:
                 from work_observer.research.inquiry_synthesis import synthesis_inquiries
@@ -2301,6 +2323,7 @@ class CareerService:
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
+                    "material_ids": material_ids if kind == "ask" else [],
                     "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
                     "counter_insight_id": counter_insight_id,
@@ -2350,6 +2373,8 @@ class CareerService:
             project["steps"][-1]["career_action"] = kind
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
+            if kind == "ask" and material_ids:
+                project["steps"][-1]["career_material_ids"] = material_ids[:]
             if story_id and kind in {"pitch", "ask"} | interview_kinds:
                 project["steps"][-1]["career_story_id"] = story_id
             self.projects._write(project)
