@@ -46,8 +46,9 @@ def job_windows(pool, reads):
     if any(row["job_id"] not in pool for row in reads):
         raise ProbeError("RESEARCH_SCOPE_VIOLATION")
     evidence, windows = [], []
+    per_job_limit = min(8, 24 // len(reads))
     for request in reads:
-        window = job_window(pool[request["job_id"]], request["start"], limit=2)
+        window = job_window(pool[request["job_id"]], request["start"], limit=per_job_limit)
         evidence.extend(window["evidence"])
         windows.append(
             {
@@ -58,8 +59,9 @@ def job_windows(pool, reads):
     return {
         "evidence": evidence,
         "windows": windows,
-        "note": "每份JD最多返回两个原始片段，不表示已读全文；"
-        "windows中has_more为true时，可用read_job和next_start继续。",
+        "note": "本次合计最多24个原始片段，每份最多8个，不表示已读全文；"
+        "多份JD的has_more为true时，用read_jobs携带各份next_start继续批读；"
+        "只剩一份时也可用read_job续读。",
     }
 
 

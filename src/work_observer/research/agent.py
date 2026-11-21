@@ -161,8 +161,9 @@ TOOLS[-1]["parameters"]["$defs"]["Claim"]["properties"]["basis"].pop("default", 
 
 BATCH_JOB_TOOL = tool(
     "read_jobs",
-    "一次读取固定范围内1至6份JD，每份最多两个原文片段。"
-    "返回windows中的next_start与has_more；有未读部分时可用read_job继续，不以开头替代全文。",
+    "一次读取固定范围内1至6份JD，合计最多24个原文片段，每份最多8个。"
+    "返回windows中的next_start与has_more；多份有后文时继续批读，单份也可用read_job续读，"
+    "不以开头替代全文。",
     {
         "reads": {
             "type": "array",
@@ -1529,7 +1530,8 @@ async def _research(
     if batch_jobs_enabled:
         system += (
             "\n需要对照多份JD时，优先用read_jobs一次读取各份的开头片段，减少逐份往返。"
-            "每份最多两段；按windows的has_more与next_start补读必要后文，不能假定已经覆盖全文。"
+            "合计最多24段，每份最多8段；多份仍有has_more时，用read_jobs携带各份next_start继续批读。"
+            "只剩一份时也可用read_job续读；未读范围保持未知，不能假定已经覆盖全文。"
         )
     career_autonomy = (conversation_context or {}).get("career_evidence", {}).get(
         "autonomous_inquiry"

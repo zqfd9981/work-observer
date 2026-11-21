@@ -76,7 +76,7 @@ def test_read_job_contract_exposes_a_valid_nullable_position():
 
 
 def test_batch_reading_keeps_partial_windows_and_original_source_positions():
-    text = "合成工作说明。" * 400 + "末尾限定：商科背景只是加分项。"
+    text = "合成工作说明。" * 1000 + "末尾限定：商科背景只是加分项。"
     long_rows = [
         {
             "id": f"long:{start}",
@@ -101,8 +101,8 @@ def test_batch_reading_keeps_partial_windows_and_original_source_positions():
     pool = {"long": long_rows, "short": short_rows}
     before = deepcopy(pool)
     result = job_windows(pool, [{"job_id": "long", "start": 0}, {"job_id": "short", "start": None}])
-    assert result["evidence"] == [*long_rows[:2], *short_rows]
-    assert result["windows"][0]["has_more"] and result["windows"][0]["next_start"] == 1400
+    assert result["evidence"] == [*long_rows[:8], *short_rows]
+    assert result["windows"][0]["has_more"] and result["windows"][0]["next_start"] == 5600
     assert not result["windows"][1]["has_more"]
     continued = job_window(long_rows, result["windows"][0]["next_start"])
     assert "末尾限定" in continued["evidence"][-1]["quote"]
@@ -118,6 +118,41 @@ def test_batch_reading_keeps_partial_windows_and_original_source_positions():
             job_windows(pool, invalid)
     with pytest.raises(ProbeError, match="INVALID_JOB_SOURCE_WINDOW"):
         job_windows(pool, [{"job_id": "short", "start": True}])
+
+
+def test_six_long_jobs_share_a_bounded_batch_and_continue_without_losing_text():
+    text = "合成工作说明。" * 1200 + "末尾：加分项不代表上线审批权。"
+    pool = {
+        str(index): [
+            {
+                "id": f"{index}:{start}",
+                "job_id": str(index),
+                "start": start,
+                "end": min(start + 700, len(text)),
+                "quote": text[start : start + 700],
+                "full_text_length": len(text),
+            }
+            for start in range(0, len(text), 700)
+        ]
+        for index in range(6)
+    }
+    before = deepcopy(pool)
+    reads = [{"job_id": identity, "start": None} for identity in pool]
+    collected = {identity: [] for identity in pool}
+    while reads:
+        result = job_windows(pool, reads)
+        assert len(result["evidence"]) <= 24
+        for identity in collected:
+            rows = [row for row in result["evidence"] if row["job_id"] == identity]
+            assert len(rows) <= 8
+            collected[identity].extend(rows)
+        reads = [
+            {"job_id": window["job_id"], "start": window["next_start"]}
+            for window in result["windows"]
+            if window["has_more"]
+        ]
+    assert collected == before and pool == before
+    assert all("".join(row["quote"] for row in rows) == text for rows in collected.values())
 
 
 def test_qualifier_across_citations_keeps_whole_literal_condition_and_section():

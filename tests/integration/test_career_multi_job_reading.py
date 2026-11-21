@@ -252,7 +252,7 @@ def test_batch_beginnings_can_continue_to_a_late_qualification_without_changing_
         auth = {
             "X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
         }
-        long_text = "负责接口开发。" + "背景说明。" * 450 + "商科背景更佳。生产能力未说明。"
+        long_text = "负责接口开发。" + "背景说明。" * 1500 + "商科背景更佳。生产能力未说明。"
         jobs = [
             client.post(
                 "/api/import",
