@@ -1925,10 +1925,13 @@ class ProjectService:
                         "scope": source_result.get("scope"),
                         "user_reported_answer": source_entry.get("answer", ""),
                         "claim_details_to_recheck": [
-                            {key: claim.get(key) for key in (
-                                "text", "category", "basis", "requirement",
-                            )}
-                            for claim in source_result.get("claims", [])
+                            {
+                                "position": index + 1,
+                                **{key: claim.get(key) for key in (
+                                    "text", "category", "basis", "requirement",
+                                )},
+                            }
+                            for index, claim in enumerate(source_result.get("claims", []))
                         ],
                         "work_map": source_result.get("work_map"),
                         "application_plan": plan,
