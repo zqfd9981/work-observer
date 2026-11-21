@@ -154,3 +154,5 @@
 .career-counter-explanation{min-width:0}.career-counter-explanation select{width:100%;min-width:0}
 
 .career-plan-invite{display:block}.career-plan-invite>summary{cursor:pointer;font-weight:600}.career-plan-invite article{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid #dce6d5}.career-plan-invite strong{min-width:0;overflow-wrap:anywhere}.career-plan-invite .text-button{white-space:normal}@media(max-width:650px){.career-plan-invite article{align-items:flex-start;flex-direction:column}}
+
+.career-map-comparison{padding:22px}.career-map-comparison>summary{font-weight:600;cursor:pointer;font-size:14px}.career-map-comparison select{min-width:0;width:100%}.career-comparison-map{margin:18px 0;padding:14px;background:#f1f6ed;border-radius:8px}.career-comparison-map article{padding:14px 0;border-top:1px solid #dbe5d7}.career-comparison-map h5{font-size:13px;margin:8px 0;white-space:pre-wrap;overflow-wrap:anywhere}.career-comparison-map p{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:650px){.career-map-comparison{padding:14px}}

@@ -1227,18 +1227,20 @@ class CareerService:
                 candidates = {
                     row["step_id"]: row
                     for row in self.get(identity)["results"]
-                    if row.get("question_id") == question_id
+                    if (row.get("question_id") == question_id if question_id
+                        else (row.get("result") or {}).get("work_map"))
                     and row.get("result")
                     and row["result"]["status"] == "completed"
                     and row["state"] != "abandoned"
                 }
                 if (
                     kind != "ask"
-                    or not question_id
                     or len(set(comparison_step_ids)) != 2
                     or not all(step_id in candidates for step_id in comparison_step_ids)
                 ):
-                    raise ValueError("请选择同一调查问题下两次已完整形成的回答进行对照。")
+                    raise ValueError(
+                        "请选择同一调查问题下的两次完整回答，或当前目标下两份完整工作地图。"
+                    )
             if insight_id:
                 insight = next(
                     (
@@ -1575,8 +1577,11 @@ class CareerService:
                 )
             if comparison_step_ids:
                 question += (
-                    "用户本次明确对照的两次研究在selected_inquiry.earlier_discussions，"
+                    "用户本次明确对照的两次研究在career_evidence.selected_inquiry.earlier_discussions，"
+                    "未绑定调查问题的两份工作地图则在career_evidence.selected_map_comparison。"
                     "按所选顺序比较两次提问、判断和来源。说明哪些差异可能来自问题或材料变化，"
+                    "若包含work_map，比较业务问题、任务、交付物、关系理由、迁移限制与未知，"
+                    "区分招聘资料发生变化、研究解释变化和无法确定的变化，不从两份地图概括行业趋势。"
                     "保留claim_details_to_recheck中的必备、加分与未说明强度，以及明示、归纳和推断区别。"
                     "哪些还不能解释；句子不同不等于矛盾，引用更多也不自动意味着更可靠。"
                     "旧研究和旧引用只是回查线索，请读取本轮可用原文再作判断；"
@@ -1726,8 +1731,8 @@ class CareerService:
                 project["steps"][-1]["career_counter_insight_id"] = counter_insight_id
             if question_id:
                 project["steps"][-1]["career_question_id"] = question_id
-                if comparison_step_ids:
-                    project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
+            if comparison_step_ids:
+                project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
             if selected_requirement:
                 project["steps"][-1]["career_requirement"] = {
                     **{

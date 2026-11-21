@@ -1629,6 +1629,7 @@ class ProjectService:
                             "unresolved_then": result.get("gaps", []),
                             "same_job_scope": previous_step["scope_version"]
                             == record["scope_version"],
+                            "work_map": result.get("work_map") if comparison_steps else None,
                             "source_references_to_reread": [
                                 {
                                     key: source.get(key)
@@ -1658,9 +1659,38 @@ class ProjectService:
                     "须重读本轮可用原文；指出新材料改变或未能改变哪些判断，不能直接沿用旧结论。"
                 )
 
+            selected_maps = []
+            if not selected_inquiry:
+                for step_id in step.get("career_comparison_steps", []):
+                    old_step = next(row for row in record["steps"] if row["id"] == step_id)
+                    old_result = (self.store.get(old_step["run_id"]) or {}).get("result") or {}
+                    entry = next(row for row in career["runs"] if row["step_id"] == step_id)
+                    selected_maps.append({
+                        "step_id": step_id,
+                        "question": entry.get("user_question") or old_step["question"],
+                        "recorded_at": entry["created_at"],
+                        "same_job_scope": old_step["scope_version"] == record["scope_version"],
+                        "work_map": old_result.get("work_map"),
+                        "claim_details_to_recheck": [
+                            {key: claim.get(key) for key in (
+                                "text", "category", "basis", "requirement",
+                            )}
+                            for claim in old_result.get("claims", [])
+                        ],
+                        "unresolved_then": old_result.get("gaps", []),
+                        "source_references_to_reread": [
+                            {key: source.get(key) for key in (
+                                "title", "evidence_kind", "job_id", "public_document_id",
+                                "start", "end",
+                            )}
+                            for source in old_result.get("evidence", [])
+                        ],
+                    })
+
             context["career_evidence"] = {
                 "selected_requirement": step.get("career_requirement"),
                 "selected_inquiry": selected_inquiry,
+                "selected_map_comparison": selected_maps,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
                 "selected_counter_learning_note": learning_note(counter_note)
                 if counter_note else None,
