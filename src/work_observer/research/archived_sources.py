@@ -35,13 +35,50 @@ TOOL = {
         "required": ["document_id", "start"],
     },
 }
+BATCH_TOOL = {
+    "type": "function",
+    "name": "read_archived_documents",
+    "strict": True,
+    "description": "一次按本轮目录读取1至6份已选归档正文，合计最多24个原文片段，"
+    "每份最多8个。保留各份来源与续读位置，不联网。",
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "reads": {
+                "type": "array", "minItems": 1, "maxItems": 6,
+                "items": {
+                    "type": "object", "additionalProperties": False,
+                    "properties": {
+                        "document_id": {"type": "string"},
+                        "start": {"type": "integer", "minimum": 0},
+                    },
+                    "required": ["document_id", "start"],
+                },
+            },
+        },
+        "required": ["reads"],
+    },
+}
+BATCH_POLICY = (
+    "\n需要对照多份已选归档时，用read_archived_documents批读相关原文，减少逐份往返。"
+    "每批合计最多24个片段，每份最多8个；按各份windows的has_more与next_start继续批读，"
+    "只剩一份也可read_archived_document续读。不必先猜关键词，目录标题不算证据。"
+    "只读问题需要的内容，给形成答复留出调用；未读范围保持未知。"
+    "每份资料的document和evidence分别标记来源，粘贴自述不能升级为公开事实或已执行结果，"
+    "同源版本或转述不能充当独立交叉验证；岗位个人职责仍需相应JD支持。"
+)
 
 
-def proposals(base):
+def proposals(base, *, batch=False):
     result = deepcopy(base)
     next(row for row in result if row["name"] == "propose_research_memory")["parameters"][
         "properties"
     ]["supporting_tool"]["enum"].append(TOOL["name"])
+    if batch:
+        next(row for row in result if row["name"] == "propose_research_memory")["parameters"][
+            "properties"
+        ]["supporting_tool"]["enum"].append(BATCH_TOOL["name"])
     return result
 
 
@@ -70,7 +107,7 @@ def catalog(repository, identities, *, limit=20):
         ]
 
 
-def read(repository, identity, start, allowed):
+def read(repository, identity, start, allowed, *, limit=8):
     if identity not in allowed:
         raise ProbeError("RESEARCH_SCOPE_VIOLATION")
     if type(start) is not int or start < 0:
@@ -86,7 +123,7 @@ def read(repository, identity, start, allowed):
             raise ProbeError("PUBLIC_DOCUMENT_BODY_REQUIRED")
         if start > len(row.text):
             raise ProbeError("INVALID_PUBLIC_DOCUMENT_WINDOW")
-        end = min(start + 5600, len(row.text))
+        end = min(start + 700 * limit, len(row.text))
         template = PublicDocumentService._evidence(row)[0]
         evidence = []
         for position in range(start, end, 700):
@@ -121,3 +158,28 @@ def read(repository, identity, start, allowed):
             "evidence": evidence,
             "note": "只读取本轮已选的原归档版本。片段保留原字符位置；未读部分不能视为不存在。",
         }
+
+
+def read_many(repository, reads, allowed):
+    if (
+        not isinstance(reads, list) or not 1 <= len(reads) <= 6
+        or any(not isinstance(row, dict) or set(row) != {"document_id", "start"}
+               or not isinstance(row["document_id"], str) for row in reads)
+    ):
+        raise ProbeError("INVALID_PUBLIC_DOCUMENT_BATCH")
+    if any(row["document_id"] not in allowed for row in reads):
+        raise ProbeError("RESEARCH_SCOPE_VIOLATION")
+    windows, evidence = [], []
+    per_document = min(8, 24 // len(reads))
+    for request in reads:
+        window = read(repository, request["document_id"], request["start"], allowed,
+                      limit=per_document)
+        evidence.extend(window["evidence"])
+        windows.append({"document_id": request["document_id"], **{
+            key: value for key, value in window.items() if key not in {"evidence", "note"}
+        }})
+    return {
+        "evidence": evidence, "windows": windows,
+        "note": "这些是逐份读取的原归档片段，不是合并摘要。各份来源、位置与续读状态分别保留；"
+        "多份尚有后文时，携带各份next_start继续批读，不能把未读部分当作没有条件。",
+    }

@@ -77,6 +77,59 @@ def document(repo, tmp_path):
     )["document"]
 
 
+def test_batch_preserves_individual_sources_and_never_reads_outside_the_directory(
+    source_workspace, tmp_path, monkeypatch,
+):
+    from jsonschema import Draft202012Validator
+
+    repo, _, _ = source_workspace
+    manual = document(repo, tmp_path)
+    public_text = "合成公开产品说明。" + "已存公开资料。" * 900 + "不证明任职者的个人审批权。"
+
+    async def synthetic_fetch(url):
+        return 200, {"content-type": "text/plain; charset=utf-8"}, public_text.encode()
+
+    monkeypatch.setattr(public_documents, "pinned_request", synthetic_fetch)
+    public = asyncio.run(PublicDocumentService(repo, tmp_path / "public").read(
+        "https://example.com/synthetic-batch-source"
+    ))["document"]
+
+    async def no_network(*args):
+        raise AssertionError("Batch archive reading must remain local")
+
+    monkeypatch.setattr(public_documents, "pinned_request", no_network)
+    allowed = [manual["id"], public["id"]]
+    requests = [{"document_id": identity, "start": 0} for identity in allowed]
+    Draft202012Validator.check_schema(archived_sources.BATCH_TOOL["parameters"])
+    Draft202012Validator(archived_sources.BATCH_TOOL["parameters"]).validate({"reads": requests})
+    combined = archived_sources.read_many(repo, requests, allowed)
+    assert len(combined["evidence"]) == 16
+    for index, identity in enumerate(allowed):
+        single = archived_sources.read(repo, identity, 0, allowed)
+        assert combined["windows"][index]["document"] == single["document"]
+        assert [row for row in combined["evidence"]
+                if row["public_document_id"] == identity] == single["evidence"]
+        assert combined["windows"][index]["next_start"] == 5600
+    assert {row["evidence_kind"] for row in combined["evidence"]} == {
+        "work_material", "public_document",
+    }
+    tail = archived_sources.read_many(repo, [
+        {"document_id": row["document_id"], "start": row["next_start"]}
+        for row in combined["windows"]
+    ], allowed)
+    assert all(not row["has_more"] for row in tail["windows"])
+    assert any("个人审批权" in row["quote"] for row in tail["evidence"])
+    with pytest.raises(ProbeError, match="RESEARCH_SCOPE_VIOLATION"):
+        archived_sources.read_many(
+            repo, [{"document_id": public["id"], "start": 0}], [manual["id"]],
+        )
+    original = deepcopy(PROPOSAL_TOOLS)
+    offered = archived_sources.proposals(PROPOSAL_TOOLS, batch=True)
+    support = offered[0]["parameters"]["properties"]["supporting_tool"]["enum"]
+    assert "read_archived_documents" in support
+    assert PROPOSAL_TOOLS == original
+
+
 @pytest.mark.parametrize("origin", ["manual", "public"])
 def test_mixed_sources_show_catalog_and_read_selected_tail_without_guessing_or_network(
     source_workspace, tmp_path, monkeypatch, origin
