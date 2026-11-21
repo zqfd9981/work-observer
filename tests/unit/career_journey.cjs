@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={branchQuestionDraft,questionBranches,recentResearch,workspaceShortcuts,conversationNoteEditor,answerRevisionChoice,answerRevisionDraft,questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},conversation_note:draft.conversation_note,jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={returnInquiryDraft,returnedInquirySource,branchQuestionDraft,questionBranches,recentResearch,workspaceShortcuts,conversationNoteEditor,answerRevisionChoice,answerRevisionDraft,questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},conversation_note:draft.conversation_note,jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -542,3 +542,28 @@ assert.ok(!branchChildExport.includes('<a ')&&!branchChildExport.includes('<butt
 assert.ok(ctx.window.journeyTest.questionJourneyPackage(branchChild,branchData).includes(branchParent.conclusion));
 assert.equal(JSON.stringify(branchData),branchBefore);
 console.log('Follow-up inquiries: explicit parent and scope, no adopted conclusion, full parent limits, direct navigation, escaped text and read-only export passed.');
+
+const returnParent={...branchParent,selected_job_ids:[]},returnChild={...branchChild,selected_job_ids:['second-job']};
+const returnChosen=result('chosen-child-answer',stamp(3),{question_id:returnChild.id,user_question:'Selected earlier <script>question</script>.',selected_job_ids:['second-job'],task_id:'child-task'});
+const returnLater=result('later-child-answer',stamp(5),{question_id:returnChild.id,user_question:'Later answer is not selected.'});
+const returnData={...branchData,questions:[returnParent,returnChild],results:[returnLater,returnChosen]};
+const returnBefore=JSON.stringify(returnData);
+const returnDraft=ctx.window.journeyTest.returnInquiryDraft(returnChild,returnChosen,returnData);
+assert.equal(returnDraft.question_id,returnParent.id);assert.equal(returnDraft.source_step_id,returnChosen.step_id);
+assert.deepEqual(Array.from(returnDraft.selected_job_ids),[]); // The parent covers all jobs; the chosen child covered one.
+assert.equal(returnDraft.task_id,'');assert.equal(returnDraft.story_id,'');assert.equal(returnDraft.insight_id,'');
+assert.ok(returnDraft.question.includes('原文')&&returnDraft.question.includes('不能确定'));
+assert.equal(ctx.window.journeyTest.returnInquiryDraft(returnChild,{...returnChosen,current:false},returnData),null);
+assert.equal(ctx.window.journeyTest.returnInquiryDraft(returnChild,{...returnChosen,state:'abandoned'},returnData),null);
+assert.equal(ctx.window.journeyTest.returnInquiryDraft(returnParent,returnChosen,returnData),null);
+const returnOrigin=ctx.window.journeyTest.returnedInquirySource(returnDraft,returnData);
+assert.ok(returnOrigin.includes(returnParent.question)&&returnOrigin.includes('Selected earlier &lt;script&gt;question&lt;/script&gt;.'));
+assert.ok(returnOrigin.includes('#career/goal/discussion/chosen-child-answer')&&!returnOrigin.includes(returnLater.user_question));
+const returnExport=ctx.window.journeyTest.returnedInquirySource(returnDraft,returnData,true);
+assert.ok(!returnExport.includes('<a ')&&!returnExport.includes('<button')&&!returnExport.includes('<script>'));
+ctx.window.journeyTest.setDraft(returnData,{question_answers:{[returnChild.id]:{step_id:returnChosen.step_id,open:true}}});
+const returnAnswer=ctx.window.journeyTest.questionAnswer(returnChild,returnData);
+assert.ok(returnAnswer.includes('data-career-return-inquiry="child-inquiry:chosen-child-answer"'));
+assert.ok(!returnAnswer.includes('data-career-return-inquiry="child-inquiry:later-child-answer"'));
+assert.equal(JSON.stringify(returnData),returnBefore);
+console.log('Return investigation: exact chosen answer, parent job scope, no inherited child task, escaped source link, stale history and read-only export passed.');

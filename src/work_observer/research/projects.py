@@ -1568,6 +1568,44 @@ class ProjectService:
                         "source_passage", "evidence_passages", "selected_job_ids",
                     )
                 } if parent else None
+                entry = next((row for row in career.get("runs", [])
+                              if row["step_id"] == step["id"]), {})
+                followup_entry = next((row for row in career.get("runs", [])
+                                       if row["step_id"] == entry.get("source_step_id")), {})
+                followup_question = next((row for row in career.get("questions", [])
+                                          if row["id"] == followup_entry.get("question_id")
+                                          and row.get("parent_question_id")
+                                          == selected_inquiry["id"]), None)
+                if followup_question:
+                    followup_step = next(row for row in record["steps"]
+                                         if row["id"] == followup_entry["step_id"])
+                    followup_run = (self.store.get(followup_step["run_id"])
+                                    if followup_step.get("run_id") else None) or {}
+                    followup_result = followup_run.get("result") or {}
+                    if (followup_result.get("status") == "completed"
+                            and followup_run.get("state") != "invalidated"):
+                        selected_inquiry["followup_to_recheck"] = {
+                            "question_id": followup_question["id"],
+                            "question": followup_question["question"],
+                            "user_conclusion": followup_question.get("conclusion", ""),
+                            "step_id": followup_step["id"],
+                            "asked_then": followup_entry.get("user_question"),
+                            "selected_job_ids": followup_entry.get("selected_job_ids", []),
+                            "source_cutoff": followup_result.get("created_at"),
+                            "claim_details_to_recheck": [
+                                {key: claim.get(key) for key in (
+                                    "text", "category", "basis", "requirement",
+                                )} for claim in followup_result.get("claims", [])
+                            ],
+                            "unresolved_then": followup_result.get("gaps", []),
+                            "source_references_to_reread": [
+                                {key: source.get(key) for key in (
+                                    "title", "evidence_kind", "job_id", "public_document_id",
+                                    "document_id", "snapshot_id", "historical_cutoffs",
+                                    "start", "end",
+                                )} for source in followup_result.get("evidence", [])
+                            ],
+                        }
                 origin_step = next(
                     (row for row in record["steps"]
                      if row["id"] == selected_inquiry.get("source_step_id")), None
