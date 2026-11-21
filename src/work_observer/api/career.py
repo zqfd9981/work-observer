@@ -134,6 +134,7 @@ class QuestionPassageNoteInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     relation: Literal["unclassified", "supports", "challenges", "conditions"] = "unclassified"
     user_note: str = Field(default="", max_length=1000)
+    target_view: str = Field(default="", max_length=700)
 
 
 class QuestionPassageInput(QuestionPassageNoteInput):

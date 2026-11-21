@@ -449,7 +449,9 @@ class CareerService:
                     )
                     + "\n" + passage.get("title", "") + "\n" + passage.get("quote", "")
                     + "\n" + "\n".join(
-                        "\n".join(item.get(key, "") for key in ("title", "quote", "user_note"))
+                        "\n".join(item.get(key, "") for key in (
+                            "title", "quote", "user_note", "target_view",
+                        ))
                         for item in row.get("evidence_passages", [])
                     ),
                     "requirements",
@@ -1385,7 +1387,8 @@ class CareerService:
                 passage.update(**data, updated_at=now())
             else:
                 passages.append({"id": uuid4().hex, **self._source_passage(data["passage"]),
-                                 "relation": data["relation"], "user_note": data["user_note"]})
+                                 "relation": data["relation"], "user_note": data["user_note"],
+                                 "target_view": data.get("target_view", "")})
             question["updated_at"] = now()
             self.projects._write(project)
         return self.get(identity)
@@ -2014,6 +2017,10 @@ class CareerService:
                     question += (
                         "selected_inquiry.evidence_passages是用户为同一问题收集的原文线索，"
                         "relation与user_note只是用户标注，不是已确定的支持、冲突或因果关系。"
+                        "target_view保留标注当时针对的具体解释原句；为空时未指定解释，"
+                        "不能擅自归到解释A或B。若原句与当前解释不同，先说明针对的是旧句或"
+                        "另一个判断，不把原标注自动移到新解释上。按每项解释分别核对其依据、"
+                        "反例和条件；摘录条数不代表独立来源数量，也不据此投票选出解释。"
                         "回读本轮可用的各份原文，核对表面分歧是否来自适用条件或语境；"
                         "允许多种解释同时成立、都不成立或资料不足。未能重核的摘录保留未知，"
                         "不能把保存的摘录当作本轮新读证据或引用ID，也不自动改写用户结论。"
