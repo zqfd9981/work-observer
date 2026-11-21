@@ -24,7 +24,7 @@ from work_observer.text_match import match_text
 
 QUESTIONS = {
     "teachback": (
-        "围绕career_evidence.selected_inquiry做一次理解自测，检验用户能否用自己的话解释工作。"
+        "围绕用户选定的调查问题或个人认识做一次理解自测，检验用户能否用自己的话解释工作。"
         "先读取相关工作资料，参考原问题、地图关系、个人认识中的待验证解释与限定。"
         "在gaps给出最多三道完整问题，每道使用问号：先解释为什么，再改变一个条件或提供反例，"
         "最后追问哪些证据能支持或挑战解释。问题应可根据当前资料作有限判断，缺信息可以回答未知。"
@@ -1682,7 +1682,7 @@ class CareerService:
                 )
                 if not insight:
                     raise ValueError("未找到要核对的认识，请重新选择。")
-                if inherit_focus:
+                if inherit_focus and kind != "teachback":
                     observed_task = next(
                         (
                             row for row in project["career"]["tasks"]
@@ -1696,6 +1696,8 @@ class CareerService:
                         question_id = question_id or insight.get("question_id") or (
                             observed_task.get("question_id") if observed_task else None
                         )
+            if insight_id and kind == "teachback" and inherit_focus:
+                question_id = question_id or insight.get("question_id")
             understanding_check = kind == "teachback"
             if kind in {"answer", "followup"} or kind == "plan" and source_step_id:
                 if sources is None:
@@ -1710,7 +1712,10 @@ class CareerService:
                 if previous_assessment and previous_assessment.get("understanding_check"):
                     if question_id and question_id != previous_assessment["question_id"]:
                         raise ValueError("请沿用这组理解自测对应的调查问题，或另开一组自测。")
+                    if insight_id and insight_id != previous_assessment.get("insight_id"):
+                        raise ValueError("请沿用这组理解自测对应的认识，或另开一组自测。")
                     question_id = previous_assessment["question_id"]
+                    insight_id = previous_assessment.get("insight_id")
                     understanding_check = True
             if question_id:
                 saved_question = next(
@@ -1740,8 +1745,8 @@ class CareerService:
                     )
                     if chosen_task.get("question_id") not in {None, question_id}:
                         raise ValueError("请选择这个调查问题关联的实验，或取消实验选择。")
-            if kind == "teachback" and (not question_id or story_id or task_id):
-                raise ValueError("请选择一个已保存的调查问题做理解自测，不绑定个人经历或工作样本。")
+            if kind == "teachback" and (not (question_id or insight_id) or story_id or task_id):
+                raise ValueError("请选择一条已保存的认识或调查问题做理解自测，不绑定经历或样本。")
             if autonomous and (kind != "ask" or not question_id or offline):
                 raise ValueError("请选一个已保存的问题，并取消只整理原文，再开始连续查证。")
             comparison_step_ids = comparison_step_ids or []
@@ -2074,6 +2079,13 @@ class CareerService:
                     "用户明确选中的个人认识在career_evidence.selected_learning_note，"
                     "请回查原文和观察，说明它还能支持什么、哪些需修正、哪些仍未知。"
                     "它可能已经搁置，不因本次讨论而自动恢复；不因记录较新或较旧就判断真假。"
+                )
+            if insight_id and understanding_check:
+                question += (
+                    "本次自测明确围绕career_evidence.selected_learning_note的完整认识、原观察、条件与未知。"
+                    "这份认识可能有误或已搁置，练习不恢复选用；先回读可用原文，不把个人观点当标准答案。"
+                    "出题时用条件变化、反例或证据选择检验推理，不在claims直接泄露题目的答案，"
+                    "不要求复述笔记原句；反馈与追问保留同一条认识，并区分概念解释和实际经历。"
                 )
             if insight_ids:
                 question += (
@@ -2431,7 +2443,8 @@ class CareerService:
                     "material_id": material_id if kind == "ask" else None,
                     "material_ids": material_ids if kind in {"ask", "map", "plan"} else [],
                     "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
-                    "insight_id": insight_id if kind in {"ask", "challenge"} else None,
+                    "insight_id": insight_id
+                    if kind in {"ask", "challenge"} or understanding_check else None,
                     "insight_ids": insight_ids,
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
@@ -2452,7 +2465,7 @@ class CareerService:
             )
             if has_task:
                 project["steps"][-1]["career_task_id"] = task_id
-            if insight_id and kind in {"ask", "challenge"}:
+            if insight_id and (kind in {"ask", "challenge"} or understanding_check):
                 project["steps"][-1]["career_insight_id"] = insight_id
             if insight_ids:
                 project["steps"][-1]["career_insight_ids"] = insight_ids[:]
