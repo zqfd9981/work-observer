@@ -251,6 +251,10 @@ class CareerService:
                 "open_question_count": sum(
                     q["state"] == "open" for q in row["career"].get("questions", [])
                 ),
+                "focus_question": next(
+                    (q["question"] for q in row["career"].get("questions", [])
+                     if q["id"] == row["career"].get("focus_question_id")), None
+                ),
                 "task_count": len(row["career"]["tasks"]),
                 "done_count": sum(task["state"] == "done" for task in row["career"]["tasks"]),
             }
@@ -621,6 +625,7 @@ class CareerService:
             "insights": career.get("insights", []),
             "pitches": career.get("pitches", []),
             "questions": career.get("questions", []),
+            "focus_question_id": career.get("focus_question_id"),
             "document_ids": project.get("public_document_ids", []),
             "materials": archive_catalog(
                 self.repository,
@@ -1090,6 +1095,17 @@ class CareerService:
                 )
             if replacement:
                 replacement.update(use_for_research=False, updated_at=now())
+            self.projects._write(project)
+        return self.get(identity)
+
+    def focus_question(self, identity, question_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            if question_id and not any(
+                row["id"] == question_id for row in project["career"].get("questions", [])
+            ):
+                raise ValueError("请选择当前目标中的调查问题，或暂不固定研究焦点。")
+            project["career"]["focus_question_id"] = question_id
             self.projects._write(project)
         return self.get(identity)
 

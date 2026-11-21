@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -219,3 +219,15 @@ assert.ok(quizHtml.includes('把理解讲清楚，再检查边界')&&quizHtml.in
 assert.ok(quizHtml.includes('Own explanation with unknowns.')&&!quizHtml.includes('OTHER INQUIRY ANSWER MUST NOT MIX'));
 assert.equal(ctx.window.journeyTest.researchLabel(ownAttempt),'理解自测反馈');
 console.log('Understanding practice: clear mode, inquiry focus, answer grouping and feedback labels passed.');
+
+const focusData={...data,focus_question_id:'q',questions:[{...question,conclusion:'User conclusion with remaining uncertainty.',next_evidence:'Need a real counterexample.'}],results:[...data.results].reverse()};
+const focusBefore=JSON.stringify(focusData);
+const focusHtml=ctx.window.journeyTest.researchFocus(focusData);
+assert.ok(focusHtml.includes('data-career-focused-question="q"')&&focusHtml.includes('User conclusion with remaining uncertainty.'));
+assert.ok(focusHtml.includes('Need a real counterexample.')&&focusHtml.includes('Negative experiment'));
+assert.ok(focusHtml.includes('Conditions remain unknown.')&&!focusHtml.includes('Original overconfident belief.'));
+assert.ok(focusHtml.includes('#career/goal/journey/q')&&focusHtml.includes('data-career-question-teachback="q"'));
+assert.equal(JSON.stringify(focusData),focusBefore);
+const noFocus=ctx.window.journeyTest.researchFocus({...focusData,focus_question_id:null});
+assert.ok(noFocus.includes('留住一个值得继续的问题')&&!noFocus.includes('data-career-focused-question'));
+console.log('Research focus: current question, linked work, selected understanding and unmodified records passed.');

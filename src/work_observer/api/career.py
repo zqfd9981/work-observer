@@ -114,6 +114,11 @@ class ResearchQuestionInput(BaseModel):
     conclusion_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
+class CareerFocusInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
 class CareerResearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal[
@@ -222,6 +227,10 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
 
     async def get(request):
         return change(lambda: detail(request.path_params["id"]))
+
+    async def focus(request):
+        data = CareerFocusInput.model_validate(await read_json(request))
+        return change(lambda: service().focus_question(request.path_params["id"], data.question_id))
 
     async def search(request):
         query = CareerSearchQuery.model_validate(dict(request.query_params))
@@ -391,6 +400,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", listing),
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
+        Route("/api/career/{id}/focus", focus, methods=["PATCH"]),
         Route("/api/career/{id}/search", search),
         Route("/api/career/{id}/reuse", reuse, methods=["POST"]),
         Route("/api/career/{id}/materials", add_material, methods=["POST"]),
