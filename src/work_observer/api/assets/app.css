@@ -314,3 +314,7 @@
 
 .career-library-map-matches{margin:14px 0}.career-library-map-part{padding:14px;margin:12px 0;background:var(--green-soft);border-radius:8px}.career-library-map-part p,.career-library-map-part blockquote{white-space:pre-wrap;overflow-wrap:anywhere}.career-library-map-part>summary{font-weight:600}.is-located-map{outline:2px solid #b18c47;outline-offset:6px;scroll-margin-top:90px}
 .career-history-map p,.career-history-map h5,.career-history-map li{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.career-relation-practice{display:grid;gap:20px;max-width:1100px}.career-relation-practice>header,.career-practice-context,#career-relation-practice,.career-practice-reference{padding:22px}.career-practice-prompt{padding:14px;background:var(--green-soft);border-radius:8px;color:var(--ink)}.career-practice-reference>.career-work-relation{margin-top:16px}.career-relation-practice p{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.career-inquiry-start{padding:14px;border:1px solid var(--line);border-radius:8px;margin:14px 0}.career-inquiry-start p{white-space:pre-wrap;overflow-wrap:anywhere}

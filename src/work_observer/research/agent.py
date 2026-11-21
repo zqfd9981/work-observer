@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import time
+from copy import deepcopy
 from datetime import datetime
 from typing import Literal
 from uuid import uuid4
@@ -1706,6 +1707,12 @@ async def _research(
             "origin_learning_note": (personal.get("selected_inquiry") or {}).get(
                 "origin_learning_note"
             ),
+            "inquiry_at_start": {key: deepcopy((personal.get("selected_inquiry") or {}).get(key))
+                                 for key in (
+                                     "id", "question", "state", "conclusion", "next_evidence",
+                                     "hypothesis_a", "hypothesis_b", "source_step_id",
+                                     "selected_job_ids", "material_ids",
+                                 )} if personal.get("selected_inquiry") else None,
             "relation_comparison": ((personal.get("selected_inquiry") or {}).get(
                 "carried_understanding"
             ) or {}).get("work_relations", []),
