@@ -282,6 +282,27 @@ class ExperimentInput(BaseModel):
     design_change: str = Field(default="", max_length=1500)
 
 
+class RetryRequestInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    request_id: str = Field(min_length=1, max_length=60)
+    business_id: str = Field(min_length=1, max_length=60)
+    action: str = Field(min_length=1, max_length=60)
+
+
+class RetryCaseInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=150)
+    requests: list[RetryRequestInput] = Field(min_length=1, max_length=20)
+
+
+class RetryExperimentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    cases: list[RetryCaseInput] = Field(min_length=1, max_length=6)
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    hypothesis: str = Field(default="", max_length=1500)
+    save: bool = False
+
+
 class ExperimentComparisonRow(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     condition: str = Field(min_length=1, max_length=300)
@@ -556,6 +577,13 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             lambda: service().add_experiment(request.path_params["id"], data.model_dump()), 201
         )
 
+    async def retry_experiment(request):
+        data = RetryExperimentInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().retry_experiment(request.path_params["id"], **data.model_dump()),
+            201 if data.save else 200,
+        )
+
     async def update_task(request):
         data = TaskUpdate.model_validate(await read_json(request))
         if data.artifact_text.strip() and busy():
@@ -605,5 +633,6 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/steps/{step_id}", end_step, methods=["DELETE"]),
         Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
         Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
+        Route("/api/career/{id}/experiments/retry", retry_experiment, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),
     ]

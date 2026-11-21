@@ -2750,6 +2750,34 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def retry_experiment(self, identity, *, cases, question_id=None, hypothesis="", save=False):
+        from work_observer.research.retry_experiment import run_retry_experiment
+
+        project = self._project(identity)
+        if question_id and not any(q["id"] == question_id
+                                   for q in project["career"].get("questions", [])):
+            raise ValueError("请选择这个目标中想验证的调查问题。")
+        result = run_retry_experiment(cases)
+        if not save:
+            return {"experiment": result}
+        if any(step["state"] == "running" for step in project["steps"]):
+            raise ValueError("这轮研究结束后可以保存运行记录；仍可先运行并查看本地结果。")
+        saved = self.add_experiment(identity, {
+            "title": "本地顺序模拟：重试与去重", "question_id": question_id,
+            "task_or_ability": "用具体输入区分请求编号、业务编号与动作的去重边界。",
+            "deliverable": "本机内存计算的完整输入与逐条执行、跳过记录。",
+            "completion_check": "逐条对照输入位置和四种规则，另行核实真实业务及运行条件。",
+            "hypothesis": hypothesis, "previous_task_id": None, "design_change": "",
+        })
+        task_id = saved["tasks"][-1]["id"]
+        saved = self.update_task(
+            identity, task_id, state="done", outcome=result["outcome"], artifact="",
+            artifact_title="本地重试与去重 · 本机运行记录",
+            artifact_text=result["artifact_text"], comparison_conditions=result["conditions"],
+            comparison_rows=result["comparison_rows"],
+        )
+        return {"experiment": result, "career": saved, "task_id": task_id}
+
     def add_experiment(self, identity, data):
         with self.store.lock, self.store.db:
             project = self._project(identity)
