@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -366,4 +366,28 @@ assert.ok(!readOnlyScope.includes('data-career-job-comparison'));
 assert.ok(ctx.window.journeyTest.researchScope(pairStudy,comparisonData).includes('data-career-job-comparison'));
 assert.equal(JSON.stringify(comparisonData),pairBefore);
 console.log('Chosen study comparison: its own claims and complete evidence, preferred conditions, shared judgments and read-only export passed.');
+}
+
+{
+const changeJob={id:'history-job',current:{title:'Changed role <condition>',company_name_raw:'Team'}};
+const oldSource={snapshot_id:'old-snapshot',document_id:'old-document',job_id:'history-job',start:0,end:45,quote:'<original>Old qualification; boundary remains.</original>',title:'Old raw source'};
+const newSource={...oldSource,snapshot_id:'new-snapshot',document_id:'new-document',quote:'New preferred condition, not mandatory.',title:'New raw source'};
+const observed=(snapshot_id,minute)=>({snapshot_id,observed_at:`2026-11-21T01:${minute}:00+00:00`,processed_at:`2026-11-21T01:${minute}:01.123456+00:00`,read_as_of:`2026-11-21T01:${minute}:01.123456+00:00`,data_kind:'synthetic',mode:'manual'});
+const changeComparison={status:'compared',job_id:changeJob.id,before:observed(oldSource.snapshot_id,'00'),after:observed(newSource.snapshot_id,'10'),description_diff:'-Old condition.\n+New condition <check>.',evidence:[oldSource,newSource],changes:[{field:'description',before:oldSource.quote,after:newSource.quote},{field:'education',before:null,after:'Preferred'}]};
+const changeData={...data,jobs:[changeJob]};
+ctx.window.journeyTest.setDraft(changeData,{job_changes:{job_id:changeJob.id,open:true,comparison:changeComparison}});
+const changesHtml=ctx.window.journeyTest.jobChanges(changeData),changeDraft=ctx.window.journeyTest.jobChangeInquiry(changeJob,changeComparison);
+assert.ok(changesHtml.includes('&lt;original&gt;')&&changesHtml.includes('&lt;check&gt;'));
+assert.ok(changesHtml.includes('data-career-save-job-change="history-job"'));
+assert.ok(!changesHtml.includes('<original>')&&!changesHtml.includes('undefined'));
+assert.equal(changeDraft.source_passage.snapshot_id,'old-snapshot');
+assert.equal(changeDraft.after_passage.snapshot_id,'new-snapshot');
+assert.deepEqual(Array.from(changeDraft.selected_job_ids),['history-job']);
+assert.ok(changeDraft.next_evidence.includes(changeComparison.before.read_as_of)&&changeDraft.next_evidence.includes(changeComparison.after.read_as_of));
+assert.ok(changeDraft.hypothesis_a&&changeDraft.hypothesis_b);
+ctx.window.journeyTest.setDraft(changeData,{job_changes:{job_id:changeJob.id,comparison:{status:'insufficient_history',gaps:['Need another source.']}}});
+const insufficient=ctx.window.journeyTest.jobChanges(changeData);
+assert.ok(insufficient.includes('Need another source.')&&!insufficient.includes('data-career-save-job-change'));
+assert.equal(ctx.window.journeyTest.jobChanges({...data,jobs:[]}), '');
+console.log('Source change inquiry: two raw sources, exact historical cutoffs, alternative explanations, escaped differences and insufficient history passed.');
 }

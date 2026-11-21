@@ -1,5 +1,6 @@
 """同岗位详情版本的确定性比较，观察历史与原始证据分开呈现。"""
 
+from datetime import datetime
 from difflib import SequenceMatcher, unified_diff
 
 from sqlalchemy import select
@@ -59,6 +60,9 @@ class HistoryService:
             "content_sha256": snapshot.content_sha256,
             "observed_at": observation.observed_at,
             "processed_at": observation.processed_at,
+            "read_as_of": max(datetime.fromisoformat(value) for value in (
+                observation.observed_at, observation.processed_at
+            )).isoformat(),
             "response_origin": document.response_origin,
             "data_kind": document.provenance.get("data_kind", "unspecified"),
             "mode": run.mode,
