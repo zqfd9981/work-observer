@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={answerRevisionChoice,answerRevisionDraft,questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -464,4 +464,31 @@ const draft=ctx.window.journeyTest.sourceReviewDraft(reviewQuestion);
 assert.equal(draft.question_id,'q');assert.deepEqual(Array.from(draft.selected_job_ids),['updated-job']);assert.equal(draft.source_step_id,'');
 assert.equal(JSON.stringify(reviewData),reviewBefore);
 console.log('Source followup: changed valid original citations, unrelated inquiries, intentional history, fresh source rereads, preserved conclusions and safe export passed.');
+}
+
+{
+const previousUnderstanding={id:'rev-old',question_id:'q',current_view:'Original understanding. '.repeat(45)+'FINAL OLD CONDITION',previous_view:'Initial idea.',observation:'Old supplied observation.',open_question:'Old unknown.',use_for_research:true};
+const quoteText='New cited source. '.repeat(130)+'FINAL SOURCE CONDITION';
+const reviseStudy=result('rev-study',stamp(4),{question_id:'q',task_id:'current-task',result:{status:'completed',claims:[{text:'New qualified interpretation.',basis:'inference',category:'task',requirement:'unspecified',evidence_ids:['rev-ev']}],evidence:[{id:'rev-ev',title:'Original supplied source <check>',quote:quoteText},{id:'unused-ev',title:'Unused preview',quote:'UNUSED SOURCE MUST NOT BE DRAFTED'}],gaps:['Need a counterexample with a final condition.']}});
+const revisionData={...data,insights:[previousUnderstanding,{...previousUnderstanding,id:'foreign-note',question_id:'other',current_view:'FOREIGN UNDERSTANDING'}],results:[reviseStudy]};
+const revisionBefore=JSON.stringify(revisionData);
+ctx.window.journeyTest.setDraft(revisionData,{question_answers:{q:{step_id:'rev-study'}}});
+const unchosen=ctx.window.journeyTest.answerRevisionChoice(question,reviseStudy,revisionData);
+assert.ok(unchosen.includes('disabled')&&!unchosen.includes('FOREIGN UNDERSTANDING'));
+ctx.window.journeyTest.setDraft(revisionData,{question_answers:{q:{step_id:'rev-study',revision_note_id:'rev-old'}}});
+const chosen=ctx.window.journeyTest.answerRevisionChoice(question,reviseStudy,revisionData);
+assert.ok(chosen.includes('value="rev-old" selected')&&!chosen.includes(' disabled'));
+const revision=ctx.window.journeyTest.answerRevisionDraft(question,reviseStudy,previousUnderstanding);
+assert.equal(revision.replaces_insight_id,'rev-old');assert.equal(revision.source_step_id,'rev-study');assert.equal(revision.source_claim_index,null);
+assert.equal(revision.previous_view,previousUnderstanding.current_view);assert.equal(revision.task_id,'current-task');assert.equal(revision.question_id,'q');
+assert.ok(revision.observation.includes('FINAL SOURCE CONDITION')&&!revision.observation.includes('UNUSED SOURCE MUST NOT BE DRAFTED'));
+assert.ok(revision.current_view.includes('New qualified interpretation.')&&revision.current_view.includes('Need a counterexample with a final condition.'));
+assert.ok(ctx.window.journeyTest.insightLengthNotice(revision));
+assert.equal(revision.open_question,'Need a counterexample with a final condition.');
+const preferredSource={...reviseStudy,result:{...reviseStudy.result,claims:[{...reviseStudy.result.claims[0],basis:'direct',requirement:'preferred',text:'Business background, with the original condition.'}]}};
+assert.ok(ctx.window.journeyTest.answerRevisionDraft(question,preferredSource,previousUnderstanding).current_view.includes('加分'));
+
+assert.ok(!ctx.window.journeyTest.questionAnswer(question,revisionData,true).includes('data-career-revise-answer'));
+assert.equal(JSON.stringify(revisionData),revisionBefore);
+console.log('Answer to revised understanding: explicitly selected prior record, full old view and cited source, original limits, new discussion link and unchanged stored records passed.');
 }
