@@ -18,6 +18,11 @@ POLICY = (
     "每项说明针对的任务/能力、可交付产物和可实际检查的完成条件，引用本轮已读原文；"
     "实验类动作在hypothesis写明尚未验证的解释及适用条件，在completion_check写出"
     "可以支持、区分或挑战它的具体观察；完成作品不等于解释成立。非实验动作可将hypothesis留空。"
+    "实验动作优先给2至4组可直接尝试的comparison_rows：condition说明改变的条件，"
+    "input给具体可复制的合成输入或操作，expected写待验证的预期，不能填写实际结果。"
+    "comparison_conditions说明建议保持不变的条件及未控制之处。优先只改变一个关键条件，"
+    "包含有机会挑战原解释的案例；不为凑组数而捏造规则或企业数据。"
+    "无法设计具体对照或非实验动作时comparison_rows填空数组，comparison_conditions可留空。"
     "原文只能支持为何针对该任务/能力，建议本身和验收方式是推断，不冒充企业既定要求。"
     "不把会用工具等同于具备能力；尊重用户自述限制，不猜测完成时间、授权或保证结果。"
     "未明确的资源、权限和前提列入assumptions或open_questions，不代替用户执行外部动作。"
@@ -33,6 +38,13 @@ LEARNING_POLICY = (
 )
 
 
+class ComparisonCase(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    condition: str = Field(min_length=1, max_length=300)
+    input: str = Field(min_length=1, max_length=600)
+    expected: str = Field(min_length=1, max_length=600)
+
+
 class Action(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=150)
@@ -43,6 +55,8 @@ class Action(BaseModel):
                             description="实验准备检验的解释与条件，尚未验证；非实验动作可留空。")
     evidence_ids: list[str] = Field(min_length=1, max_length=6)
     assumptions: list[str] = Field(max_length=4)
+    comparison_conditions: str = Field(default="", max_length=1000)
+    comparison_rows: list[ComparisonCase] = Field(default_factory=list, max_length=4)
 
 
 class Plan(BaseModel):
@@ -103,7 +117,8 @@ def tools(base):
     finish.setdefault("$defs", {}).update(schema.pop("$defs"))
     action = finish["$defs"]["Action"]
     action["required"] = list(action["properties"])
-    action["properties"]["hypothesis"].pop("default", None)
+    for field in ("hypothesis", "comparison_conditions", "comparison_rows"):
+        action["properties"][field].pop("default", None)
     finish["properties"]["application_plan"] = {"anyOf": [schema, {"type": "null"}]}
     finish["required"].append("application_plan")
     return result

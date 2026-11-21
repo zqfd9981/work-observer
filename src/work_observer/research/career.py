@@ -2531,6 +2531,9 @@ class CareerService:
                            if step.get("career_requirement") else {}),
                         "design_change": "",
                         **action,
+                        "comparison_rows": [
+                            {**row, "observed": ""} for row in action.get("comparison_rows", [])
+                        ],
                         **({"purpose": "understanding_check"}
                            if result["application_plan"].get("purpose") == "understanding_check"
                            else {}),

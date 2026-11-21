@@ -477,7 +477,9 @@ def render(result):
                 "",
                 "## 应用行动（研究建议，效果尚未验证）",
                 "",
-                f"目标：{plan['goal']}；采用第 {plan['background_version']} 版个人背景。",
+                f"目标：{plan['goal']}；"
+                + ("尚未提供个人背景，只设计理解验证。"
+                   if plan.get("purpose") == "understanding_check" else "依据已保存的个人背景。"),
                 f"投入与限制：{plan['constraints'] or '未说明，不作假设'}",
                 plan["notice"],
             ]
@@ -499,6 +501,14 @@ def render(result):
                     *[f"- 需要确认的前提：{text}" for text in action["assumptions"]],
                 ]
             )
+            if action.get("comparison_conditions"):
+                lines.append(f"建议保持的条件：{action['comparison_conditions']}")
+            for case in action.get("comparison_rows", []):
+                lines.extend([
+                    f"- 建议对照条件：{case['condition']}",
+                    f"  合成输入或操作：{case['input']}",
+                    f"  预期（尚未执行）：{case['expected']}",
+                ])
         lines.extend(f"- 行动前待明确：{text}" for text in plan["open_questions"])
     lines.extend(
         [

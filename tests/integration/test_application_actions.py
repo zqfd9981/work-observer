@@ -200,6 +200,10 @@ def test_action_schema_extends_dialogue_without_changing_base_contract():
     action = finish["$defs"]["Action"]
     assert "hypothesis" in action["required"]
     assert "default" not in action["properties"]["hypothesis"]
+    for name in ("comparison_conditions", "comparison_rows"):
+        assert name in action["required"] and "default" not in action["properties"][name]
+    assert set(finish["$defs"]["ComparisonCase"]["required"]) == {"condition", "input", "expected"}
+    assert "observed" not in finish["$defs"]["ComparisonCase"]["properties"]
     assert method_fingerprint() != method_fingerprint(application_actions=True)
 
 

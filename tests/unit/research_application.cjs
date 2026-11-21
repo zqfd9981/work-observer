@@ -81,6 +81,12 @@ vm.runInContext('conversation.id=project.id;api=async(path,options)=>{calls.push
  assert.ok(planHtml.includes("完成检查"));assert.ok(planHtml.includes('data-cite="source"'));
  assert.ok(planHtml.includes("&lt;script&gt;合成目标"));assert.ok(planHtml.includes("&lt;/p&gt;合成产物"));
  assert.ok(!planHtml.includes("<script>"));assert.ok(planHtml.includes("合成待确认权限"));
+ context.planResult.application_plan.actions[0].comparison_conditions="同一空白表格，<未控制>并发。";
+ context.planResult.application_plan.actions[0].comparison_rows=[{condition:"不同编号",input:"request_id=A <script>",expected:"可能新增，尚未验证"}];
+ const designHtml=vm.runInContext('renderApplicationPlan(planResult,new Map())',context);
+ assert.ok(designHtml.includes("建议的条件对照 · 尚未执行"));
+ assert.ok(designHtml.includes("request_id=A &lt;script&gt;")&&!designHtml.includes("<script>"));
+ assert.ok(designHtml.includes("可能新增，尚未验证")&&!designHtml.includes("实际观察"));
  context.planResult.application_plan.purpose="understanding_check";
  const learningHtml=vm.runInContext('renderApplicationPlan(planResult,new Map())',context);
  assert.ok(learningHtml.includes("理解验证 · 实验设计"));

@@ -8,8 +8,18 @@ from test_career_workspace import run_stage
 
 from work_observer.api.web import create_app
 from work_observer.config import Settings
+from work_observer.reports.results import render
 from work_observer.research.agent import ModelClient
 from work_observer.storage.database import upgrade
+
+CONDITIONS = "使用同一张空白合成表格和相同提交过程；尚未检查并发或真实业务规则。"
+CASES = [
+    {"condition": "重复编号", "input": "在空白合成表格中依次提交 request_id=A、request_id=A。",
+     "expected": "若按编号去重，第二次不增加记录；这是待检验的预期。"},
+    {"condition": "改变编号",
+     "input": "重新使用空白合成表格，依次提交 request_id=A、request_id=B。",
+     "expected": "若只按编号去重，第二次增加记录；不同结果应保留，真实规则仍未知。"},
+]
 
 
 class LearningExperimentModel(ModelClient):
@@ -80,13 +90,15 @@ class LearningExperimentModel(ModelClient):
                         {
                             "title": "合成重复请求对照",
                             "task_or_ability": "检验重复回填的解释",
-                            "deliverable": "三组输入与对应账本记录",
+                            "deliverable": "两组输入与对应账本记录",
                             "completion_check": ("相同请求编号提交两次，再改变编号；"
                                 "逐次记录新增行数。"),
                             "hypothesis": ("相同编号的第二次提交不会重复回填；"
                                 "不同编号仍应产生新记录。"),
                             "evidence_ids": [evidence[0]["id"]],
                             "assumptions": ["仅用本地合成表格，不需要企业数据或账号"],
+                            "comparison_conditions": CONDITIONS,
+                            "comparison_rows": CASES,
                         }
                     ],
                     "open_questions": ["真实系统中的并发与权限仍未知。"],
@@ -137,6 +149,10 @@ def test_question_only_learning_experiment_returns_observation_after_reopen(tmp_
         plan = row["result"]["application_plan"]
         assert plan["purpose"] == "understanding_check" and len(plan["actions"]) == 1
         assert {ev["public_document_id"] for ev in row["result"]["evidence"]} == {source}
+        assert plan["actions"][0]["comparison_rows"] == CASES
+        markdown = render(row["result"])
+        assert CONDITIONS in markdown and CASES[1]["input"] in markdown
+        assert "预期（尚未执行）" in markdown and "尚未提供个人背景" in markdown
         imported = client.post(
             f"/api/career/{identity}/tasks", headers=auth, json={"step_id": row["step_id"]}
         )
@@ -144,6 +160,8 @@ def test_question_only_learning_experiment_returns_observation_after_reopen(tmp_
         task = imported.json()["tasks"][0]
         assert task["question_id"] == question["id"] and task["state"] == "planned"
         assert task["purpose"] == "understanding_check" and not task["outcome"]
+        assert task["comparison_rows"] == [{**case, "observed": ""} for case in CASES]
+        assert task["comparison_conditions"] == CONDITIONS
         outcome = "合成表格观察：同编号第二次提交仍新增一行，原先预期未得到支持。"
         updated = client.patch(
             f"/api/career/{identity}/tasks/{task['id']}",
