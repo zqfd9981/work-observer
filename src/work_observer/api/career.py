@@ -37,6 +37,15 @@ class CareerSearchQuery(BaseModel):
     sources_offset: int = Field(default=0, ge=0)
 
 
+class CareerReviewQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    q: str = Field(default="", max_length=200)
+    goal_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    state: Literal["all", "selected", "parked"] = "selected"
+    unknown: bool = False
+    offset: int = Field(default=0, ge=0)
+
+
 class StoryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=150)
@@ -306,6 +315,11 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
     async def listing(request):
         return response(service().listing())
 
+    async def review(request):
+        query = CareerReviewQuery.model_validate(dict(request.query_params))
+        result = await run_in_threadpool(service().review, **query.model_dump())
+        return response(result)
+
     async def create(request):
         data = CareerInput.model_validate(await read_json(request))
         return change(lambda: service().create(**data.model_dump()), 201)
@@ -538,6 +552,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
 
     return [
         Route("/api/career", listing),
+        Route("/api/career/review", review),
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
         Route("/api/career/{id}/focus", focus, methods=["PATCH"]),

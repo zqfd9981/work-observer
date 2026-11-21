@@ -278,6 +278,47 @@ class CareerService:
             if row["state"] == "active" and row.get("career")
         ]
 
+    def review(self, *, q="", goal_id=None, state="selected", unknown=False, offset=0):
+        from work_observer.research.learning import learning_inquiry_links
+
+        projects = [row for row in self.projects.list(all_records=True)
+                    if row["state"] == "active" and row.get("career")]
+        goals = [{"id": row["id"], "title": row["title"]} for row in projects]
+        terms = [match_text(term) for term in q.split()[:10]]
+        notes = []
+        for owner in projects:
+            if goal_id and owner["id"] != goal_id:
+                continue
+            career = owner["career"]
+            for note in career.get("insights", []):
+                selected = note.get("use_for_research", True)
+                if state == "selected" and not selected or state == "parked" and selected:
+                    continue
+                if unknown and not note.get("open_question", "").strip():
+                    continue
+                links = learning_inquiry_links(career, note)
+                text = match_text("\n".join([
+                    owner["title"], *(note.get(key, "") for key in (
+                        "previous_view", "observation", "current_view", "open_question",
+                    )), *(link["question"] for link in links),
+                ]))
+                if not all(term in text for term in terms):
+                    continue
+                notes.append({
+                    **note, "project_id": owner["id"], "project_title": owner["title"],
+                    "inquiry_links": links,
+                    "successor_ids": [row["id"] for row in career.get("insights", [])
+                                      if row.get("replaces_insight_id") == note["id"]],
+                })
+        notes.sort(key=lambda row: (
+            row.get("updated_at") or row["created_at"], row["project_id"], row["id"],
+        ), reverse=True)
+        page = notes[offset:offset + 12]
+        return {
+            "goals": goals, "notes": page, "total_count": len(notes), "offset": offset,
+            "next_offset": offset + len(page) if offset + len(page) < len(notes) else None,
+        }
+
     def update_goal(self, identity, *, title, goal, background, constraints, job_ids):
         for job_id in job_ids:
             self.repository.job(job_id)
