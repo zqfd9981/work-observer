@@ -1530,6 +1530,8 @@ class CareerService:
                 question += (
                     "本次围绕career_evidence.selected_inquiry中的持续调查问题展开，"
                     "结合用户本次提问、关心它的理由和希望补充的证据，回读相关原文。"
+                    "origin_discussion包含问题起点的原分析与完整地图，"
+                    "保留原关系理由、限定和迁移边界，把待检验解释带入后续验证，不能只按问题标题泛化。"
                     "若用户已有结论，它仍是待查证的个人记录，不当作独立事实。"
                     "若含carried_understanding，它是另一个目标下保存的理解，先核对当前岗位的适用条件；"
                     "原材料不在本轮范围时，明确无法重核旧结论，不用旧认识替代当前原文。"
@@ -1624,6 +1626,8 @@ class CareerService:
             preferred.extend(row.get("document_id") for row in requirement.get("records", []))
             topic.append(requirement.get("text"))
             related_steps = {source_step_id, *comparison_step_ids}
+            if question_id:
+                related_steps.add(saved_question.get("source_step_id"))
             if insight_id:
                 chosen_note = next(row for row in project["career"]["insights"]
                                    if row["id"] == insight_id)

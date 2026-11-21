@@ -1557,6 +1557,43 @@ class ProjectService:
                 None,
             )
             if selected_inquiry:
+                origin_step = next(
+                    (row for row in record["steps"]
+                     if row["id"] == selected_inquiry.get("source_step_id")), None
+                )
+                origin_run = (
+                    self.store.get(origin_step["run_id"])
+                    if origin_step and origin_step.get("run_id") else None
+                )
+                origin_result = (origin_run or {}).get("result") or {}
+                selected_inquiry["origin_discussion"] = {
+                    "step_id": origin_step["id"],
+                    "question": origin_step["question"],
+                    "same_job_scope": origin_step["scope_version"] == record["scope_version"],
+                    "work_map": origin_result.get("work_map"),
+                    "claim_details_to_recheck": [
+                        {key: claim.get(key) for key in (
+                            "text", "category", "basis", "requirement",
+                        )}
+                        for claim in origin_result.get("claims", [])
+                    ],
+                    "unresolved_then": origin_result.get("gaps", []),
+                    "source_references_to_reread": [
+                        {key: source.get(key) for key in (
+                            "title", "evidence_kind", "job_id", "public_document_id",
+                            "start", "end",
+                        )}
+                        for source in origin_result.get("evidence", [])
+                    ],
+                } if origin_result.get("status") == "completed" and (
+                    origin_run["state"] != "invalidated"
+                ) else None
+                selected_inquiry["origin_notice"] = (
+                    "origin_discussion是问题形成时的原分析和完整工作地图，仅供定位，不是新证据。"
+                    "若问题提到某一条关系，按原地图中的顺序回查其完整两端、理由与迁移限制。"
+                    "设计验证时针对其中尚未验证的解释；先读取本轮可用原文，"
+                    "资料不可读时明确保留未知，不把旧解释或旧引用编号当作本轮事实。"
+                )
                 linked_experiments = [
                     row
                     for row in career.get("tasks", [])
