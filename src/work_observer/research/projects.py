@@ -1568,6 +1568,12 @@ class ProjectService:
                 None,
             )
             if selected_inquiry:
+                origin_note = next(
+                    (row for row in career.get("insights", [])
+                     if row["id"] == selected_inquiry.get("source_insight_id")), None
+                )
+                if origin_note:
+                    selected_inquiry["origin_learning_note"] = learning_note(origin_note)
                 parent = next(
                     (row for row in career.get("questions", [])
                      if row["id"] == selected_inquiry.get("parent_question_id")), None

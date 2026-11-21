@@ -1482,6 +1482,11 @@ class CareerService:
                 data = {**data, "source_passage": self._source_passage(data["source_passage"])}
             questions = project["career"].setdefault("questions", [])
             by_id = {row["id"]: row for row in questions}
+            if data.get("source_insight_id") and not any(
+                row["id"] == data["source_insight_id"]
+                for row in project["career"].get("insights", [])
+            ):
+                raise ValueError("请选择当前目标中的认识记录作为问题起点。")
             if "material_ids" in data:
                 selected_materials = data["material_ids"]
                 retained = set(by_id.get(question_id, {}).get("material_ids", []))
@@ -2296,6 +2301,10 @@ class CareerService:
                     "origin_discussion包含问题起点的原分析与完整地图，"
                     "保留原关系理由、限定和迁移边界，把待检验解释带入后续验证，不能只按问题标题泛化。"
                     "若用户已有结论，它仍是待查证的个人记录，不当作独立事实。"
+                    "若含origin_learning_note，这是用户明确关联的问题起点，保留完整个人认识、"
+                    "观察、未知及选用状态；已搁置的认识不恢复选用。linked_experiment保留当前"
+                    "保存的实验设计、计数与观察，只说明记录内容，不能单凭完成状态证明能力或因果。"
+                    "原始产物仍需按本轮目录回读，未在范围内则保留无法重核；不自动改写用户认识。"
                     "若含carried_understanding，它是另一个目标下保存的理解，先核对当前岗位的适用条件；"
                     "原材料不在本轮范围时，明确无法重核旧结论，不用旧认识替代当前原文。"
                     "carried_understanding若含research_claims，这是从另一目标带来的历史Agent分析，"

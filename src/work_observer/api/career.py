@@ -190,6 +190,7 @@ class ResearchQuestionInput(BaseModel):
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     conclusion_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     parent_question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_passage: SourcePassageInput | None = None
     material_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
         default=None, max_length=6

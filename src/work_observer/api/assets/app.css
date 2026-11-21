@@ -305,3 +305,5 @@
 .career-investigation-return{display:flex;align-items:center;gap:16px;padding:12px 0;overflow-wrap:anywhere}
 .career-investigation-return span{color:var(--muted)}
 @media(max-width:700px){.career-investigation-head{padding:16px;grid-template-columns:minmax(0,1fr)}.career-investigation .career-question-card{padding:16px}.career-investigation-return{align-items:flex-start;flex-direction:column;gap:4px}}
+
+.career-insight-experiment,.career-question-learning-origin{margin:14px 0;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}.career-insight-experiment p,.career-insight-experiment td,.career-question-learning-origin p{white-space:pre-wrap;overflow-wrap:anywhere}.career-insight-experiment table{min-width:540px}.career-insight-experiment td{min-width:100px}

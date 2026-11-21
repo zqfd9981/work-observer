@@ -228,7 +228,12 @@ class LearningNotebook:
             "hypothesis_a", "hypothesis_b", "parent_question_id", "source_step_id",
             "conclusion_step_id", "source_passage", "evidence_passages", "material_ids",
             "selected_job_ids", "carried_understanding", "reused_from", "created_at", "updated_at",
+            "source_insight_id",
         )}
+        origin = next((item for item in career.get("insights", [])
+                       if item["id"] == row.get("source_insight_id")), None)
+        if origin:
+            record["origin_learning_note"] = learning_record(origin, project, self.store)
         record["evidence_passages"] = record["evidence_passages"] or []
         record["child_question_ids"] = [item["id"] for item in career.get("questions", [])
                                         if item.get("parent_question_id") == question_id]
@@ -494,6 +499,14 @@ def learning_record(row, record, store):
     }
     inquiry = next((item for item in record.get("career", {}).get("questions", [])
                     if item["id"] == row.get("question_id")), None)
+    experiment = next((item for item in record.get("career", {}).get("tasks", [])
+                       if item["id"] == row.get("task_id")), None)
+    if experiment:
+        note["linked_experiment"] = deepcopy(experiment)
+        note["experiment_notice"] = (
+            "读取时当前保存的实验设计与观察，不代表已独立验证；完成状态也不证明能力或因果。"
+            "artifact_document_id只供定位，本轮仍需读取可用原文；不自动恢复已移出的材料。"
+        )
     if inquiry:
         note["inquiry_question"] = inquiry["question"]
         note["inquiry_notice"] = "关联问题的当前表述，只供定位；不改变这份认识的原话或采用状态。"
