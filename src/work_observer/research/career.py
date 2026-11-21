@@ -1,6 +1,7 @@
 """A job seeker's evidence, experiments and interview practice in one research project."""
 
 import json
+from copy import deepcopy
 from datetime import datetime
 from uuid import uuid4
 
@@ -649,8 +650,6 @@ class CareerService:
                 work_map = result.get("work_map") or {}
                 if result.get("status") != "completed" or run["state"] == "invalidated":
                     continue
-                claims = result.get("claims", [])
-                evidence = {row["id"]: row for row in result.get("evidence", [])}
                 current = None
                 for index, relation in enumerate(work_map.get("work_relations", [])):
                     if node_kind != "all" and node_kind not in {
@@ -682,22 +681,7 @@ class CareerService:
                         )
                     if state != "all" and current != (state == "current"):
                         continue
-                    linked = [{"index": n, **claims[n]} for n in relation["claim_indices"]
-                              if 0 <= n < len(claims)]
-                    refs = set(key for claim in linked for key in claim["evidence_ids"])
-                    records.append({
-                        "key": f"{owner['id']}:{study['step_id']}:{index}",
-                        "project_id": owner["id"], "project_title": owner["title"],
-                        "step_id": study["step_id"], "relation_index": index,
-                        "question_id": study.get("question_id"),
-                        "question": study.get("user_question") or "工作地图研究",
-                        "recorded_at": study["created_at"], "current": current,
-                        "scope_note": work_map.get("scope_note", ""),
-                        "scope": result.get("scope", {}),
-                        "relation": relation, "claims": linked,
-                        "evidence": [row for key, row in evidence.items() if key in refs],
-                        "unknowns": work_map.get("unknowns", []),
-                    })
+                    records.append(self._relation_record(owner, study, result, index, current))
         records.sort(key=lambda row: (row["recorded_at"], row["key"]), reverse=True)
         page = records[offset:offset + 12]
         return {
@@ -707,6 +691,110 @@ class CareerService:
             "notice": "已保存研究中的关系解释，不是独立知识或岗位事实。保留每次研究的范围、"
             "判断性质、引用和限制；不同记录不自动合并，新旧顺序不证明对错或行业变化。",
         }
+
+    @staticmethod
+    def _relation_record(owner, study, result, index, current):
+        relation = result["work_map"]["work_relations"][index]
+        claims = result.get("claims", [])
+        linked = [{"index": n, **claims[n]} for n in relation["claim_indices"]
+                  if 0 <= n < len(claims)]
+        refs = {key for claim in linked for key in claim["evidence_ids"]}
+        return deepcopy({
+            "key": f"{owner['id']}:{study['step_id']}:{index}",
+            "project_id": owner["id"], "project_title": owner["title"],
+            "step_id": study["step_id"], "relation_index": index,
+            "question_id": study.get("question_id"),
+            "question": study.get("user_question") or "工作地图研究",
+            "recorded_at": study["created_at"], "current": current,
+            "research_cutoff": result["created_at"],
+            "scope_note": result["work_map"].get("scope_note", ""),
+            "scope": result.get("scope", {}), "relation": relation, "claims": linked,
+            "evidence": [row for row in result.get("evidence", []) if row["id"] in refs],
+            "unknowns": result["work_map"].get("unknowns", []),
+        })
+
+    def relation_inquiry(self, *, relations, question, title="", include_sources=True):
+        keys = {(row["project_id"], row["step_id"], row["relation_index"]) for row in relations}
+        if len(keys) != 2:
+            raise ValueError("请选择两条不同的工作关系再建立对照调查。")
+        origins, owners = [], {}
+        for reference in relations:
+            identity = reference["project_id"]
+            if identity not in owners:
+                owners[identity] = self.get(identity)
+            owner = owners[identity]
+            study = next((row for row in owner["results"]
+                          if row["step_id"] == reference["step_id"]), None)
+            result = (study or {}).get("result") or {}
+            index = reference["relation_index"]
+            if (result.get("status") != "completed" or study["state"] == "abandoned"
+                    or result.get("business_review", {}).get("status") == "rejected"
+                    or not 0 <= index < len((result.get("work_map") or {}).get(
+                        "work_relations", []))):
+                raise ValueError("所选关系已无法完整读取，请回到关系库重新选择。")
+            snapshot = self._relation_record(owner, study, result, index, study["current"])
+            for claim in snapshot["claims"]:
+                claim.pop("evidence_ids", None)
+            for source in snapshot["evidence"]:
+                source.pop("id", None)
+            origins.append(snapshot)
+        documents, jobs, skipped, references = [], [], [], []
+        public = PublicDocumentService(self.repository, self.raw_directory / "public")
+        for origin in origins:
+            for source in origin["evidence"]:
+                reference = {key: source.get(key) for key in (
+                    "job_id", "public_document_id", "document_id", "snapshot_id", "title",
+                    "evidence_kind", "start", "end", "historical_cutoffs",
+                )}
+                source["available_for_recheck"] = False
+                if include_sources:
+                    try:
+                        if source.get("public_document_id"):
+                            document = public.document(source["public_document_id"])
+                            if document["integrity"] != "verified":
+                                raise ValueError("原文文件缺失或已变化")
+                            documents.append(source["public_document_id"])
+                        elif source.get("job_id") and source.get("document_id"):
+                            document = Catalog(self.repository).document(source["document_id"])
+                            if document["integrity"] != "verified":
+                                raise ValueError("旧岗位原文缺失或已变化")
+                            self.repository.job(source["job_id"])
+                            jobs.append(source["job_id"])
+                            reference["as_of"] = (source.get("historical_cutoffs") or [
+                                origin["research_cutoff"],
+                            ])[0]
+                        else:
+                            raise ValueError("这段引用没有可带入的归档正文定位")
+                    except (ProbeError, ValueError) as error:
+                        skipped.append({"title": source["title"], "reason": (
+                            "原文暂不可读，引用保留供回查。" if isinstance(error, ProbeError)
+                            else str(error)
+                        )})
+                    else:
+                        source["available_for_recheck"] = True
+                references.append(reference)
+        documents, jobs = list(dict.fromkeys(documents)), list(dict.fromkeys(jobs))
+        if len(jobs) > 6:
+            raise ValueError("两条关系涉及超过6个岗位，请选择范围更集中的关系。")
+        saved = self.create(title=title or question[:150], goal=question[:1000],
+                            background="", constraints="", job_ids=jobs)
+        identity = saved["id"]
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            project["public_document_ids"] = documents
+            self.projects._write(project)
+        saved = self.save_question(identity, {
+            "question": question, "why_matters": "对照所选工作关系，核对共用点、差异和迁移前提。",
+            "next_evidence": "回读两侧原文，寻找反例及能区分解释的观察；来源不可读则保留未知。",
+            "state": "open", "conclusion": "", "hypothesis_a": "", "hypothesis_b": "",
+            "source_step_id": None, "conclusion_step_id": None, "parent_question_id": None,
+            "selected_job_ids": jobs, "material_ids": documents if len(documents) <= 6 else [],
+            "carried_understanding": {"work_relations": origins,
+                                      "source_references": references,
+                                      "skipped_sources": skipped,
+                                      "include_sources": include_sources},
+        })
+        return self.focus_question(identity, saved["questions"][-1]["id"])
 
     def get(self, identity):
         project = self._project(identity)
@@ -2387,6 +2475,11 @@ class CareerService:
                     "保存的实验设计、计数与观察，只说明记录内容，不能单凭完成状态证明能力或因果。"
                     "原始产物仍需按本轮目录回读，未在范围内则保留无法重核；不自动改写用户认识。"
                     "若含carried_understanding，它是另一个目标下保存的理解，先核对当前岗位的适用条件；"
+                    "其中work_relations若存在，是用户选定的两条历史工作关系及完整理由、限定、"
+                    "当时范围和引用位置；分别核对两侧，不因同词或同工具就合并工作或推定迁移。"
+                    "source_references提供原文定位；JD按historical_cutoffs或as_of使用"
+                    "read_historical_job，核对返回的snapshot_id与原定位是否一致。当前JD不能替代旧版本。"
+                    "原文未带入、缺失或版本无法重核时保留未知，不把旧引用位置当作本轮已读证据。"
                     "原材料不在本轮范围时，明确无法重核旧结论，不用旧认识替代当前原文。"
                     "carried_understanding若含research_claims，这是从另一目标带来的历史Agent分析，"
                     "保留其原文明示、归纳或推断性质及必备、加分限定；research_gaps是当时的未知。"

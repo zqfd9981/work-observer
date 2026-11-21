@@ -1704,6 +1704,9 @@ async def _research(
             "origin_learning_note": (personal.get("selected_inquiry") or {}).get(
                 "origin_learning_note"
             ),
+            "relation_comparison": ((personal.get("selected_inquiry") or {}).get(
+                "carried_understanding"
+            ) or {}).get("work_relations", []),
             "comparison_inputs": [
                 row for row in [*personal.get("experiments", []),
                                 personal.get("previous_experiment")]
