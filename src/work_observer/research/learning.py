@@ -3,6 +3,21 @@
 from work_observer.memory.service import _tokens
 
 
+def learning_family(notes, identity):
+    links = {row["id"]: set() for row in notes}
+    for row in notes:
+        if (parent := row.get("replaces_insight_id")) in links:
+            links[row["id"]].add(parent)
+            links[parent].add(row["id"])
+    seen, pending = set(), [identity] if identity in links else []
+    while pending:
+        current = pending.pop()
+        if current not in seen:
+            seen.add(current)
+            pending.extend(links[current] - seen)
+    return [row for row in notes if row["id"] in seen]
+
+
 def recall_learning_notes(career, step, goal, *, limit=3):
     runs = {row["step_id"]: row for row in career.get("runs", [])}
     entry = runs.get(step["id"], {})
@@ -17,6 +32,9 @@ def recall_learning_notes(career, step, goal, *, limit=3):
         (row for row in career.get("insights", []) if row["id"] == step.get("career_insight_id")),
         {},
     )
+    family = {
+        row["id"] for row in learning_family(career.get("insights", []), selected_note.get("id"))
+    }
     focused_query = "\n".join(
         str(value or "")
         for value in (
@@ -47,13 +65,7 @@ def recall_learning_notes(career, step, goal, *, limit=3):
             or inquiry_id
             and inquiry_id in {source.get("question_id"), note_task.get("question_id")}
         )
-        revision = bool(
-            selected_note
-            and (
-                note.get("replaces_insight_id") == selected_note["id"]
-                or selected_note.get("replaces_insight_id") == note["id"]
-            )
-        )
+        revision = note["id"] in family and note["id"] != selected_note.get("id")
         text = "\n".join(
             note.get(key, "")
             for key in ("previous_view", "observation", "current_view", "open_question")

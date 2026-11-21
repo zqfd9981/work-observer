@@ -7,7 +7,7 @@ from test_career_workspace import CareerModel, run_stage
 
 from work_observer.api.web import create_app
 from work_observer.config import Settings
-from work_observer.research.learning import recall_learning_notes
+from work_observer.research.learning import learning_family, recall_learning_notes
 from work_observer.storage.database import upgrade
 
 
@@ -181,3 +181,35 @@ def test_recheck_recalls_a_successor_and_specific_questions_do_not_fill_unrelate
     )
     continued, _ = recall_learning_notes(career, {"id": "reply"}, "")
     assert [row["id"] for row in continued] == ["b"]
+
+
+def test_recheck_follows_multiple_corrections_and_keeps_parallel_active_views():
+    def note(identity, parent=None, active=True):
+        return {
+            "id": identity,
+            "created_at": identity,
+            "replaces_insight_id": parent,
+            "use_for_research": active,
+            "previous_view": "",
+            "observation": "",
+            "current_view": identity,
+            "open_question": "",
+        }
+
+    notes = [
+        note("first", active=False),
+        note("middle", "first", False),
+        note("current", "middle"),
+        note("parallel", "first"),
+        note("unrelated"),
+    ]
+    family = learning_family(notes, "first")
+    assert {row["id"] for row in family} == {"first", "middle", "current", "parallel"}
+    assert {row["id"] for row in learning_family(notes, "current")} == {row["id"] for row in family}
+    career = {"insights": notes, "runs": [{"step_id": "now", "user_question": "重查旧理解"}]}
+    selected, recalled = recall_learning_notes(
+        career, {"id": "now", "career_insight_id": "first"}, ""
+    )
+    assert {row["id"] for row in selected} == {"current", "parallel"}
+    assert all(row["reason"] == "belief_revision" for row in recalled["selections"])
+    assert not notes[0]["use_for_research"] and not notes[1]["use_for_research"]
