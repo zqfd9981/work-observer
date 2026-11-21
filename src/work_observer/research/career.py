@@ -97,6 +97,26 @@ def personal_documents(career):
     } - {None}
 
 
+def research_documents(project, kind, preferred=()):
+    career = project["career"]
+    library = list(dict.fromkeys(project.get("public_document_ids") or []))
+    if kind in {"role", "map"}:
+        personal = personal_documents(career)
+        available = [key for key in library if key not in personal]
+        preferred = []
+    else:
+        available = library
+        preferred = [*preferred, career.get("resume_document_id")]
+        preferred.extend(row["document_id"] for row in career["stories"][-3:])
+        preferred.extend(row.get("artifact_document_id") for row in [
+            item for item in career["tasks"] if item.get("outcome")
+        ][-3:])
+    selected = list(dict.fromkeys(
+        [key for key in preferred if key in available] + list(reversed(available))
+    ))[:20]
+    return selected, len(library) - len(selected)
+
+
 class CareerService:
     def __init__(self, store, repository, raw_directory):
         self.projects = ProjectService(store)
@@ -480,6 +500,8 @@ class CareerService:
                     "scope_current": step["scope_version"] == project["scope_version"],
                     "allow_public": bool(step["allow_public"]),
                     "offline": bool(step["offline"]),
+                    "document_ids": list(step.get("public_document_ids") or []),
+                    "omitted_documents": step.get("career_omitted_documents", 0),
                     "continuation": continuation,
                     "progress": {
                         "calls": progress.get("model_calls", 0),
@@ -543,7 +565,7 @@ class CareerService:
                     key
                     for key in (project.get("public_document_ids") or [])
                     if key not in personal_documents(career)
-                ],
+                ], limit=None,
             ),
             "discovered_materials": archive_catalog(
                 self.repository,
@@ -551,7 +573,7 @@ class CareerService:
                     key
                     for key in career.get("researched_document_ids", [])
                     if key not in (project.get("public_document_ids") or [])
-                ],
+                ], limit=None,
             ),
             "requirements": requirements,
             "results": results,
@@ -706,8 +728,6 @@ class CareerService:
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等本轮研究结束后再更新简历，输入仍保留。")
             previous = project["career"].get("resume_document_id")
-            if not previous and len(project.get("public_document_ids") or []) >= 20:
-                raise ValueError("本研究已选满20份资料，请先在研究工作台调整。")
             document = PublicDocumentService(
                 self.repository, self.raw_directory / "public"
             ).archive_text(
@@ -728,8 +748,6 @@ class CareerService:
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等本轮研究结束后再补充资料，输入仍保留。")
             documents = list(project.get("public_document_ids") or [])
-            if len(documents) >= 20:
-                raise ValueError("当前目标已有20份材料，请先移除暂时不需要的资料。")
             document = PublicDocumentService(
                 self.repository, self.raw_directory / "public"
             ).archive_text(title, text, source_name)["document"]
@@ -744,8 +762,6 @@ class CareerService:
                 raise ValueError("请等本轮研究结束后再加入材料。")
             documents = list(project.get("public_document_ids") or [])
             if document_id not in documents:
-                if len(documents) >= 20:
-                    raise ValueError("当前目标已有20份材料，请先移除暂时不需要的资料。")
                 document = PublicDocumentService(
                     self.repository, self.raw_directory / "public"
                 ).document(document_id)
@@ -777,8 +793,6 @@ class CareerService:
                 raise ValueError("这份经历已经不在当前目标中，请刷新列表。")
             if not previous and len(stories) >= 12:
                 raise ValueError("每个目标最多保存12份经历，请精简后再补充。")
-            if not previous and len(project.get("public_document_ids") or []) >= 20:
-                raise ValueError("本研究已选满20份资料，请先在研究工作台调整。")
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等当前研究结束后再补充经历，输入仍保留。")
             text = "\n".join(
@@ -931,8 +945,6 @@ class CareerService:
             document_id = original.get("document_id" if kind == "story" else "artifact_document_id")
             documents = list(project.get("public_document_ids") or [])
             if document_id and document_id not in documents:
-                if len(documents) >= 20:
-                    raise ValueError("当前目标已有20份材料，请先在研究工作台调整。")
                 document = PublicDocumentService(
                     self.repository, self.raw_directory / "public"
                 ).document(document_id)
@@ -1541,6 +1553,28 @@ class CareerService:
             seconds_left = int(project["budget"]["max_seconds"] - used["reserved_seconds"])
             if not offline and (calls_left < 2 or seconds_left < 1):
                 raise ValueError("本目标的模型调用或时间额度已用完，仍可整理资料、记录观察和认识。")
+            preferred = [material_id, focused_document_id]
+            for row in project["career"]["stories"]:
+                if row["id"] == story_id:
+                    preferred.append(row["document_id"])
+            chosen_task = next(
+                (row for row in project["career"]["tasks"] if row["id"] == task_id), {}
+            )
+            preferred.extend(row.get("artifact_document_id") for row in project["career"]["tasks"]
+                             if row["id"] in {task_id, chosen_task.get("previous_task_id")})
+            requirement = selected_requirement or continued_requirement or {}
+            preferred.extend(row.get("document_id") for row in requirement.get("records", []))
+            related_steps = {source_step_id, *comparison_step_ids}
+            if insight_id:
+                chosen_note = next(row for row in project["career"]["insights"]
+                                   if row["id"] == insight_id)
+                related_steps.add(chosen_note.get("source_step_id"))
+            for previous_step in project["steps"]:
+                if previous_step["id"] in related_steps and previous_step.get("run_id"):
+                    previous_result = self.store.get(previous_step["run_id"]).get("result") or {}
+                    preferred.extend(row.get("public_document_id")
+                                     for row in previous_result.get("evidence", []))
+            documents, omitted = research_documents(project, kind, preferred)
             project = self.projects.add(
                 identity,
                 question,
@@ -1554,13 +1588,8 @@ class CareerService:
                 reply_to_step_id=reply,
                 completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
             )
-            if kind in {"role", "map"}:
-                personal = personal_documents(project["career"])
-                project["steps"][-1]["public_document_ids"] = [
-                    doc_id
-                    for doc_id in project["steps"][-1].get("public_document_ids", [])
-                    if doc_id not in personal
-                ]
+            project["steps"][-1]["public_document_ids"] = documents
+            project["steps"][-1]["career_omitted_documents"] = omitted
             if answer_record and not answer_document_id:
                 document = PublicDocumentService(
                     self.repository, self.raw_directory / "public"
@@ -1585,23 +1614,9 @@ class CareerService:
                 step = project["steps"][-1]
                 documents = list(step.get("public_document_ids") or [])
                 if answer_document_id not in documents:
-                    preferred = [focused_document_id, project["career"].get("resume_document_id")]
-                    preferred.extend(
-                        row["document_id"] for row in project["career"]["stories"][-3:]
-                    )
-                    preferred.extend(
-                        row.get("artifact_document_id")
-                        for row in [
-                            item for item in project["career"]["tasks"] if item.get("outcome")
-                        ][-3:]
-                    )
-                    if material_id:
-                        preferred.insert(0, material_id)
-                    selected = list(
-                        dict.fromkeys([key for key in preferred if key in documents] + documents)
-                    )[:19]
+                    selected = documents[:19]
                     step["public_document_ids"] = [*selected, answer_document_id]
-                    step["career_omitted_documents"] = len(documents) - len(selected)
+                    step["career_omitted_documents"] += len(documents) - len(selected)
                 step["career_answer_document_id"] = answer_document_id
             has_task = task_id and (
                 kind in {"reflect", "challenge", "ask", "plan"} | interview_kinds or insight_id
@@ -1785,8 +1800,6 @@ class CareerService:
                 if any(step["state"] == "running" for step in project["steps"]):
                     raise ValueError("请等本轮研究结束后再保存作品材料，输入仍保留。")
                 previous = task.get("artifact_document_id")
-                if not previous and len(project.get("public_document_ids") or []) >= 20:
-                    raise ValueError("这个目标已保存20份资料，请先在研究工作台调整。")
                 title = artifact_title.strip() or task["title"] + " · 作品材料"
                 document = PublicDocumentService(
                     self.repository, self.raw_directory / "public"

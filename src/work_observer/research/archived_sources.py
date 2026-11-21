@@ -45,12 +45,13 @@ def proposals(base):
     return result
 
 
-def catalog(repository, identities):
+def catalog(repository, identities, *, limit=20):
+    identities = identities if limit is None else identities[:limit]
     with Session(repository.engine) as session:
         documents = {
             row.id: row
             for row in session.scalars(
-                select(PublicDocument).where(PublicDocument.id.in_(identities[:20]))
+                select(PublicDocument).where(PublicDocument.id.in_(identities))
             )
         }
         return [
@@ -64,7 +65,7 @@ def catalog(repository, identities):
                 "source_published_at": row.source_published_at,
                 "title_not_evidence": True,
             }
-            for key in identities[:20]
+            for key in identities
             if (row := documents.get(key)) is not None
         ]
 
