@@ -1747,7 +1747,7 @@ class CareerService:
             self.projects._write(project)
             return {"project_id": identity, "step_id": project["steps"][-1]["id"]}
 
-    def import_tasks(self, identity, step_id):
+    def import_tasks(self, identity, step_id, action_indices=None):
         with self.store.lock, self.store.db:
             project = self._project(identity)
             step = next((row for row in project["steps"] if row["id"] == step_id), None)
@@ -1774,9 +1774,13 @@ class CareerService:
             source = next(
                 (row for row in project["career"]["runs"] if row["step_id"] == step_id), {}
             )
-            for index, action in enumerate(
-                (result.get("application_plan") or {}).get("actions", [])
-            ):
+            actions = (result.get("application_plan") or {}).get("actions", [])
+            selected = set(range(len(actions)) if action_indices is None else action_indices)
+            if not selected or any(index < 0 or index >= len(actions) for index in selected):
+                raise ValueError("请选择这份研究中的工作样本建议。")
+            for index, action in enumerate(actions):
+                if index not in selected:
+                    continue
                 key = f"{step['run_id']}:{index}"
                 if any(row["source_key"] == key for row in tasks):
                     continue

@@ -152,3 +152,5 @@
 .career-research-scope{padding:14px;background:#f4f7ef;border-radius:9px;margin:16px 0}.career-research-scope p,.career-research-scope li{font-size:12px;overflow-wrap:anywhere}.career-research-scope ul{padding-left:18px}.career-research-scope .text-button{white-space:normal;text-align:left}.career-older-materials{margin:16px 0}
 
 .career-counter-explanation{min-width:0}.career-counter-explanation select{width:100%;min-width:0}
+
+.career-plan-invite{display:block}.career-plan-invite>summary{cursor:pointer;font-weight:600}.career-plan-invite article{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid #dce6d5}.career-plan-invite strong{min-width:0;overflow-wrap:anywhere}.career-plan-invite .text-button{white-space:normal}@media(max-width:650px){.career-plan-invite article{align-items:flex-start;flex-direction:column}}

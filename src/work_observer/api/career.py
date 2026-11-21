@@ -160,6 +160,9 @@ class PitchInput(BaseModel):
 class TaskImport(BaseModel):
     model_config = ConfigDict(extra="forbid")
     step_id: str = Field(pattern="^[a-f0-9]{32}$")
+    action_indices: list[Annotated[int, Field(strict=True, ge=0, le=2)]] | None = Field(
+        default=None, min_length=1, max_length=3
+    )
 
 
 class ExperimentInput(BaseModel):
@@ -359,7 +362,9 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
 
     async def import_tasks(request):
         data = TaskImport.model_validate(await read_json(request))
-        return change(lambda: service().import_tasks(request.path_params["id"], data.step_id))
+        return change(lambda: service().import_tasks(
+            request.path_params["id"], data.step_id, data.action_indices
+        ))
 
     async def experiment(request):
         data = ExperimentInput.model_validate(await read_json(request))
