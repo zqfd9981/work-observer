@@ -21,6 +21,38 @@ def learning_family(notes, identity):
     return [row for row in notes if row["id"] in seen]
 
 
+def learning_inquiry_links(career, note):
+    """Find inquiry connections from existing records; an explicit scope takes precedence."""
+    questions = {row["id"]: row for row in career.get("questions", [])}
+    notes = {row["id"]: row for row in career.get("insights", [])}
+    runs = {row["step_id"]: row for row in career.get("runs", [])}
+    tasks = {row["id"]: row for row in career.get("tasks", [])}
+    links, seen, current = {}, set(), note
+    while current and current.get("id") not in seen:
+        seen.add(current.get("id"))
+        source = runs.get(current.get("source_step_id"), {})
+        task = tasks.get(current.get("task_id"), {})
+        explicit = current.get("question_id")
+        candidates = [(explicit, "question")] if explicit else [
+            (task.get("question_id"), "experiment"),
+            (source.get("question_id"), "discussion"),
+            *((row["question_id"], "synthesis")
+              for row in source.get("synthesis_sources", [])),
+        ]
+        for identity, via in candidates:
+            if identity in questions and identity not in links:
+                links[identity] = {
+                    "question_id": identity, "question": questions[identity]["question"],
+                    "via": via, "inherited": current is not note,
+                    "source_note_id": current.get("id"),
+                    "source_step_id": current.get("source_step_id"),
+                }
+        if explicit or task.get("question_id") or source.get("question_id"):
+            break
+        current = notes.get(current.get("replaces_insight_id"))
+    return list(links.values())
+
+
 class LearningNotebook:
     """Read current personal notes; only an explicitly focused family opens shelved history."""
 
@@ -130,17 +162,11 @@ def recall_learning_notes(career, step, goal, *, limit=3):
     for index, note in enumerate(career.get("insights", [])):
         if not note.get("use_for_research", True):
             continue
-        source = runs.get(note.get("source_step_id"), {})
-        note_task = next(
-            (row for row in career.get("tasks", []) if row["id"] == note.get("task_id")), {}
-        )
         linked = bool(
             task_id
             and note.get("task_id") == task_id
             or inquiry_id
-            and inquiry_id in {
-                note.get("question_id"), source.get("question_id"), note_task.get("question_id")
-            }
+            and inquiry_id in {link["question_id"] for link in learning_inquiry_links(career, note)}
         )
         revision = note["id"] in family and note["id"] != selected_note.get("id")
         text = "\n".join(
@@ -197,8 +223,16 @@ def learning_record(row, record, store):
     if inquiry:
         note["inquiry_question"] = inquiry["question"]
         note["inquiry_notice"] = "关联问题的当前表述，只供定位；不改变这份认识的原话或采用状态。"
+    links = learning_inquiry_links(record.get("career", {}), row)
+    note["inquiry_links"] = links
+    if links:
+        note["inquiry_links_notice"] = (
+            "关联线索来自明确选定的问题、实验、综合讨论或被接替认识；"
+            "不是对所有问题的适用证明。继承关联时先核对新认识缩窄了哪些条件，"
+            "不能恢复被搁置的旧认识或把新认识外推到原来的全部范围。"
+        )
     index = row.get("source_claim_index")
-    if index is not None or inquiry:
+    if index is not None or links:
         source_step = next(
             (item for item in record["steps"] if item["id"] == row.get("source_step_id")),
             None,
@@ -211,9 +245,11 @@ def learning_record(row, record, store):
             result = {}
         claims = result.get("claims", [])
         selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
-            claims if inquiry and index is None else []
+            claims if links and index is None else []
         )
         if selected:
+            note["source_scope"] = result.get("scope")
+            note["source_work_map"] = result.get("work_map")
             details = [{key: claim[key] for key in ("text", "category", "basis", "requirement")}
                        for claim in selected]
             if index is not None:
@@ -245,6 +281,8 @@ def learning_record(row, record, store):
             ]
             note["source_notice"] = (
                 "这是形成用户认识时所选的旧分析与原文定位线索，不是当前事实或新证据。"
+                "source_scope保留当时的资料范围，不能自动当作本轮选岗；"
+                "source_work_map中的关系及迁移限定仍需重新核对。"
                 "重查时应读取本轮可用原文，保留原分析的限定，不把旧引用编号用于新回答。"
             )
     return note

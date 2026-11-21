@@ -1,6 +1,10 @@
 """Bring explicitly selected inquiries into one source-based investigation."""
 
-from work_observer.research.learning import learning_record, recall_learning_notes
+from work_observer.research.learning import (
+    learning_inquiry_links,
+    learning_record,
+    recall_learning_notes,
+)
 
 
 def synthesis_inquiries(record, store, selections):
@@ -54,16 +58,12 @@ def synthesis_inquiries(record, store, selections):
             {"id": "", "career_question_id": question["id"]},
             record["goal"],
         )
-        task_ids = {row["id"] for row in tasks}
-        source_steps = {
-            row["step_id"] for row in career["runs"] if row.get("question_id") == question["id"]
-        }
         notes = [
             row
             for row in notes
-            if row.get("question_id") == question["id"]
-            or row.get("task_id") in task_ids
-            or row.get("source_step_id") in source_steps
+            if question["id"] in {
+                link["question_id"] for link in learning_inquiry_links(career, row)
+            }
         ]
         result.append(
             {

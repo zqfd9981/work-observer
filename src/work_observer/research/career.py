@@ -2143,7 +2143,19 @@ class CareerService:
             topic.append(requirement.get("text"))
             related_steps = {source_step_id, *comparison_step_ids}
             if question_id:
+                from work_observer.research.learning import learning_inquiry_links
+
                 related_steps.add(saved_question.get("source_step_id"))
+                for note in project["career"].get("insights", []):
+                    links = learning_inquiry_links(project["career"], note)
+                    if note.get("use_for_research", True) and any(
+                        link["question_id"] == question_id for link in links
+                    ):
+                        related_steps.add(note.get("source_step_id"))
+                        related_steps.update(link.get("source_step_id") for link in links)
+                        linked_task = next((item for item in project["career"]["tasks"]
+                                            if item["id"] == note.get("task_id")), {})
+                        preferred.append(linked_task.get("artifact_document_id"))
                 if parent_question:
                     related_steps.update(parent_question.get(key) for key in (
                         "source_step_id", "conclusion_step_id",
@@ -2165,7 +2177,10 @@ class CareerService:
                          for row in project["career"]["runs"] if row["step_id"] in related_steps)
             for previous_step in project["steps"]:
                 if previous_step["id"] in related_steps and previous_step.get("run_id"):
-                    previous_result = self.store.get(previous_step["run_id"]).get("result") or {}
+                    previous_run = self.store.get(previous_step["run_id"])
+                    if previous_run.get("state") == "invalidated":
+                        continue
+                    previous_result = previous_run.get("result") or {}
                     preferred.extend(row.get("public_document_id")
                                      for row in previous_result.get("evidence", []))
             documents, omitted = research_documents(
