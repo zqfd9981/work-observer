@@ -976,14 +976,16 @@ class CareerService:
                 "task": "tasks",
                 "insight": "insights",
                 "question": "questions",
+                "discussion": "runs",
             }[kind]
             original = next(
-                (row for row in source["career"].get(collection, []) if row["id"] == record_id),
+                (row for row in source["career"].get(collection, [])
+                 if row.get("id", row.get("step_id")) == record_id),
                 None,
             )
             if not original:
                 raise ValueError("原目标中已找不到这份记录，请重新选择。")
-            understanding = kind in {"insight", "question"}
+            understanding = kind in {"insight", "question", "discussion"}
             records = project["career"].setdefault("questions" if understanding else collection, [])
             provenance = {
                 "project_id": source_project_id,
@@ -1000,6 +1002,59 @@ class CareerService:
             ):
                 return self.get(identity)
             if understanding:
+                if kind == "discussion":
+                    step = next(row for row in source["steps"] if row["id"] == record_id)
+                    run = self.store.get(step["run_id"]) if step.get("run_id") else {}
+                    result = run.get("result") or {}
+                    if run.get("state") == "invalidated" or result.get("status") != "completed":
+                        raise ValueError(
+                            "请选择仍保留完整答复的研究；未完成或已清除的内容不能带入。"
+                        )
+                    review = next((item for item in QualityReviewService(
+                        self.store, self.repository,
+                    ).list_run(step["run_id"]) if not item["stale_result"]), None)
+                    cited = {ref_id for claim in result.get("claims", [])
+                             for ref_id in claim.get("evidence_ids", [])}
+                    references = {}
+                    for item in result.get("evidence", []):
+                        if item["id"] in cited:
+                            reference = {key: item.get(key) for key in (
+                                "job_id", "public_document_id", "document_id", "snapshot_id",
+                                "title", "evidence_kind",
+                            )}
+                            key = tuple(reference[name] for name in (
+                                "job_id", "public_document_id", "document_id", "snapshot_id",
+                            ))
+                            references[key] = reference
+                    records.append({
+                        "id": uuid4().hex,
+                        "question": original.get("user_question") or
+                        "这份旧研究在当前目标中还成立吗？请核对原文、适用条件和仍未知的部分。",
+                        "why_matters": "从已保存的研究线索出发，重新核对它对当前目标的适用性。",
+                        "next_evidence": "回读当前目标可用的相关原文；旧资料未选入时保留无法重核。",
+                        "state": "open", "conclusion": "", "source_step_id": None,
+                        "conclusion_step_id": None, "selected_job_ids": [], "origin": "user",
+                        "reused_from": provenance, "created_at": now(),
+                        "carried_understanding": {
+                            "research_claims": [{key: claim.get(key) for key in (
+                                "text", "category", "basis", "requirement",
+                            )} for claim in result.get("claims", [])],
+                            "research_gaps": result.get("gaps", []),
+                            "work_map": result.get("work_map"),
+                            "source_references": list(references.values()),
+                            "source_jobs": [
+                                {key: job.get(key) for key in ("id", "title", "company")}
+                                for job in result.get("scope", {}).get("jobs", [])
+                            ],
+                            "source_cutoff": result.get("created_at"),
+                            "research_review_status": review["status"] if review else "unreviewed",
+                            "recorded_at": original["created_at"],
+                            "notice": "历史Agent分析，不是当前岗位事实或独立证据。"
+                            "旧引用只供定位；需按本轮已选范围回读原文，不能直接使用旧引用编号。",
+                        },
+                    })
+                    self.projects._write(project)
+                    return self.get(identity)
                 carried = original.get("carried_understanding") or {}
                 records.append(
                     {
@@ -1851,6 +1906,11 @@ class CareerService:
                     "若用户已有结论，它仍是待查证的个人记录，不当作独立事实。"
                     "若含carried_understanding，它是另一个目标下保存的理解，先核对当前岗位的适用条件；"
                     "原材料不在本轮范围时，明确无法重核旧结论，不用旧认识替代当前原文。"
+                    "carried_understanding若含research_claims，这是从另一目标带来的历史Agent分析，"
+                    "保留其原文明示、归纳或推断性质及必备、加分限定；research_gaps是当时的未知。"
+                    "work_map是原分析的工作关系，保留关系理由、迁移边界和未知，不当作新证据。"
+                    "source_jobs是原研究范围，source_references仅供定位，并未自动带入当前资料。"
+                    "结合当前目标重新核对；来源不可读就明确无法重核，不把旧分析当作个人能力或新证据。"
                     "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
                     "不因为本轮生成回答而宣称问题已解决。"
                     "若含followup_to_recheck，这是用户点选带回的直接后续问题及当次答复。"
@@ -2010,6 +2070,11 @@ class CareerService:
                         if collected.get("public_document_id") in project["public_document_ids"]:
                             preferred.append(collected["public_document_id"])
                         topic.extend((collected.get("quote", ""), collected.get("user_note", "")))
+                    carried = inquiry.get("carried_understanding") or {}
+                    preferred.extend(ref["public_document_id"]
+                                     for ref in carried.get("source_references", [])
+                                     if ref.get("public_document_id")
+                                     in project["public_document_ids"])
                 preferred.extend(row.get("artifact_document_id") for row in [
                     item for item in project["career"]["tasks"]
                     if item.get("question_id") == question_id
