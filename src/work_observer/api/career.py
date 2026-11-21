@@ -182,7 +182,7 @@ class TaskUpdate(BaseModel):
     state: Literal["planned", "doing", "done"]
     outcome: str = Field(default="", max_length=4000)
     artifact: str = Field(default="", max_length=1000)
-    hypothesis: str = Field(default="", max_length=1500)
+    hypothesis: str | None = Field(default=None, max_length=1500)
     artifact_title: str = Field(default="工作样本材料", max_length=150)
     artifact_text: str = Field(default="", max_length=20_000)
     design_change: str = Field(default="", max_length=1500)

@@ -854,7 +854,7 @@ function renderWorkMap(result, evidence) {
 
 function renderApplicationPlan(result,evidence,replyStepId=null) {
   const plan=result.application_plan;if(!plan?.actions?.length)return "";
-  return `<section class="detail-section"><h2>应用行动 · 研究建议</h2><p class="form-note">目标：${e(plan.goal)} · 采用第 ${e(plan.background_version)} 版个人背景。${e(plan.constraints?"投入与限制："+plan.constraints:"投入限制未说明。")}</p><p class="form-note">${e(plan.notice)} 行动建议仍需结合实际核对，判断审核不代表行动效果已验证。</p><ol>${plan.actions.map((action,index)=>`<li class="detail-section"><h3>${e(action.title)}</h3><p>针对任务或能力：${e(action.task_or_ability)}</p><p><strong>交付物：</strong>${e(action.deliverable)}</p><p><strong>完成检查：</strong>${e(action.completion_check)}</p>${action.assumptions?.length?`<p class="form-note">需要确认的前提：${action.assumptions.map(e).join("；")}</p>`:""}${action.evidence_ids.map(id=>evidence.has(id)?`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`:"").join("")}${replyStepId?`<button type="button" class="secondary small" data-action-feedback-step="${e(replyStepId)}" data-action-feedback-index="${index}">回报尝试结果 ↗</button>`:""}</li>`).join("")}</ol>${plan.open_questions?.length?`<h3>行动前还需明确</h3><ul>${plan.open_questions.map(text=>`<li>${e(text)}</li>`).join("")}</ul>`:""}</section>`;
+  return `<section class="detail-section"><h2>应用行动 · 研究建议</h2><p class="form-note">目标：${e(plan.goal)} · 采用第 ${e(plan.background_version)} 版个人背景。${e(plan.constraints?"投入与限制："+plan.constraints:"投入限制未说明。")}</p><p class="form-note">${e(plan.notice)} 行动建议仍需结合实际核对，判断审核不代表行动效果已验证。</p><ol>${plan.actions.map((action,index)=>`<li class="detail-section"><h3>${e(action.title)}</h3><p>针对任务或能力：${e(action.task_or_ability)}</p>${action.hypothesis?`<p><strong>待检验的解释：</strong>${e(action.hypothesis)}</p>`:""}<p><strong>交付物：</strong>${e(action.deliverable)}</p><p><strong>完成检查：</strong>${e(action.completion_check)}</p>${action.assumptions?.length?`<p class="form-note">需要确认的前提：${action.assumptions.map(e).join("；")}</p>`:""}${action.evidence_ids.map(id=>evidence.has(id)?`<button class="cite" data-cite="${e(id)}">${e(evidence.get(id).label)} ↗</button>`:"").join("")}${replyStepId?`<button type="button" class="secondary small" data-action-feedback-step="${e(replyStepId)}" data-action-feedback-index="${index}">回报尝试结果 ↗</button>`:""}</li>`).join("")}</ol>${plan.open_questions?.length?`<h3>行动前还需明确</h3><ul>${plan.open_questions.map(text=>`<li>${e(text)}</li>`).join("")}</ul>`:""}</section>`;
 }
 
 function resultSourceComparison(result,runId,replyStepId) {
@@ -1497,7 +1497,7 @@ function projectDossierMarkdown(project,exportedAt=new Date().toISOString()) {
   for(const row of plans){const plan=row.result.application_plan;
     lines.push("### 第 "+row.round+" 轮建议","", "明确目标："+line(plan.goal),"投入与限制："+line(plan.constraints||"未说明"),line(plan.notice),"");
     for(const [index,action] of plan.actions.entries()){
-      lines.push("#### 动作 "+(index+1)+" · "+line(action.title),"针对任务或能力："+line(action.task_or_ability),"交付物："+line(action.deliverable),"完成检查："+line(action.completion_check));
+      lines.push("#### 动作 "+(index+1)+" · "+line(action.title),"针对任务或能力："+line(action.task_or_ability),...(action.hypothesis?["待检验的解释（尚未验证）："+line(action.hypothesis)]:[]),"交付物："+line(action.deliverable),"完成检查："+line(action.completion_check));
       for(const assumption of action.assumptions||[])lines.push("待确认前提："+line(assumption));
       lines.push("原文依据："+refs(row,action.evidence_ids),"");
     }

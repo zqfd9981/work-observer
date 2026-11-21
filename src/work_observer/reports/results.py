@@ -491,6 +491,8 @@ def render(result):
                     "",
                     f"### {index}. {action['title']}",
                     f"针对任务或能力：{action['task_or_ability']}",
+                    *([f"待检验的解释（尚未验证）：{action['hypothesis']}"]
+                      if action.get("hypothesis") else []),
                     f"交付物（建议）：{action['deliverable']}",
                     f"完成检查（建议）：{action['completion_check']}",
                     cites,

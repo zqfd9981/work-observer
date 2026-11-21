@@ -170,6 +170,7 @@ class DemoModel:
                             "task_or_ability": "失败处理与验证",
                             "deliverable": "两组输入、输出、请求标识与差异说明",
                             "completion_check": "若正常响应也写入两次，保留反例，不只归因于重试。",
+                            "hypothesis": "重复写入只会发生在超时重试时；这是准备检验的解释。",
                             "evidence_ids": refs,
                             "assumptions": ["使用本地虚构输入，不接触生产系统。"],
                         }

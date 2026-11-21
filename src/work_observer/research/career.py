@@ -79,6 +79,8 @@ QUESTIONS = {
         "为这个求职目标设计最多三个可执行的工作样本实验，使用已保存的个人背景与经历。"
         "先核对目标岗位原文，再在application_plan给出针对的任务或能力、要解决的业务问题、"
         "可展示产物、可复现的完成检查、需要的资源和未知。每项引用对应岗位依据。"
+        "hypothesis写这次准备检验的解释及条件，completion_check写具体输入输出与可能推翻预期的结果；"
+        "这些是待验证的实验设计，不是已经成立的结论。"
         "尊重用户投入限制，不编造完成时间；避免只有看教程、学工具的建议。"
         "建议的验收是练习设计，不冒充企业要求；不安排额外调查。"
     ),
@@ -1760,7 +1762,7 @@ class CareerService:
                         **action,
                         "state": "planned",
                         "outcome": "",
-                        "hypothesis": "",
+                        "hypothesis": action.get("hypothesis", ""),
                         "artifact": "",
                         "created_at": now(),
                     }
@@ -1810,7 +1812,7 @@ class CareerService:
         state,
         outcome,
         artifact,
-        hypothesis="",
+        hypothesis=None,
         artifact_title="工作样本材料",
         artifact_text="",
         design_change="",
@@ -1857,7 +1859,7 @@ class CareerService:
                 state=state,
                 outcome=outcome,
                 artifact=artifact,
-                hypothesis=hypothesis,
+                hypothesis=task.get("hypothesis", "") if hypothesis is None else hypothesis,
                 design_change=design_change,
                 updated_at=now(),
             )

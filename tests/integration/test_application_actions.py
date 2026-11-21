@@ -197,6 +197,9 @@ def test_action_schema_extends_dialogue_without_changing_base_contract():
     finish = next(row for row in modified if row["name"] == "finish_research")["parameters"]
     assert "revisions" in finish["properties"] and "application_plan" in finish["properties"]
     assert "application_plan" not in base[-1]["parameters"]["properties"]
+    action = finish["$defs"]["Action"]
+    assert "hypothesis" in action["required"]
+    assert "default" not in action["properties"]["hypothesis"]
     assert method_fingerprint() != method_fingerprint(application_actions=True)
 
 
