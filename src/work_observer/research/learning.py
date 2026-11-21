@@ -138,7 +138,9 @@ def recall_learning_notes(career, step, goal, *, limit=3):
             task_id
             and note.get("task_id") == task_id
             or inquiry_id
-            and inquiry_id in {source.get("question_id"), note_task.get("question_id")}
+            and inquiry_id in {
+                note.get("question_id"), source.get("question_id"), note_task.get("question_id")
+            }
         )
         revision = note["id"] in family and note["id"] != selected_note.get("id")
         text = "\n".join(
@@ -180,6 +182,7 @@ def learning_record(row, record, store):
         "id": row["id"],
         "replaces_insight_id": row.get("replaces_insight_id"),
         "task_id": row.get("task_id"),
+        "question_id": row.get("question_id"),
         "source_step_id": row.get("source_step_id"),
         "previous_view": row["previous_view"],
         "reported_observation": row["observation"],
@@ -189,7 +192,13 @@ def learning_record(row, record, store):
         "notice": "用户自己的理解与疑问，不是已验证的事实；保留原话中的限制。",
         "recorded_at": row.get("updated_at") or row["created_at"],
     }
-    if (index := row.get("source_claim_index")) is not None:
+    inquiry = next((item for item in record.get("career", {}).get("questions", [])
+                    if item["id"] == row.get("question_id")), None)
+    if inquiry:
+        note["inquiry_question"] = inquiry["question"]
+        note["inquiry_notice"] = "关联问题的当前表述，只供定位；不改变这份认识的原话或采用状态。"
+    index = row.get("source_claim_index")
+    if index is not None or inquiry:
         source_step = next(
             (item for item in record["steps"] if item["id"] == row.get("source_step_id")),
             None,
@@ -199,11 +208,21 @@ def learning_record(row, record, store):
         )
         result = (run or {}).get("result") or {}
         claims = result.get("claims", [])
-        if 0 <= index < len(claims):
-            claim = claims[index]
-            note["original_analysis"] = {
-                key: claim[key] for key in ("text", "category", "basis", "requirement")
-            }
+        selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
+            claims if inquiry and index is None else []
+        )
+        if selected:
+            details = [{key: claim[key] for key in ("text", "category", "basis", "requirement")}
+                       for claim in selected]
+            if index is not None:
+                note["original_analysis"] = details[0]
+            else:
+                note["source_discussion"] = {
+                    "claims_to_recheck": details,
+                    "unknowns_then": result.get("gaps", []),
+                    "notice": "个人认识参考的整次讨论，不是对某一条判断的逐字采用。",
+                }
+            references = {key for claim in selected for key in claim["evidence_ids"]}
             note["source_locators"] = [
                 {
                     key: evidence[key]
@@ -220,7 +239,7 @@ def learning_record(row, record, store):
                     if key in evidence
                 }
                 for evidence in result.get("evidence", [])
-                if evidence["id"] in claim["evidence_ids"]
+                if evidence["id"] in references
             ]
             note["source_notice"] = (
                 "这是形成用户认识时所选的旧分析与原文定位线索，不是当前事实或新证据。"

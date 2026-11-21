@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -189,3 +189,20 @@ assert.ok(answerExport.includes('FINAL CONDITION MUST REMAIN.')&&answerExport.in
 assert.ok(!answerExport.includes('<button')&&!answerExport.includes('<select'));
 assert.equal(ctx.window.journeyTest.questionAnswer({id:'missing'},answersData),'');
 console.log('Question answer: chosen completed response, full long conditions, uncertainty labels and standalone export passed.');
+
+const reviewedQuestion={...question,conclusion:'My complete retained understanding. '.repeat(50)+'LAST LIMIT MUST REMAIN.',conclusion_step_id:'selected-answer',next_evidence:'Still unknown; '.repeat(90)};
+const learningData={...answersData,questions:[reviewedQuestion]};
+const noteDraft=ctx.window.journeyTest.questionInsightDraft(reviewedQuestion,learningData);
+assert.equal(noteDraft.question_id,question.id);assert.equal(noteDraft.current_view,reviewedQuestion.conclusion);
+assert.equal(noteDraft.source_claim_index,null);assert.equal(noteDraft.replaces_insight_id,'');
+assert.ok(noteDraft.observation.includes('<script>saved original</script>'));
+assert.ok(ctx.window.journeyTest.insightLengthNotice(noteDraft).includes('当前理解'));
+assert.ok(ctx.window.journeyTest.insightLengthNotice(noteDraft).includes('仍待验证'));
+const sourceDiscussion=ctx.window.journeyTest.insightSource(noteDraft,learningData,true);
+assert.ok(sourceDiscussion.includes('关联整次讨论')&&sourceDiscussion.includes('&lt;script&gt;saved original&lt;/script&gt;'));
+assert.ok(!sourceDiscussion.includes('<button'));
+const relatedNotes={...data,insights:[...data.insights,{id:'question-linked',question_id:'q',current_view:'Explicit inquiry conclusion.'},{id:'another-inquiry',question_id:'other',source_step_id:'first',current_view:'Must stay in another inquiry.'}]};
+const relatedRecords=ctx.window.journeyTest.questionJourneyRecords(question,relatedNotes);
+assert.ok(relatedRecords.insights.some(row=>row.id==='question-linked'));
+assert.ok(!relatedRecords.insights.some(row=>row.id==='another-inquiry'));
+console.log('Inquiry conclusion to personal understanding: full draft, explicit question, whole-discussion origin and journey links passed.');

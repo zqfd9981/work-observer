@@ -1027,6 +1027,10 @@ class CareerService:
         with self.store.lock, self.store.db:
             project = self._project(identity)
             notes = project["career"].setdefault("insights", [])
+            if data.get("question_id") and not any(
+                row["id"] == data["question_id"] for row in project["career"].get("questions", [])
+            ):
+                raise ValueError("请选择当前目标中的调查问题，或取消关联。")
             task_id = data.get("task_id")
             if task_id and not any(row["id"] == task_id for row in project["career"]["tasks"]):
                 raise ValueError("这项练习已不在当前目标中，请重新选择。")
@@ -1240,6 +1244,31 @@ class CareerService:
                     raise ValueError("请先选择当前分析中的一项岗位要求。")
                 if any(not row["available"] for row in selected_requirement["proof"]["records"]):
                     raise ValueError("有一份材料已移出目标，请先调整这项要求的证据。")
+            if insight_id:
+                insight = next(
+                    (
+                        row
+                        for row in project["career"].get("insights", [])
+                        if row["id"] == insight_id
+                    ),
+                    None,
+                )
+                if not insight:
+                    raise ValueError("未找到要核对的认识，请重新选择。")
+                if inherit_focus:
+                    observed_task = next(
+                        (
+                            row for row in project["career"]["tasks"]
+                            if row["id"] == insight.get("task_id")
+                            and (kind == "ask" or row.get("outcome"))
+                        ),
+                        None,
+                    )
+                    task_id = task_id or (observed_task["id"] if observed_task else None)
+                    if kind == "ask":
+                        question_id = question_id or insight.get("question_id") or (
+                            observed_task.get("question_id") if observed_task else None
+                        )
             if question_id:
                 saved_question = next(
                     (
@@ -1272,29 +1301,6 @@ class CareerService:
                     raise ValueError(
                         "请选择同一调查问题下的两次完整回答，或当前目标下两份完整工作地图。"
                     )
-            if insight_id:
-                insight = next(
-                    (
-                        row
-                        for row in project["career"].get("insights", [])
-                        if row["id"] == insight_id
-                    ),
-                    None,
-                )
-                if not insight:
-                    raise ValueError("未找到要核对的认识，请重新选择。")
-                if inherit_focus:
-                    observed_task = next(
-                        (
-                            row for row in project["career"]["tasks"]
-                            if row["id"] == insight.get("task_id")
-                            and (kind == "ask" or row.get("outcome"))
-                        ),
-                        None,
-                    )
-                    task_id = task_id or (observed_task["id"] if observed_task else None)
-                    if kind == "ask" and observed_task:
-                        question_id = question_id or observed_task.get("question_id")
             counter_note = next((row for row in project["career"].get("insights", [])
                                  if row["id"] == counter_insight_id), None)
             if counter_insight_id and (
