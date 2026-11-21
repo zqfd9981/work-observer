@@ -1291,6 +1291,15 @@ class CareerService:
                 data = {**data, "source_passage": self._source_passage(data["source_passage"])}
             questions = project["career"].setdefault("questions", [])
             by_id = {row["id"]: row for row in questions}
+            if "material_ids" in data:
+                selected_materials = data["material_ids"]
+                retained = set(by_id.get(question_id, {}).get("material_ids", []))
+                if (
+                    len(selected_materials) > 6
+                    or len(selected_materials) != len(set(selected_materials))
+                    or not set(selected_materials) <= retained | set(project["public_document_ids"])
+                ):
+                    raise ValueError("请选择本目标中最多6份不同的重点资料。")
             parent_id = data.get("parent_question_id")
             if parent_id and parent_id not in by_id:
                 raise ValueError("请选择当前目标中的原调查问题。")
@@ -1484,6 +1493,7 @@ class CareerService:
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
+        material_focus_supplied = material_id is not None or material_ids is not None
         material_ids = list(material_ids or [])
         if material_ids and (kind != "ask" or material_id):
             raise ValueError("多份资料对读请直接提问，并取消单份重点资料。")
@@ -1535,7 +1545,7 @@ class CareerService:
                         source.get("counter_insight_id")
                         if source.get("counter_insight_id") in insight_ids else None
                     )
-                    if not material_id and not material_ids:
+                    if not material_focus_supplied and not material_id and not material_ids:
                         material_ids = list(source.get("material_ids") or [])
                         material_id = (
                             source.get("material_id")
@@ -1661,6 +1671,9 @@ class CareerService:
                     (row for row in project["career"].get("questions", [])
                      if row["id"] == saved_question.get("parent_question_id")), None
                 )
+                if (kind == "ask" and not material_focus_supplied
+                    and not material_ids and not material_id):
+                    material_ids = list(saved_question.get("material_ids") or [])
                 if kind == "challenge":
                     hypothesis_a = hypothesis_a or saved_question.get("hypothesis_a", "")
                     hypothesis_b = hypothesis_b or saved_question.get("hypothesis_b", "")

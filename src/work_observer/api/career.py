@@ -165,6 +165,9 @@ class ResearchQuestionInput(BaseModel):
     conclusion_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     parent_question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_passage: SourcePassageInput | None = None
+    material_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
+        default=None, max_length=6
+    )
     selected_job_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
         default=None, max_length=6
     )
@@ -205,8 +208,8 @@ class CareerResearchInput(BaseModel):
     hypothesis_a: str = Field(default="", max_length=700)
     hypothesis_b: str = Field(default="", max_length=700)
     material_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
-    material_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] = Field(
-        default_factory=list, max_length=6
+    material_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
+        default=None, max_length=6
     )
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
@@ -386,6 +389,8 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         values = data.model_dump(exclude={"source_passage"})
         if data.selected_job_ids is None:
             values.pop("selected_job_ids")
+        if data.material_ids is None:
+            values.pop("material_ids")
         if "parent_question_id" not in data.model_fields_set:
             values.pop("parent_question_id")
         if data.source_passage:
