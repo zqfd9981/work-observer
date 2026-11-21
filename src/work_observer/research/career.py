@@ -434,7 +434,10 @@ class CareerService:
                     row,
                     row["question"],
                     "\n".join(
-                        row.get(key, "") for key in ("why_matters", "next_evidence", "conclusion")
+                        row.get(key, "") for key in (
+                            "why_matters", "next_evidence", "conclusion",
+                            "hypothesis_a", "hypothesis_b",
+                        )
                     )
                     + "\n"
                     + "\n".join(
@@ -1255,7 +1258,7 @@ class CareerService:
                     raise ValueError("未找到这项实验，请重新选择。")
                 if kind != "ask" and not task["outcome"].strip():
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
-                if kind == "reflect" or inherit_focus and kind in {"ask", "plan"}:
+                if kind == "reflect" or inherit_focus and kind in {"ask", "plan", "challenge"}:
                     question_id = question_id or task.get("question_id")
             user_question = question.strip() if kind == "ask" else ""
             selected_requirement = None
@@ -1294,7 +1297,7 @@ class CareerService:
                         None,
                     )
                     task_id = task_id or (observed_task["id"] if observed_task else None)
-                    if kind == "ask":
+                    if kind in {"ask", "challenge"}:
                         question_id = question_id or insight.get("question_id") or (
                             observed_task.get("question_id") if observed_task else None
                         )
@@ -1324,9 +1327,17 @@ class CareerService:
                     None,
                 )
                 if not saved_question or kind not in {
-                    "ask", "plan", "reflect", "teachback", "answer", "followup"
+                    "ask", "plan", "reflect", "teachback", "answer", "followup", "challenge"
                 }:
                     raise ValueError("请选择已保存的调查问题，再继续提问、设计验证或反思。")
+                if kind == "challenge":
+                    hypothesis_a = hypothesis_a or saved_question.get("hypothesis_a", "")
+                    hypothesis_b = hypothesis_b or saved_question.get("hypothesis_b", "")
+                    chosen_task = next(
+                        (row for row in project["career"]["tasks"] if row["id"] == task_id), {}
+                    )
+                    if chosen_task.get("question_id") not in {None, question_id}:
+                        raise ValueError("请选择这个调查问题关联的实验，或取消实验选择。")
             if kind == "teachback" and (not question_id or story_id or task_id):
                 raise ValueError("请选择一个已保存的调查问题做理解自测，不绑定个人经历或工作样本。")
             if autonomous and (kind != "ask" or not question_id or offline):
@@ -1419,7 +1430,8 @@ class CareerService:
                 question = (
                     "请对照两种尚未验证的解释，不预设必须有一方正确：\n"
                     + user_question
-                    + "\n先读取当前岗位原文；若选定了实验，优先读取career_evidence中所选实验的"
+                    + "\n先读取本轮相关工作原文（有目标岗位时包括JD）；若选定了实验，"
+                    "优先读取career_evidence中所选实验的"
                     "artifact_document归档记录，对照实际观察。"
                     "分别说明每种解释支持什么、受到哪些反例挑战，以及现有资料无法区分什么。"
                     "不要因为表述不同就断定互斥，也允许两者同时成立或都不成立。"
@@ -1651,6 +1663,12 @@ class CareerService:
                     "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
                     "不因为本轮生成回答而宣称问题已解决。"
                 )
+                if saved_question.get("hypothesis_a") or saved_question.get("hypothesis_b"):
+                    question += (
+                        "selected_inquiry.hypothesis_a与hypothesis_b是用户保留的待验证解释，"
+                        "不是已证实事实。结合当前原文、反例与实验观察，说明能区分什么、仍不能区分什么；"
+                        "允许同时成立、都不成立或材料不足，不因存在两个解释就强行二选一。"
+                    )
                 if kind == "plan":
                     question += (
                         "本次只为这个调查问题设计一个最小工作样本验证，不扩大成通用学习路线。"

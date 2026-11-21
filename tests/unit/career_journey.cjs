@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -251,3 +251,16 @@ const link=ctx.window.journeyTest.pitchQuestionLink(researchPitch,data);
 assert.ok(link.includes('/journey/q')&&link.includes('后续更新不会改写'));
 assert.equal(JSON.stringify(data),pitchBefore);
 console.log('Research presentation: linked inquiry, actual negative observations, planned work, qualified understanding and full editable draft passed.');
+
+const pairQuestion={...question,hypothesis_a:'A applies under timeout. <script>not executed</script>',hypothesis_b:'B depends on request identity. FINAL LIMIT'};
+const pairData={...data,questions:[pairQuestion],tasks:[task,{...task,id:'foreign-task',title:'FOREIGN OBSERVATION',question_id:'other'}]};
+const pairHtml=ctx.window.journeyTest.questionHypotheses(pairQuestion,true);
+assert.ok(pairHtml.includes('FINAL LIMIT')&&pairHtml.includes('&lt;script&gt;'));
+assert.ok(!pairHtml.includes('<button')&&!pairHtml.includes('<script>'));
+const pairJourney=ctx.window.journeyTest.questionJourney(pairQuestion,{...pairData,results:[...data.results,result('pair',stamp(8),{kind:'challenge',question_id:'q',hypothesis_a:'Historical A',hypothesis_b:'Historical B'})]},true);
+assert.ok(pairJourney.includes('Historical A')&&pairJourney.includes('Historical B'));
+assert.ok(pairJourney.includes('FINAL LIMIT'));
+const pairPitch=ctx.window.journeyTest.investigationPitchDraft(pairQuestion,pairData);
+assert.ok(pairPitch.text.includes(pairQuestion.hypothesis_a)&&pairPitch.text.includes(pairQuestion.hypothesis_b));
+assert.equal(ctx.window.journeyTest.questionHypotheses(question),'');
+console.log('Competing inquiry explanations: full conditions, historical comparison, planned work and exported presentation passed.');

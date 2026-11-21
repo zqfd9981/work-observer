@@ -108,6 +108,8 @@ class ResearchQuestionInput(BaseModel):
     question: str = Field(min_length=1, max_length=1500)
     why_matters: str = Field(default="", max_length=1000)
     next_evidence: str = Field(default="", max_length=1500)
+    hypothesis_a: str = Field(default="", max_length=700)
+    hypothesis_b: str = Field(default="", max_length=700)
     state: Literal["open", "answered", "parked"] = "open"
     conclusion: str = Field(default="", max_length=2000)
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
