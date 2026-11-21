@@ -71,6 +71,10 @@ class AttachMaterialInput(BaseModel):
     document_id: str = Field(pattern="^[a-f0-9]{32}$")
 
 
+class CareerMaterialRevisionInput(CareerMaterialInput):
+    base_document_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
 class JobObservationInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     description: str = Field(min_length=1, max_length=100_000)
@@ -460,6 +464,14 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             lambda: service().attach_material(request.path_params["id"], **data.model_dump())
         )
 
+    async def revise_material(request):
+        if busy():
+            return response({"message": "请等本轮研究结束后再更新资料，输入仍保留。"}, 409)
+        data = CareerMaterialRevisionInput.model_validate(await read_json(request))
+        return await run_in_threadpool(lambda: change(lambda: service().revise_material(
+            request.path_params["id"], request.path_params["document_id"], **data.model_dump()
+        )))
+
     async def remove_material(request):
         if busy():
             return response({"message": "请等本轮研究结束后再调整资料。"}, 409)
@@ -510,6 +522,8 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/reuse", reuse, methods=["POST"]),
         Route("/api/career/{id}/materials", add_material, methods=["POST"]),
         Route("/api/career/{id}/materials/attach", attach_material, methods=["POST"]),
+        Route("/api/career/{id}/materials/{document_id}/revisions", revise_material,
+              methods=["POST"]),
         Route("/api/career/{id}/materials/{document_id}", remove_material, methods=["DELETE"]),
         Route("/api/career/{id}", update_goal, methods=["PATCH"]),
         Route("/api/career/{id}/resume", resume, methods=["PATCH"]),

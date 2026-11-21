@@ -638,13 +638,12 @@ class CareerService:
             "questions": career.get("questions", []),
             "focus_question_id": career.get("focus_question_id"),
             "document_ids": project.get("public_document_ids", []),
-            "materials": archive_catalog(
-                self.repository,
+            "materials": self._material_catalog(
                 [
                     key
                     for key in (project.get("public_document_ids") or [])
                     if key not in personal_documents(career)
-                ], limit=None,
+                ],
             ),
             "discovered_materials": archive_catalog(
                 self.repository,
@@ -859,6 +858,56 @@ class CareerService:
             project["public_document_ids"] = [*documents, document["id"]]
             self.projects._write(project)
         return self.get(identity)
+
+    def _material_catalog(self, identities):
+        materials = archive_catalog(self.repository, identities, limit=None)
+        with Session(self.repository.engine) as session:
+            urls = dict(session.execute(select(PublicDocument.id, PublicDocument.url).where(
+                PublicDocument.id.in_(identities)
+            )).all())
+            families = {}
+            for document_id, url in session.execute(select(
+                PublicDocument.id, PublicDocument.url
+            ).where(PublicDocument.url.in_(list(urls.values())))):
+                families.setdefault(url, []).append(document_id)
+        for material in materials:
+            material["related_document_ids"] = families.get(urls.get(material["id"]), [])
+        return materials
+
+    def revise_material(self, identity, document_id, *, title, text, source_name="",
+                        base_document_id=None):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            documents = list(project.get("public_document_ids") or [])
+            if document_id not in documents or document_id in personal_documents(project["career"]):
+                raise ValueError("请从本目标的补充工作资料中选择要更新的原文。")
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再更新资料，输入仍保留。")
+            service = PublicDocumentService(self.repository, self.raw_directory / "public")
+            if base_document_id and base_document_id != document_id:
+                if service.document(base_document_id)["url"] != (
+                    service.document(document_id)["url"]
+                ):
+                    raise ValueError("请使用这份资料的原文进行补充。")
+            try:
+                document = service.revise_text(
+                    base_document_id or document_id, title, text, source_name
+                )["document"]
+            except ProbeError as error:
+                if error.code == "WORK_MATERIAL_CHANGED_REFRESH":
+                    raise ValueError(
+                        "这份资料已有更新，请重新打开更新后的原文；当前输入仍保留。"
+                    ) from error
+                if error.code == "WORK_MATERIAL_REQUIRED":
+                    raise ValueError(
+                        "归档网页请保留原文；补充说明可以另存为一份工作资料。"
+                    ) from error
+                raise
+            project["public_document_ids"] = list(dict.fromkeys(
+                document["id"] if key == document_id else key for key in documents
+            ))
+            self.projects._write(project)
+        return {**self.get(identity), "updated_material_id": document["id"]}
 
     def attach_material(self, identity, *, document_id):
         with self.store.lock, self.store.db:
