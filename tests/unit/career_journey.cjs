@@ -829,3 +829,16 @@ assert.ok(!packageWithDefaults.includes('data-career-save-question-materials'));
 assert.equal(JSON.stringify(savedQuestion),savedBefore);
 console.log('Saved inquiry material defaults: reopening focus, explicit one-round clearing, editable full selection, missing sources, branch draft and read-only export passed.');
 }
+
+{
+const earlier=result('earlier-material-study',stamp(1),{current:false});
+const updatedStudyData={...data,stories:[],results:[earlier]};
+const historicalFocus=ctx.window.journeyTest.discussionFocus(earlier,updatedStudyData);
+assert.equal(historicalFocus.source_step_id,earlier.step_id);
+ctx.window.journeyTest.setDraft(updatedStudyData,{source_step_id:earlier.step_id});
+const continuedPanel=ctx.window.journeyTest.inquiryPanel(updatedStudyData);
+assert.ok(continuedPanel.includes('<option value="earlier-material-study" selected>')&&continuedPanel.includes('当时资料，需重核'));
+assert.equal(ctx.window.journeyTest.discussionFocus({...earlier,state:'abandoned'},updatedStudyData).source_step_id,'');
+assert.equal(ctx.window.journeyTest.discussionFocus({...earlier,result:{...earlier.result,business_review:{status:'rejected'}}},updatedStudyData).source_step_id,'');
+console.log('Rechecking old discussions: complete historical analysis stays explicitly selectable, while abandoned and rejected outputs stay out of continued research.');
+}

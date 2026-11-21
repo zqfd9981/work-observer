@@ -908,6 +908,14 @@ class CareerService:
             project["public_document_ids"] = list(dict.fromkeys(
                 document["id"] if key == document_id else key for key in documents
             ))
+            if document["id"] != document_id:
+                for question in project["career"].get("questions", []):
+                    if document_id in question.get("material_ids", []):
+                        question["material_ids"] = list(dict.fromkeys(
+                            document["id"] if key == document_id else key
+                            for key in question["material_ids"]
+                        ))
+                        question["updated_at"] = now()
             self.projects._write(project)
         return {**self.get(identity), "updated_material_id": document["id"]}
 
@@ -1511,11 +1519,13 @@ class CareerService:
             if kind == "ask" and source_step_id:
                 sources = [
                     row for row in self.get(identity)["results"]
-                    if row["current"] and row["result"]["status"] == "completed"
+                    if (row.get("result") or {}).get("status") == "completed"
+                    and row["state"] != "abandoned"
+                    and row["result"].get("business_review", {}).get("status") != "rejected"
                 ]
                 source = next((row for row in sources if row["step_id"] == source_step_id), None)
                 if not source:
-                    raise ValueError("这份分析已不是当前目标下的结果，请重新选择或直接提问。")
+                    raise ValueError("请选择一份已完整保存且可继续使用的研究，或直接提问。")
                 if synthesis_question_ids is None and not any((
                     question_id, task_id, story_id, insight_id,
                     counter_insight_id, comparison_step_ids,
