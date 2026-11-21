@@ -19,6 +19,7 @@ class CareerGoalInput(BaseModel):
 
 
 class CareerInput(CareerGoalInput):
+    first_question: str = Field(default="", max_length=1000)
     resume_title: str = Field(default="个人简历", min_length=1, max_length=150)
     resume_text: str = Field(default="", max_length=20_000)
     material_title: str = Field(default="起始工作资料", max_length=150)

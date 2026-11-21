@@ -1211,7 +1211,25 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     if(target==="settings"){const panel=$(".career-settings-panel");panel.open=true;storyDraft().settings_open=true;panel.scrollIntoView({block:"start",behavior:"smooth"});return;}
     if(target==="inquiry"){$(".career-inquiry-panel").scrollIntoView({block:"start",behavior:"smooth"});$("#career-inquiry [name=question]").focus({preventScroll:true});}
   }
+  function careerStartValues(values,jobIds=[]){
+    const data={...values,first_question:(values.first_question||" ").trim(),title:(values.title||"").trim(),goal:(values.goal||"").trim(),background:(values.background||"").trim(),job_ids:[...jobIds]};
+    if(!data.first_question&&(!data.title||!data.goal))throw new Error("请先写下要弄清楚的问题。");
+    const title=Array.from(data.first_question);
+    data.title=data.title||title.slice(0,50).join("")+(title.length>50?"…":"");data.goal=data.goal||data.first_question;
+    data.resume_title=data.resume_title?.trim()||"个人简历";
+    if(data.resume_text?.length>20000)throw new Error("请把简历正文精简到2万字以内。");
+    if(!data.background&&data.resume_text?.trim())data.background="已导入个人简历。具体经历见本目标附加的简历原文，经历与效果为用户自述，尚未独立验证。";
+    return data;
+  }
+  function questionInquiryDraft(row){
+    return {kind:"ask",question:row.question,question_id:row.id,source_step_id:"",material_id:"",material_ids:[...(row.material_ids||[])],task_id:"",story_id:"",insight_id:"",counter_insight_id:"",comparison_step_ids:[],selected_job_ids:[...(row.selected_job_ids||[])]};
+  }
+  function openQuestionInquiry(id,section=career.tab){
+    captureDrafts();const row=career.data.questions?.find(row=>row.id===id);if(!row){notify("这条调查问题已不在当前目标中。");return;}
+    career.tab=section;const draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:questionInquiryDraft(row)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus({preventScroll:true});
+  }
   function focusCareerRecord(kind,id){
+    if(kind==="inquiry"&&/^[a-f0-9]{32}$/.test(id)){openQuestionInquiry(id,"requirements");return;}
     if(kind==="understanding"&&/^[a-f0-9]{32}$/.test(id)){
       if(!career.data.insights?.some(row=>row.id===id)){notify("这份认识已不在当前目标中，可以重新查找。");return;}
       captureDrafts();storyDraft().learning_journey=id;career.tab="experiments";renderDetail();$(`[data-career-understanding="${id}"]`).scrollIntoView({block:"start",behavior:"smooth"});return;
@@ -1277,7 +1295,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
 
   window.loadCareer=async()=>{
     clearTimeout(career.timer);$("#career-detail").hidden=true;await loadGoals();
-    const id=location.hash.split("/")[1];$("#career-goal-switcher").open=!id;if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");
+    const id=location.hash.split("/")[1];$("#career-goal-switcher").open=false;if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");
     if(id&&/^[a-f0-9]{32}$/.test(id)){await openCareer(id);const parts=location.hash.split("/");if(parts[2])focusCareerRecord(parts[2],parts[3]);else{captureDrafts();career.tab="requirements";renderDetail();}}
     else{$("#career-onboarding").hidden=false;$("#career-detail").hidden=true;await findJobs();}
   };
@@ -1305,7 +1323,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   $("#career-create").addEventListener("submit",async event=>{
     event.preventDefault();const form=event.target,submit=$("#career-create-submit");
         submit.disabled=true;
-    try{const data=Object.fromEntries(new FormData(form));data.resume_title=data.resume_title?.trim()||"个人简历";if(data.resume_text?.length>20000)throw new Error("请把简历正文精简到2万字以内。");if(!data.background.trim()){if(data.resume_text?.trim())data.background="已导入个人简历。具体经历见本目标附加的简历原文，经历与效果为用户自述，尚未独立验证。";else data.background="";}data.job_ids=[...career.selected.keys()];const created=await api("career",{method:"POST",body:JSON.stringify(data)});form.reset();career.selected.clear();selectedJobs();career.tab="requirements";location.hash="career/"+created.id;}
+    try{const data=careerStartValues(Object.fromEntries(new FormData(form)),[...career.selected.keys()]);const created=await api("career",{method:"POST",body:JSON.stringify(data)});form.reset();career.selected.clear();selectedJobs();career.tab="requirements";location.hash="career/"+created.id+(created.focus_question_id?"/inquiry/"+created.focus_question_id:"");}
     catch(error){notify(error.message,true);}finally{submit.disabled=false;}
   });
   document.addEventListener("input",event=>{
@@ -1451,7 +1469,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.dataset.careerEditQuestion)startQuestion(target.dataset.careerEditQuestion);
       if(target.dataset.careerSaveQuestion){const [stepId,index]=target.dataset.careerSaveQuestion.split(":"),source=career.data.results.find(row=>row.step_id===stepId),question=source?.result?.gaps?.[Number(index)];if(question){const saved=career.data.questions?.find(row=>row.source_step_id===stepId&&row.question===question);startQuestion(saved?.id||null,question,stepId);}}
       if(target.hasAttribute("data-career-cancel-question")){captureDrafts();delete storyDraft().question_editor;renderDetail();}
-      if(target.dataset.careerQuestionAsk||target.dataset.careerFocusContinue){captureDrafts();const row=career.data.questions?.find(row=>row.id===(target.dataset.careerQuestionAsk||target.dataset.careerFocusContinue));if(row){const draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:{question:row.question,question_id:row.id,source_step_id:"",material_id:"",material_ids:[...(row.material_ids||[])],insight_id:"",selected_job_ids:row.selected_job_ids||[]}};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
+      if(target.dataset.careerQuestionAsk||target.dataset.careerFocusContinue)openQuestionInquiry(target.dataset.careerQuestionAsk||target.dataset.careerFocusContinue);
       if(target.hasAttribute("data-career-clear-question-focus")){captureDrafts();storyDraft().inquiries[career.tab].question_id="";storyDraft().inquiries[career.tab].comparison_step_ids=[];renderDetail();}
       if(target.hasAttribute("data-career-clear-challenge-focus")){captureDrafts();storyDraft().challenge.insight_id="";renderDetail();}
       if(target.hasAttribute("data-career-clear-counter-focus")){captureDrafts();const draft=storyDraft();if(draft.inquiries?.[career.tab])draft.inquiries[career.tab].counter_insight_id="";renderDetail();}

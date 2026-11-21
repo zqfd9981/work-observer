@@ -194,6 +194,7 @@ class CareerService:
         resume_text="",
         material_title="起始工作资料",
         material_text="",
+        first_question="",
     ):
         for identity in job_ids:
             self.repository.job(identity)
@@ -231,13 +232,25 @@ class CareerService:
                 "runs": [],
             }
             self.projects._write(project)
+        material_id = None
         if material_text.strip():
-            self.add_material(
+            started = self.add_material(
                 project["id"], title=material_title.strip() or "起始工作资料", text=material_text,
                 source_name="用户提供的起始工作资料，来源与内容尚需核实。",
             )
+            material_id = started["materials"][-1]["id"]
         if resume_text.strip():
-            return self.set_resume(project["id"], title=resume_title, text=resume_text)
+            self.set_resume(project["id"], title=resume_title, text=resume_text)
+        if first_question.strip():
+            started = self.save_question(project["id"], {
+                "question": first_question.strip(),
+                "material_ids": [material_id] if material_id else [],
+                "why_matters": "", "next_evidence": "", "hypothesis_a": "", "hypothesis_b": "",
+                "state": "open", "conclusion": "", "source_step_id": None,
+                "conclusion_step_id": None, "parent_question_id": None,
+                "source_passage": None, "selected_job_ids": [],
+            })
+            return self.focus_question(project["id"], started["questions"][-1]["id"])
         return self.get(project["id"])
 
     def listing(self):

@@ -226,3 +226,5 @@
 .career-map-changes{margin:20px 0}.career-map-change{padding:16px;margin:12px 0;border:1px solid #dbe5d4;border-radius:8px;background:#f8faf5}.career-map-change h4,.career-map-change p{white-space:pre-wrap;overflow-wrap:anywhere}.career-map-change .career-research-pair>section{min-width:0}.career-map-change blockquote{white-space:pre-wrap;overflow-wrap:anywhere}
 
 .career-map-change-body>summary{cursor:pointer;overflow-wrap:anywhere}.career-map-change-body>summary strong{display:block;margin:6px 0 12px;font-size:14px}.career-map-change-body[open]>.career-research-pair{margin:14px 0}.career-map-change>.secondary{margin-top:10px}
+
+@media(max-width:650px){.career-onboarding>.career-create{order:-1}}
