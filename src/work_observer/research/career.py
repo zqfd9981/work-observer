@@ -4,9 +4,13 @@ import json
 from datetime import datetime
 from uuid import uuid4
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from work_observer.collection.contracts import now
 from work_observer.connectors.public_documents import PublicDocumentService
-from work_observer.memory.service import MemoryService
+from work_observer.connectors.public_models import PublicDocument
+from work_observer.memory.service import MemoryService, _tokens
 from work_observer.quality.reviews import QualityReviewService
 from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
@@ -97,7 +101,22 @@ def personal_documents(career):
     } - {None}
 
 
-def research_documents(project, kind, preferred=()):
+def relevant_documents(repository, identities, query):
+    tokens = _tokens(query)
+    positions = {key: index for index, key in enumerate(identities)}
+    ranked = []
+    with Session(repository.engine) as session:
+        for identity, title, publisher, text in session.execute(
+            select(PublicDocument.id, PublicDocument.title, PublicDocument.publisher,
+                   PublicDocument.text).where(PublicDocument.id.in_(identities))
+        ):
+            score = len(tokens & _tokens("\n".join((title, publisher, text))))
+            if score:
+                ranked.append((score, positions[identity], identity))
+    return [identity for _, _, identity in sorted(ranked, reverse=True)]
+
+
+def research_documents(project, kind, preferred=(), *, repository=None, query=""):
     career = project["career"]
     library = list(dict.fromkeys(project.get("public_document_ids") or []))
     if kind in {"role", "map"}:
@@ -111,8 +130,11 @@ def research_documents(project, kind, preferred=()):
         preferred.extend(row.get("artifact_document_id") for row in [
             item for item in career["tasks"] if item.get("outcome")
         ][-3:])
+    related = relevant_documents(repository, available, query) if (
+        repository is not None and len(available) > 20 and query.strip()
+    ) else []
     selected = list(dict.fromkeys(
-        [key for key in preferred if key in available] + list(reversed(available))
+        [key for key in preferred if key in available] + related + list(reversed(available))
     ))[:20]
     return selected, len(library) - len(selected)
 
@@ -1554,27 +1576,45 @@ class CareerService:
             if not offline and (calls_left < 2 or seconds_left < 1):
                 raise ValueError("本目标的模型调用或时间额度已用完，仍可整理资料、记录观察和认识。")
             preferred = [material_id, focused_document_id]
+            topic = [user_question]
             for row in project["career"]["stories"]:
                 if row["id"] == story_id:
                     preferred.append(row["document_id"])
+                    topic.append(row["title"])
             chosen_task = next(
                 (row for row in project["career"]["tasks"] if row["id"] == task_id), {}
             )
             preferred.extend(row.get("artifact_document_id") for row in project["career"]["tasks"]
                              if row["id"] in {task_id, chosen_task.get("previous_task_id")})
+            topic.extend((chosen_task.get("title"), chosen_task.get("task_or_ability")))
+            if question_id:
+                topic.append(saved_question["question"])
+                preferred.extend(row.get("artifact_document_id") for row in [
+                    item for item in project["career"]["tasks"]
+                    if item.get("question_id") == question_id
+                ][-3:])
             requirement = selected_requirement or continued_requirement or {}
             preferred.extend(row.get("document_id") for row in requirement.get("records", []))
+            topic.append(requirement.get("text"))
             related_steps = {source_step_id, *comparison_step_ids}
             if insight_id:
                 chosen_note = next(row for row in project["career"]["insights"]
                                    if row["id"] == insight_id)
                 related_steps.add(chosen_note.get("source_step_id"))
+                topic.extend((chosen_note["current_view"], chosen_note.get("open_question")))
+            if answer_record:
+                topic.append(answer_record.get("interview_question"))
+            topic.extend(row.get("user_question") or row.get("interview_question")
+                         for row in project["career"]["runs"] if row["step_id"] in related_steps)
             for previous_step in project["steps"]:
                 if previous_step["id"] in related_steps and previous_step.get("run_id"):
                     previous_result = self.store.get(previous_step["run_id"]).get("result") or {}
                     preferred.extend(row.get("public_document_id")
                                      for row in previous_result.get("evidence", []))
-            documents, omitted = research_documents(project, kind, preferred)
+            documents, omitted = research_documents(
+                project, kind, preferred, repository=self.repository,
+                query="\n".join(value for value in topic if value) or project["goal"],
+            )
             project = self.projects.add(
                 identity,
                 question,
