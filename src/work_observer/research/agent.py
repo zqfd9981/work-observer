@@ -1493,6 +1493,14 @@ async def _research(
             ),
         },
     ]
+    if learning := (conversation_context or {}).get("career_evidence", {}).get("learning_recall"):
+        personal = conversation_context["career_evidence"]
+        result["career_learning_context"] = {
+            **learning,
+            "notes": personal["learning_notes"],
+            "selected_note": personal["selected_learning_note"],
+            "notice": personal["learning_selection_notice"],
+        }
     # 冻结候选正文池：重启后仍引用启动时版本，不把新版本混进旧研究。
     pool = (
         {}

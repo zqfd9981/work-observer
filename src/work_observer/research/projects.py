@@ -1496,10 +1496,9 @@ class ProjectService:
                 elif selected_task:
                     stories = []
             notes = career.get("insights", [])
-            active_notes = sorted(
-                (row for row in notes if row.get("use_for_research", True)),
-                key=lambda row: row.get("updated_at") or row["created_at"],
-            )[-3:]
+            from work_observer.research.learning import recall_learning_notes
+
+            active_notes, learning_recall = recall_learning_notes(career, step, record["goal"])
             selected_note = next(
                 (row for row in notes if row["id"] == step.get("career_insight_id")), None
             )
@@ -1704,7 +1703,11 @@ class ProjectService:
                 "selected_requirement": step.get("career_requirement"),
                 "selected_inquiry": selected_inquiry,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
-                "learning_selection_notice": "learning_notes只含最近选用的三份个人认识；"
+                "learning_recall": learning_recall,
+                "learning_selection_notice": "learning_notes最多带入三份选用中的个人认识，"
+                "优先同一调查问题、练习或认识接替关系，其次本次问题的字面关键词相关性。"
+                "具体提问不以无关的近期笔记补满；未指定讨论重点且无匹配时，才带入近期记录。"
+                "字面相关只用于找回线索，不代表语义一致或结论成立；未带入不表示已遗忘或不相关。"
                 "selected_learning_note是用户本次明确要求重查的完整记录，可能已搁置。"
                 "重查不等于重新采用，不因新旧顺序判断真伪。",
                 "selected_story": {
