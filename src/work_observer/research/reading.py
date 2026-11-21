@@ -7,6 +7,47 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.research.source_views import build_source_views
 
 
+def source_reading_progress(source, evidence):
+    """Locate unread characters in one exact original; past reads are not new evidence."""
+    public_id = source.get("public_document_id")
+    job_id, snapshot_id = source.get("job_id"), source.get("snapshot_id")
+    length = source.get("full_text_length")
+    if (type(length) is not int or length < 0
+            or not (public_id or job_id and snapshot_id)):
+        return None
+    ranges = []
+    for row in evidence:
+        same = (row.get("public_document_id") == public_id if public_id else
+                row.get("job_id") == job_id and row.get("snapshot_id") == snapshot_id)
+        start, end = row.get("start"), row.get("end")
+        if (same and row.get("evidence_kind") not in {"search_answer", "search_excerpt"}
+                and type(start) is int and type(end) is int and 0 <= start < end <= length):
+            ranges.append((start, end))
+    merged = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    gaps, cursor = [], 0
+    for start, end in merged:
+        if start > cursor:
+            gaps.append([cursor, start])
+        cursor = end
+    if cursor < length:
+        gaps.append([cursor, length])
+    read = sum(end - start for start, end in merged)
+    return {
+        "recorded_ranges": merged, "unread_ranges": gaps,
+        "recorded_characters": read, "unread_characters": length - read,
+        "next_unread_start": gaps[0][0] if gaps else None,
+        "full_text_length": length,
+        "notice": "同一目标此前与本轮工具留存的原文字符位置，不是正文或已验证认识。"
+        "按当前问题需要补读缺口，也可为核对条件重读；不用为了填满范围遍历全文。"
+        "没有缺口不代表理解正确或无需重核。仍须在本轮读原文才能引用，不沿用旧证据编号。",
+    }
+
+
 def job_window(evidence, start=None, *, limit=8):
     """Read existing frozen fragments around a character position without changing citations."""
     start = 0 if start is None else start

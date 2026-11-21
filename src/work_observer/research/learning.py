@@ -300,6 +300,21 @@ class LearningNotebook:
             "未保留的产物只能作为旧定位，不能假装已核对。保留条件、反例与未知。",
         }
 
+    def reading_evidence(self, *, exclude_run_id=None):
+        """Only source positions actually retained by this goal's research runs."""
+        project = self.project_reader()
+        steps = {row["id"]: row for row in project.get("steps", [])}
+        records = []
+        for entry in project.get("career", {}).get("runs", []):
+            run_id = steps.get(entry["step_id"], {}).get("run_id")
+            if not run_id or run_id == exclude_run_id:
+                continue
+            result = self.store.get(run_id).get("result") or {}
+            records.extend({key: source.get(key) for key in (
+                "public_document_id", "job_id", "snapshot_id", "start", "end", "evidence_kind",
+            )} for source in result.get("evidence", []))
+        return records
+
     def _research_history(self):
         project = self.project_reader()
         steps = {row["id"]: row for row in project.get("steps", [])}

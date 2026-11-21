@@ -7,7 +7,59 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.research.agent import BATCH_JOB_TOOL, TOOLS
-from work_observer.research.reading import job_window, job_windows, reading_guide
+from work_observer.research.reading import (
+    job_window,
+    job_windows,
+    reading_guide,
+    source_reading_progress,
+)
+
+
+def test_reading_progress_uses_exact_positions_and_sources_without_old_quotes():
+    text = "开头🤔\r\n中间条件\r\n最后的业务限定。"
+    source = {"public_document_id": "public-a", "full_text_length": len(text)}
+    rows = [{**source, "start": a, "end": b, "quote": "不能当作本轮证据"}
+            for a, b in [(0, 4), (2, 6), (10, 12), (10, 12)]]
+    rows += [{**source, "start": 6, "end": 10, "evidence_kind": "search_excerpt"},
+             {**source, "start": True, "end": len(text)},
+             {**source, "start": 0, "end": len(text) + 1},
+             {**source, "public_document_id": "public-b", "start": 0, "end": len(text)}]
+    before = deepcopy(rows)
+    progress = source_reading_progress(source, rows)
+    assert progress["recorded_ranges"] == [[0, 6], [10, 12]]
+    assert progress["unread_ranges"] == [[6, 10], [12, len(text)]]
+    assert progress["recorded_characters"] == 8 and progress["next_unread_start"] == 6
+    assert "quote" not in str(progress) and "不能当作本轮证据" not in str(progress)
+    assert source_reading_progress(source, [])['unread_ranges'] == [[0, len(text)]]
+    job = {"job_id": "job-a", "snapshot_id": "old", "full_text_length": len(text)}
+    reads = [{**job, "start": 0, "end": len(text)}]
+    assert source_reading_progress(job, reads)["next_unread_start"] is None
+    assert source_reading_progress({**job, "snapshot_id": "new"}, reads)[
+        "recorded_characters"] == 0
+    assert source_reading_progress({"job_id": "job-a", "full_text_length": len(text)},
+                                   reads) is None
+    assert rows == before
+
+
+def test_notebook_reads_only_this_goals_retained_source_positions():
+    from work_observer.research.learning import LearningNotebook
+
+    source = {"public_document_id": "same-archive", "start": 0, "end": 4,
+              "quote": "old words", "id": "old-citation", "evidence_kind": "work_material"}
+    project = {"steps": [{"id": "old", "run_id": "old-run"},
+                         {"id": "now", "run_id": "current-run"},
+                         {"id": "foreign", "run_id": "not-a-career-run"}],
+               "career": {"runs": [{"step_id": "old"}, {"step_id": "now"}]}}
+
+    class Store:
+        def get(self, identity):
+            assert identity == "old-run"
+            return {"state": "interrupted", "result": {"evidence": [source]}}
+
+    records = LearningNotebook(lambda: project, Store()).reading_evidence(
+        exclude_run_id="current-run")
+    assert len(records) == 1 and records[0]["public_document_id"] == "same-archive"
+    assert "quote" not in records[0] and "id" not in records[0]
 
 
 def receipts():

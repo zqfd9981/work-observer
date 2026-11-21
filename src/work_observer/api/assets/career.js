@@ -2052,6 +2052,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(entry.question_id){const question=row.result?.career_learning_context?.read_inquiries?.find(item=>item.id===entry.question_id)||data.questions?.find(item=>item.id===entry.question_id);detail=question?.question||"本目标中的一条调查笔记";href=`#career/${data.id}/investigate/${entry.question_id}`;}
       if(entry.note_id){const note=row.result?.career_learning_context?.read_notes?.find(item=>item.id===entry.note_id)||data.insights?.find(item=>item.id===entry.note_id);detail=note?.current_user_view||note?.current_view||"本目标中的一份认识";href=`#career/${data.id}/insight/${entry.note_id}`;}
       if(entry.experiment_ids?.length)detail=entry.experiment_ids.map(id=>data.tasks?.find(item=>item.id===id)?.title||"留存实验记录").join("、");
+      if(entry.reading_guides>0)detail+=(detail?" · ":"")+`已提供 ${entry.reading_guides} 份原文的读取缺口定位`;
       const chars=Array.from(detail);detail=chars.slice(0,180).join("")+(chars.length>180?"…":"");
       return {tool:entry.tool,label:labels[entry.tool]||"处理本轮研究资料",detail,href,index,needs_adjustment:Boolean(entry.validation)};
     });
