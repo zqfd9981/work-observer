@@ -918,3 +918,10 @@ unavailableExperiment.career_learning_context.read_experiments[0].artifact_docum
 assert.ok(ctx.window.journeyTest.experimentRecall(unavailableExperiment,'goal').includes('不能据此声称已核对日志'));
 assert.ok(!ctx.window.journeyTest.experimentRecall(unavailableExperiment,'goal').includes('data-public-source'));
 console.log('Earlier experiment inputs: complete hypotheses, checks, negative observations, raw-source locators, escaped read-only exports and unchanged records passed.');
+
+const recoveredExperiment=JSON.parse(experimentSnapshotBefore);
+recoveredExperiment.career_learning_context.read_experiments[0].artifact_document.found_via_experiment=true;
+const recoveredHtml=ctx.window.journeyTest.experimentRecall(recoveredExperiment,'goal');
+assert.ok(recoveredHtml.includes('从本目标实验记录找回'));
+assert.ok(recoveredHtml.includes('data-public-source="raw"'));
+console.log('Older experiment logs retain their recovered-source label, raw reader and complete conditions.');

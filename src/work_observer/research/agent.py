@@ -239,7 +239,8 @@ LEARNING_TOOLS = [
     tool(
         "read_experiments",
         "按ID一次读1至6条完整实验设计、预期、用户观察、前次实验和产物定位；"
-        "只读记录，不执行实验。产物仍需按本轮可读document_id读取，不扩大资料范围。",
+        "只读记录，不执行实验。本目标仍保留的关联日志会提供可读document_id，"
+        "再用原文工具核对；不加入其他目标的资料，不恢复已移除的产物。",
         {"experiment_ids": {"type": "array", "items": {"type": "string"},
                             "minItems": 1, "maxItems": 6}},
         ["experiment_ids"],
@@ -1117,6 +1118,11 @@ async def _research(
         if public_document_ids is not None:
             archived_public_ids = public_document_ids
             archived_public_total = len(public_document_ids)
+        if learning_enabled:
+            archived_public_ids = list(dict.fromkeys([
+                *archived_public_ids, *learning_notebook.experiment_document_ids(),
+            ]))
+            archived_public_total = max(archived_public_total, len(archived_public_ids))
         work_material_ids = [
             row.id
             for row in session.scalars(
@@ -1542,12 +1548,14 @@ async def _research(
             "开头实验摘要不是完整历史。需要较早的实验或对照时，用search_experiments定位，"
             "再read_experiments批读完整预期、检查方式、观察和设计变化；可沿previous_task_id回查。"
             "比较时保持各自问题、条件与记录顺序，不能把不同实验拼成一次成功。"
-            "用户记录不独立证明因果；产物可读时再用read_archived_documents读取相关日志。"
-            "产物不在本轮资料范围时明确无法核对，不补造结果，也不自动扩大范围。"
+            "用户记录不独立证明因果；read_experiments会定位本轮启动时目标已保存的关联产物，"
+            "即使没有出现在开头目录，也可按返回的可读document_id读取日志。"
+            "用read_archived_documents批读并按next_start续读；读取实验记录不等于读取日志。"
+            "产物已不在本目标中时明确无法核对，不补造结果，不恢复它或读取其他目标的资料。"
         )
     batch_archives_enabled = (
         archived_read_enabled and coverage_mode == "question"
-        and len(scope.get("archived_public_ids", [])) > 1
+        and (len(scope.get("archived_public_ids", [])) > 1 or learning_enabled)
     )
     if batch_archives_enabled:
         system += archived_reads.BATCH_POLICY
@@ -1933,6 +1941,12 @@ async def _research(
                             if artifact := experiment["artifact_document"]:
                                 artifact["in_current_scope"] = (
                                     artifact["document_id"] in scope.get("archived_public_ids", [])
+                                )
+                                artifact["found_via_experiment"] = (
+                                    artifact["in_current_scope"]
+                                    and artifact["document_id"] not in scope.get(
+                                        "selected_public_document_ids", []
+                                    )
                                 )
                         entry["experiment_ids"] = arguments["experiment_ids"]
                         learning.setdefault("read_experiments", []).extend(data["experiments"])

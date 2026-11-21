@@ -18,8 +18,9 @@ from work_observer.storage.database import upgrade
 class ExperimentHistoryModel(ModelClient):
     """Local tool script: search both pages, read old records, then read their logs."""
 
-    def __init__(self):
+    def __init__(self, long_logs=False):
         self.contexts, self.last_usage = [], {}
+        self.long_logs = long_logs
 
     async def turn(self, history):
         context = json.loads(history[1]["content"])
@@ -57,9 +58,18 @@ class ExperimentHistoryModel(ModelClient):
                 {"document_id": row["artifact_document"]["document_id"], "start": 0}
                 for row in rows
             ]}
+        elif any(row["has_more"] for row in outputs[-1].get("windows", [])):
+            name, args = "read_archived_documents", {"reads": [
+                {"document_id": row["document_id"], "start": row["next_start"]}
+                for row in outputs[-1]["windows"] if row["has_more"]
+            ]}
         else:
             evidence = outputs[-1]["evidence"]
             assert len({row["public_document_id"] for row in evidence}) == 2
+            if self.long_logs:
+                assert all("实际记录末尾：write=2；并发未控制，不能外推生产。" in "".join(
+                    row["quote"] for row in evidence if row["public_document_id"] == key
+                ) for key in {row["public_document_id"] for row in evidence})
             name, args = "finish_research", {
                 "claims": [{"category": "business", "basis": "inference",
                             "requirement": "unspecified", "text":
@@ -72,11 +82,14 @@ class ExperimentHistoryModel(ModelClient):
         return [call], call
 
 
-def test_older_experiments_can_be_found_read_and_rechecked_after_reopening(tmp_path):
+@pytest.mark.parametrize("extra_materials", [0, 24])
+def test_older_experiments_can_be_found_read_and_rechecked_after_reopening(
+    tmp_path, extra_materials,
+):
     database = tmp_path / "experiments.db"
     upgrade(database)
     settings = Settings(database_path=database, raw_directory=tmp_path / "raw")
-    model = ExperimentHistoryModel()
+    model = ExperimentHistoryModel(long_logs=bool(extra_materials))
 
     def app():
         return create_app(settings, model=model, reports_dir=tmp_path / "reports")
@@ -113,9 +126,15 @@ def test_older_experiments_can_be_found_read_and_rechecked_after_reopening(tmp_p
             save(base + "/tasks/" + task["id"], {
                 "state": "done", "outcome": outcome, "artifact": "用户保存的合成日志",
                 "artifact_title": "合成日志" + str(index),
-                "artifact_text": f"合成情境{index}：write=2。并发未控制，未独立执行验证。",
+                "artifact_text": f"合成情境{index}：write=2。并发未控制，未独立执行验证。"
+                + ("中段记录。" * 1200 + "实际记录末尾：write=2；并发未控制，不能外推生产。"
+                   if extra_materials and index < 2 else ""),
             }, "patch")
             tasks.append(task)
+        for index in range(extra_materials):
+            save(base + "/materials", {"title": f"合成后续说明{index}",
+                        "text": "幂等键是否足以解释两组观察？合成实验历史复核："
+                        "比较较早基线和条件对照，哪些判断仍需限制？"})
         before = client.get(base).json()
         assert not model.contexts
 
@@ -127,7 +146,16 @@ def test_older_experiments_can_be_found_read_and_rechecked_after_reopening(tmp_p
                          question="合成实验历史复核：比较较早基线和条件对照，哪些判断仍需限制？")
         result = data["results"][0]["result"]
         assert result["status"] == "completed", result.get("stop_reason")
-        assert result["model_calls"] == 5
+        assert result["model_calls"] == (6 if extra_materials else 5)
+        if extra_materials:
+            old_documents = {row["artifact_document_id"] for row in before["tasks"][:2]}
+            initial_scope = model.contexts[0]["fixed_scope"]
+            assert not old_documents & set(initial_scope["selected_public_document_ids"])
+            shown = {row["id"] for row in initial_scope["public_document_titles"]}
+            assert not old_documents & shown
+            assert old_documents <= set(initial_scope["archived_public_ids"])
+            assert all(row["artifact_document"]["found_via_experiment"]
+                       for row in result["career_learning_context"]["read_experiments"])
         assert {row["name"] for row in model.tools} >= {"search_experiments", "read_experiments"}
         snapshot = result["career_learning_context"]
         assert len(snapshot["experiment_searches"]) == 2
@@ -149,10 +177,17 @@ def test_experiment_notebook_keeps_goal_and_explicit_inquiry_scopes():
     task = {"id": "local", "title": "合成记录", "question_id": "q", "state": "planned",
             "created_at": "2026-11-21", "task_or_ability": "任务", "deliverable": "产物",
             "completion_check": "检查"}
-    project = {"career": {"tasks": [task], "questions": [{"id": "q", "question": "问题"}]}}
+    project = {"public_document_ids": ["local-log", "unrelated-material"], "career": {
+        "tasks": [{**task, "artifact_document_id": "local-log"},
+                  {**task, "id": "detached", "artifact_document_id": "detached-log"}],
+        "questions": [{"id": "q", "question": "问题"}],
+    }}
     notebook = LearningNotebook(lambda: project, None)
-    assert notebook.search_experiments([], question_id="q")["matching_count"] == 1
+    assert notebook.experiment_document_ids() == ["local-log"]
+    assert notebook.search_experiments([], question_id="q")["matching_count"] == 2
     assert not notebook.read_experiments(["local"])["experiments"][0]["reported_observation"]
+    assert not notebook.read_experiments(["detached"])["experiments"][0][
+        "artifact_document"]["available_in_goal"]
     with pytest.raises(ProbeError, match="EXPERIMENT_NOT_AVAILABLE"):
         notebook.read_experiments(["other-goal-task"])
     with pytest.raises(ProbeError, match="EXPERIMENT_INQUIRY_NOT_AVAILABLE"):

@@ -124,6 +124,14 @@ class LearningNotebook:
             "旧引用只供定位，形成判断仍须读取当前可用原文；不改变记录或选用状态。",
         }
 
+    def experiment_document_ids(self):
+        project = self.project_reader()
+        attached = set(project.get("public_document_ids", []))
+        return list(dict.fromkeys(
+            row["artifact_document_id"] for row in project.get("career", {}).get("tasks", [])
+            if row.get("artifact_document_id") in attached
+        ))
+
     def search_experiments(self, terms, offset=0, question_id=""):
         if terms != []:
             terms = validated_terms(terms)
@@ -171,7 +179,8 @@ class LearningNotebook:
                 or any(not isinstance(key, str) for key in experiment_ids)
                 or len(set(experiment_ids)) != len(experiment_ids)):
             raise ProbeError("INVALID_EXPERIMENT_SELECTION")
-        career = self.project_reader().get("career", {})
+        project = self.project_reader()
+        career = project.get("career", {})
         tasks = {row["id"]: row for row in career.get("tasks", [])}
         if not set(experiment_ids) <= tasks.keys():
             raise ProbeError("EXPERIMENT_NOT_AVAILABLE")
@@ -198,6 +207,9 @@ class LearningNotebook:
                 "artifact_document": {
                     "document_id": row["artifact_document_id"],
                     "title": row.get("artifact_title") or row["title"],
+                    "available_in_goal": row["artifact_document_id"] in project.get(
+                        "public_document_ids", []
+                    ),
                 } if row.get("artifact_document_id") else None,
                 "recorded_at": row.get("updated_at") or row["created_at"],
                 "created_at": row["created_at"],
@@ -206,7 +218,8 @@ class LearningNotebook:
             "experiments": records,
             "notice": "用户保存的完整实验设计与观察，不是独立运行或能力认证。"
             "即使state为done，也可能记录失败。产物定位不表示已经读取原文；"
-            "须按本轮可用document_id读取日志并保留条件、反例与未知。",
+            "本目标仍保留的产物可按返回的document_id读取；"
+            "未保留的产物只能作为旧定位，不能假装已核对。保留条件、反例与未知。",
         }
 
 
