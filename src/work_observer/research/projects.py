@@ -1791,6 +1791,9 @@ class ProjectService:
                 "selected_inquiry": selected_inquiry,
                 "selected_map_comparison": selected_maps,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
+                "selected_learning_notes": [learning_note(row)
+                                            for key in step.get("career_insight_ids", [])
+                                            for row in notes if row["id"] == key],
                 "selected_counter_learning_note": learning_note(counter_note)
                 if counter_note else None,
                 "counter_experiment": next(
@@ -2059,7 +2062,8 @@ async def _execute_project_locked(
             notebook = (
                 LearningNotebook(
                     lambda: service.get(identity), service.store,
-                    step.get("career_insight_id"), step.get("career_counter_insight_id")
+                    step.get("career_insight_id"), step.get("career_counter_insight_id"),
+                    selected_note_ids=step.get("career_insight_ids", []),
                 )
                 if "learning_recall" in context.get("career_evidence", {}) else None
             )

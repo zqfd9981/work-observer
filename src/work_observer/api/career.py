@@ -215,6 +215,9 @@ class CareerResearchInput(BaseModel):
     )
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    insight_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
+        default=None, max_length=4
+    )
     counter_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     requirement_key: str = Field(default="", max_length=100)

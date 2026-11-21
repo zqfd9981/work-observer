@@ -58,16 +58,19 @@ def learning_inquiry_links(career, note):
 class LearningNotebook:
     """Read this goal's personal notes and saved experiment records."""
 
-    def __init__(self, project_reader, store, selected_note_id=None, counter_note_id=None):
+    def __init__(self, project_reader, store, selected_note_id=None, counter_note_id=None,
+                 *, selected_note_ids=None):
         self.project_reader = project_reader
         self.store = store
         self.selected_note_id = selected_note_id
         self.counter_note_id = counter_note_id
+        self.selected_note_ids = selected_note_ids or []
 
     def _available(self):
         project = self.project_reader()
         notes = project.get("career", {}).get("insights", [])
-        historical = {row["id"] for identity in (self.selected_note_id, self.counter_note_id)
+        historical = {row["id"] for identity in (
+            self.selected_note_id, self.counter_note_id, *self.selected_note_ids)
                       for row in learning_family(notes, identity)}
         return project, [
             row for row in notes if row.get("use_for_research", True) or row["id"] in historical
@@ -328,7 +331,7 @@ def learning_record(row, record, store):
             "不能恢复被搁置的旧认识或把新认识外推到原来的全部范围。"
         )
     index = row.get("source_claim_index")
-    if index is not None or links:
+    if index is not None or links or row.get("source_step_id"):
         source_step = next(
             (item for item in record["steps"] if item["id"] == row.get("source_step_id")),
             None,
@@ -341,9 +344,21 @@ def learning_record(row, record, store):
             result = {}
         claims = result.get("claims", [])
         selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
-            claims if links and index is None else []
+            claims if (links or row.get("source_step_id")) and index is None else []
         )
         if selected:
+            inputs = result.get("career_learning_context", {}).get("selected_notes", [])
+            if inputs:
+                note["source_personal_inputs"] = [
+                    {key: item.get(key) for key in (
+                        "id", "previous_view", "reported_observation", "current_user_view",
+                        "open_question", "use_for_research", "source_step_id", "question_id",
+                    )} for item in inputs
+                ]
+                note["source_personal_inputs_notice"] = (
+                    "当时综合讨论选定的个人观点与限定，不是新证据；"
+                    "保留当时内容和选用状态，不自动采用或恢复搁置记录。"
+                )
             note["source_scope"] = result.get("scope")
             note["source_work_map"] = result.get("work_map")
             details = [{key: claim[key] for key in ("text", "category", "basis", "requirement")}

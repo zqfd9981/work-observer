@@ -1519,6 +1519,7 @@ class CareerService:
         allow_public=False,
         story_id=None,
         insight_id=None,
+        insight_ids=None,
         counter_insight_id=None,
         question_id=None,
         requirement_key="",
@@ -1556,16 +1557,21 @@ class CareerService:
                 if not source:
                     raise ValueError("请选择一份已完整保存且可继续使用的研究，或直接提问。")
                 if synthesis_question_ids is None and not any((
-                    question_id, task_id, story_id, insight_id,
+                    question_id, task_id, story_id, insight_id, insight_ids,
                     counter_insight_id, comparison_step_ids,
                 )):
                     synthesis_sources = source.get("synthesis_sources", [])
-                if inherit_focus and (not question_id or question_id == source.get("question_id")):
+                if (inherit_focus and not insight_ids
+                        and (not question_id or question_id == source.get("question_id"))):
+                    if insight_ids is None:
+                        insight_ids = list(source.get("insight_ids") or [])
                     source_job_ids = source.get("selected_job_ids", [])
                     question_ids = {row["id"] for row in project["career"].get("questions", [])}
                     task_ids = {row["id"] for row in project["career"]["tasks"]}
                     story_ids = {row["id"] for row in project["career"]["stories"]}
-                    insight_ids = {row["id"] for row in project["career"].get("insights", [])}
+                    available_insight_ids = {
+                        row["id"] for row in project["career"].get("insights", [])
+                    }
                     question_id = question_id or (
                         source.get("question_id")
                         if source.get("question_id") in question_ids else None
@@ -1578,11 +1584,11 @@ class CareerService:
                     )
                     insight_id = insight_id or (
                         source.get("insight_id")
-                        if source.get("insight_id") in insight_ids else None
+                        if source.get("insight_id") in available_insight_ids else None
                     )
                     counter_insight_id = counter_insight_id or (
                         source.get("counter_insight_id")
-                        if source.get("counter_insight_id") in insight_ids else None
+                        if source.get("counter_insight_id") in available_insight_ids else None
                     )
                     if not material_focus_supplied and not material_id and not material_ids:
                         material_ids = list(source.get("material_ids") or [])
@@ -1593,6 +1599,19 @@ class CareerService:
                         )
                     if question_id == source.get("question_id") and not comparison_step_ids:
                         comparison_step_ids = source.get("comparison_step_ids", [])
+            insight_ids = list(insight_ids or [])
+            selected_insights = [
+                row for key in insight_ids for row in project["career"].get("insights", [])
+                if row["id"] == key
+            ]
+            if insight_ids and (
+                kind != "ask" or not 2 <= len(insight_ids) <= 4
+                or len(set(insight_ids)) != len(insight_ids)
+                or len(selected_insights) != len(insight_ids)
+                or any((question_id, task_id, story_id, insight_id, counter_insight_id,
+                        comparison_step_ids, synthesis_question_ids))
+            ):
+                raise ValueError("请选择本目标中的2至4条不同认识一起研究，单项焦点可另行提问。")
             if synthesis_question_ids is not None:
                 identities = list(dict.fromkeys(synthesis_question_ids))
                 questions_by_id = {row["id"]: row for row in project["career"].get("questions", [])}
@@ -2056,6 +2075,17 @@ class CareerService:
                     "请回查原文和观察，说明它还能支持什么、哪些需修正、哪些仍未知。"
                     "它可能已经搁置，不因本次讨论而自动恢复；不因记录较新或较旧就判断真假。"
                 )
+            if insight_ids:
+                question += (
+                    "本轮综合career_evidence.selected_learning_notes中用户明确选定的几条认识。"
+                    "逐条保留其问题、适用条件、观察、末尾限定与未知；已搁置的记录只供本次重查。"
+                    "围绕共同业务问题、任务、交付物、责任、能力或工具说明它们能怎样连接，"
+                    "哪些只是不同维度，哪些在特定条件下冲突，哪些尚不能连接。"
+                    "不要投票、强行合并或按新旧决定真伪；用户理解、旧分析和旧摘录都不是新增证据。"
+                    "用来源定位回读本轮可用原文，有实验依据时可read_experiments读取完整观察。"
+                    "来源已不在当前目标时明确不能重核，不自动带回资料。形成有条件的综合解释，"
+                    "指出最值得继续验证的一个缺口，不自动改写、接替或恢复选用这些认识。"
+                )
             if counter_insight_id:
                 question += (
                     "本次另一条完整认识在career_evidence.selected_counter_learning_note，"
@@ -2229,6 +2259,8 @@ class CareerService:
                 raise ValueError("本目标的模型调用或时间额度已用完，仍可整理资料、记录观察和认识。")
             preferred = [*material_ids, material_id, focused_document_id]
             topic = [user_question]
+            topic.extend(row["current_view"] + "\n" + row.get("open_question", "")
+                         for row in selected_insights)
             if synthesis_sources:
                 from work_observer.research.inquiry_synthesis import synthesis_inquiries
 
@@ -2400,6 +2432,7 @@ class CareerService:
                     "material_ids": material_ids if kind in {"ask", "map", "plan"} else [],
                     "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
+                    "insight_ids": insight_ids,
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
@@ -2421,6 +2454,8 @@ class CareerService:
                 project["steps"][-1]["career_task_id"] = task_id
             if insight_id and kind in {"ask", "challenge"}:
                 project["steps"][-1]["career_insight_id"] = insight_id
+            if insight_ids:
+                project["steps"][-1]["career_insight_ids"] = insight_ids[:]
             if counter_insight_id:
                 project["steps"][-1]["career_counter_insight_id"] = counter_insight_id
             if question_id:
