@@ -24,15 +24,17 @@ def learning_family(notes, identity):
 class LearningNotebook:
     """Read current personal notes; only an explicitly focused family opens shelved history."""
 
-    def __init__(self, project_reader, store, selected_note_id=None):
+    def __init__(self, project_reader, store, selected_note_id=None, counter_note_id=None):
         self.project_reader = project_reader
         self.store = store
         self.selected_note_id = selected_note_id
+        self.counter_note_id = counter_note_id
 
     def _available(self):
         project = self.project_reader()
         notes = project.get("career", {}).get("insights", [])
-        historical = {row["id"] for row in learning_family(notes, self.selected_note_id)}
+        historical = {row["id"] for identity in (self.selected_note_id, self.counter_note_id)
+                      for row in learning_family(notes, identity)}
         return project, [
             row for row in notes if row.get("use_for_research", True) or row["id"] in historical
         ]

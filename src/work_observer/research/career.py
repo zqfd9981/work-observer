@@ -1131,6 +1131,7 @@ class CareerService:
         allow_public=False,
         story_id=None,
         insight_id=None,
+        counter_insight_id=None,
         question_id=None,
         requirement_key="",
         comparison_step_ids=None,
@@ -1173,6 +1174,10 @@ class CareerService:
                     insight_id = insight_id or (
                         source.get("insight_id")
                         if source.get("insight_id") in insight_ids else None
+                    )
+                    counter_insight_id = counter_insight_id or (
+                        source.get("counter_insight_id")
+                        if source.get("counter_insight_id") in insight_ids else None
                     )
                     material_id = material_id or (
                         source.get("material_id")
@@ -1257,6 +1262,13 @@ class CareerService:
                     task_id = task_id or (observed_task["id"] if observed_task else None)
                     if kind == "ask" and observed_task:
                         question_id = question_id or observed_task.get("question_id")
+            counter_note = next((row for row in project["career"].get("insights", [])
+                                 if row["id"] == counter_insight_id), None)
+            if counter_insight_id and (
+                kind not in {"ask", "challenge"} or not counter_note
+                or counter_insight_id == insight_id
+            ):
+                raise ValueError("请选择当前目标中的另一条认识进行对照，或取消这项选择。")
             if kind == "pitch" or kind == "ask" and story_id:
                 story = next(
                     (row for row in project["career"]["stories"] if row["id"] == story_id), None
@@ -1504,6 +1516,14 @@ class CareerService:
                     "请回查原文和观察，说明它还能支持什么、哪些需修正、哪些仍未知。"
                     "它可能已经搁置，不因本次讨论而自动恢复；不因记录较新或较旧就判断真假。"
                 )
+            if counter_insight_id:
+                question += (
+                    "本次另一条完整认识在career_evidence.selected_counter_learning_note，"
+                    "有对应实验时见counter_experiment。与所选认识A或用户改写的解释A对照，"
+                    "分别回读两边可用的原文与观察，保留各自末尾条件、未知和当时语境。"
+                    "说明看法差异是否来自适用条件、观察或解释，不预设互斥，也不因较新而判定正确。"
+                    "两条记录都只是用户理解；无从核实的部分保留未知，不把认识ID当作原文引用。"
+                )
             if question_id:
                 question += (
                     "本次围绕career_evidence.selected_inquiry中的持续调查问题展开，"
@@ -1604,6 +1624,12 @@ class CareerService:
                                    if row["id"] == insight_id)
                 related_steps.add(chosen_note.get("source_step_id"))
                 topic.extend((chosen_note["current_view"], chosen_note.get("open_question")))
+            if counter_note:
+                related_steps.add(counter_note.get("source_step_id"))
+                topic.extend((counter_note["current_view"], counter_note.get("open_question")))
+                preferred.extend(row.get("artifact_document_id")
+                                 for row in project["career"]["tasks"]
+                                 if row["id"] == counter_note.get("task_id"))
             if answer_record:
                 topic.append(answer_record.get("interview_question"))
             topic.extend(row.get("user_question") or row.get("interview_question")
@@ -1680,6 +1706,7 @@ class CareerService:
                     "material_id": material_id if kind == "ask" else None,
                     "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
                     "insight_id": insight_id if kind in {"ask", "challenge"} else None,
+                    "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
                     "requirement_key": requirement_key if kind == "evidence" else "",
@@ -1695,6 +1722,8 @@ class CareerService:
                 project["steps"][-1]["career_task_id"] = task_id
             if insight_id and kind in {"ask", "challenge"}:
                 project["steps"][-1]["career_insight_id"] = insight_id
+            if counter_insight_id:
+                project["steps"][-1]["career_counter_insight_id"] = counter_insight_id
             if question_id:
                 project["steps"][-1]["career_question_id"] = question_id
                 if comparison_step_ids:

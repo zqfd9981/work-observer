@@ -141,6 +141,7 @@ class CareerResearchInput(BaseModel):
     material_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    counter_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     requirement_key: str = Field(default="", max_length=100)
     comparison_step_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] = Field(

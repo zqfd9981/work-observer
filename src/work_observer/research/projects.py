@@ -1502,6 +1502,9 @@ class ProjectService:
             selected_note = next(
                 (row for row in notes if row["id"] == step.get("career_insight_id")), None
             )
+            counter_note = next(
+                (row for row in notes if row["id"] == step.get("career_counter_insight_id")), None
+            )
 
             def experiment_record(row, full=False):
                 return {
@@ -1659,6 +1662,12 @@ class ProjectService:
                 "selected_requirement": step.get("career_requirement"),
                 "selected_inquiry": selected_inquiry,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
+                "selected_counter_learning_note": learning_note(counter_note)
+                if counter_note else None,
+                "counter_experiment": next(
+                    (experiment_record(row, full=True) for row in career["tasks"]
+                     if counter_note and row["id"] == counter_note.get("task_id")), None
+                ),
                 "learning_recall": learning_recall,
                 "learning_tools_notice": "可用search_learning_notes查找其他选用中的认识，再用"
                 "read_learning_note读取完整内容。点选认识重查时，也可读取同一接替脉络的旧记录；"
@@ -1668,6 +1677,7 @@ class ProjectService:
                 "具体提问不以无关的近期笔记补满；未指定讨论重点且无匹配时，才带入近期记录。"
                 "字面相关只用于找回线索，不代表语义一致或结论成立；未带入不表示已遗忘或不相关。"
                 "selected_learning_note是用户本次明确要求重查的完整记录，可能已搁置。"
+                "selected_counter_learning_note是用户点选的另一条完整认识，需对照各自条件与来源。"
                 "重查不等于重新采用，不因新旧顺序判断真伪。",
                 "selected_story": {
                     "id": selected_story["id"],
@@ -1835,8 +1845,10 @@ async def _execute_project_locked(
             from work_observer.research.learning import LearningNotebook
 
             notebook = (
-                LearningNotebook(lambda: service.get(identity), service.store,
-                                 step.get("career_insight_id"))
+                LearningNotebook(
+                    lambda: service.get(identity), service.store,
+                    step.get("career_insight_id"), step.get("career_counter_insight_id")
+                )
                 if "learning_recall" in context.get("career_evidence", {}) else None
             )
             result = await research(

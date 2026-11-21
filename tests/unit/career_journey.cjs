@@ -114,3 +114,13 @@ assert.ok(lookedUpHtml.includes('data-learning-read="true"')&&lookedUpHtml.inclu
 assert.ok(lookedUpHtml.includes('当时已搁置')&&lookedUpHtml.includes('Old derived claim.')&&lookedUpHtml.includes('&lt;script&gt;unsafe source&lt;/script&gt;'));
 assert.ok(!ctx.window.journeyTest.learningRecall(lookedUp,'goal',true).includes('href='));
 console.log('Notebook tool reads: complete historical text, separate initial context, old sources and escaped export passed.');
+
+const pairedContext={model_calls:4,career_learning_context:{notes:[],selected_note:sentNote,counter_note:{...sentNote,id:'counter',use_for_research:false,current_user_view:'Counter view with its complete final limitation.'}}};
+const pairedHtml=ctx.window.journeyTest.learningRecall(pairedContext,'goal');
+assert.ok(pairedHtml.includes('本轮带入的个人认识 · 2 份')&&pairedHtml.includes('本次点选对照（B）')&&pairedHtml.includes('complete final limitation.'));
+const pairedData={...inquiryData,insights:[...inquiryData.insights,{id:'counter',current_view:'Another complete view.'}]};
+const pairedFocus=ctx.window.journeyTest.discussionFocus({...old,counter_insight_id:'counter'},pairedData);
+assert.equal(pairedFocus.counter_insight_id,'counter');
+ctx.window.journeyTest.setDraft(pairedData,pairedFocus);
+assert.ok(ctx.window.journeyTest.inquiryPanel(pairedData).includes('name="counter_insight_id" value="counter"'));
+console.log('Two-view comparison: both complete records and continued inquiry focus passed.');

@@ -209,4 +209,6 @@ def test_notebook_only_opens_selected_history_and_current_goal_records():
     focused = LearningNotebook(lambda: project, None, "current")
     assert {row["id"] for row in focused.search([])["notes"]} == {"current", "old"}
     assert focused.read("old")["note"]["open_question"] == "仍未知。"
+    paired = LearningNotebook(lambda: project, None, "current", "shelved")
+    assert paired.read("shelved")["note"]["use_for_research"] is False
     assert notes[0]["use_for_research"] is False

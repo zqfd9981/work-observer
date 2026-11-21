@@ -1528,6 +1528,7 @@ async def _research(
             **learning,
             "notes": personal["learning_notes"],
             "selected_note": personal["selected_learning_note"],
+            "counter_note": personal.get("selected_counter_learning_note"),
             "notice": personal["learning_selection_notice"],
         }
     # 冻结候选正文池：重启后仍引用启动时版本，不把新版本混进旧研究。
