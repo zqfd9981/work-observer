@@ -71,6 +71,7 @@ class DemoModel:
             for key in ("selected_story", "selected_answer", "selected_material")
             if career.get(key)
         ]
+        documents.extend(row["document_id"] for row in career.get("selected_materials", []))
         documents.extend(
             row["document_id"]
             for row in (career.get("selected_requirement") or {}).get("records", [])
@@ -86,6 +87,9 @@ class DemoModel:
             documents.append(previous["artifact_document"]["document_id"])
         inquiry = career.get("selected_inquiry") or {}
         allowed = {row["id"] for row in context["fixed_scope"].get("public_document_titles", [])}
+        for note in career.get("selected_learning_notes", []):
+            documents.extend(row["public_document_id"] for row in note.get("source_locators", [])
+                             if row.get("public_document_id") in allowed)
         for passage in [inquiry.get("source_passage") or {}, *inquiry.get("evidence_passages", [])]:
             if passage.get("public_document_id") in allowed:
                 documents.append(passage["public_document_id"])
@@ -99,11 +103,17 @@ class DemoModel:
             documents.extend(
                 row["id"] for row in context["fixed_scope"].get("public_document_titles", [])[:2]
             )
-        for document in dict.fromkeys(documents):
-            if not any(ev.get("public_document_id") == document for ev in evidence):
-                return self.call(
-                    history, "read_archived_document", {"document_id": document, "start": 0}
-                )
+        pending = [document for document in dict.fromkeys(documents)
+                   if not any(ev.get("public_document_id") == document for ev in evidence)]
+        if len(pending) > 1:
+            return self.call(history, "read_archived_documents", {
+                "reads": [{"document_id": document, "start": 0} for document in pending[:6]],
+            })
+        if pending:
+            return self.call(
+                history, "read_archived_document", {"document_id": pending[0], "start": 0}
+            )
+        starting_material = any(ev.get("title") == "虚构工作说明：请求记录核对" for ev in evidence)
         claims, relations, work_types = [], [], []
         for ev in evidence:
             if not ev.get("job_id"):
@@ -210,6 +220,11 @@ class DemoModel:
                 )
             if action == "pitch":
                 text = "【预置示例】项目讲述可按场景、亲自行动、观察和限制组织，请核对原始记录。"
+            if career.get("selected_learning_notes"):
+                text = (
+                    "【预置示例】工作分工与失败原因是不同维度。应用侧交付原型，平台侧交付执行器；"
+                    "局部重复写入记录只能挑战一种解释，不能据此合并责任。"
+                )
             args["claims"] = [
                 {
                     "category": "ability",
@@ -244,10 +259,45 @@ class DemoModel:
                             "hypothesis": "重复写入只会发生在超时重试时；这是准备检验的解释。",
                             "evidence_ids": refs,
                             "assumptions": ["使用本地虚构输入，不接触生产系统。"],
+                            "comparison_conditions": "虚构情境使用同类请求字段和记录方式；"
+                            "请求去重规则与并发条件仍未控制。",
+                            "comparison_rows": [
+                                {"condition": "正常响应",
+                                 "input": "虚构请求A：正常返回并记录写入次数。",
+                                 "expected": "若只由超时重试引起重复，正常组预计只写入一次。"},
+                                {"condition": "超时重试",
+                                 "input": "虚构请求B：超时后重试并记录写入次数。",
+                                 "expected": "若只由超时重试引起重复，重试组可能写入两次。"},
+                            ],
                         }
                     ],
                     "open_questions": ["并发和请求去重仍待控制。"],
                 }
+        if starting_material and action != "map":
+            refs = [ev["id"] for ev in evidence]
+            args["claims"] = [{
+                "category": "business", "basis": "inference", "requirement": "unspecified",
+                "text": "【预置示例】这份说明交付的是差异清单；发现差异不等于拥有业务验收权，"
+                "资料尚未说明后者。", "evidence_ids": refs,
+            }]
+            args["gaps"] = ["还需要谁定义差异标准、谁决定验收的原始说明，才能解释责任边界？"]
+            if action == "plan" and args.get("application_plan"):
+                exercise = args["application_plan"]["actions"][0]
+                exercise.update(
+                    title="用两组虚构表格区分核对与验收",
+                    task_or_ability="理解差异清单与业务验收权的边界",
+                    deliverable="两组核对记录与一项仍需核实的责任问题",
+                    hypothesis="核对可以形成差异记录，但不能单凭这张记录推定验收权。",
+                    completion_check="分别算出差异，并标出资料没有说明的验收决定者。",
+                    comparison_conditions="仅使用虚构表格的相同字段，不假设企业验收标准或个人权限。",
+                    comparison_rows=[
+                        {"condition": "数值相同", "input": "虚构请求记录100，回填记录100。",
+                         "expected": "算术差异为0，但是否通过业务验收仍未知。"},
+                        {"condition": "数值不同", "input": "虚构请求记录100，回填记录90。",
+                         "expected": "算术差异为10，可写入差异清单；谁决定验收仍未知。"},
+                    ],
+                )
+                args["application_plan"]["open_questions"] = ["企业验收规则和决定者仍未说明。"]
         if not args["claims"]:
             args["claims"] = [
                 {
@@ -298,6 +348,15 @@ async def populate(settings, model):
             for name, entries in JOBS
         ]
         career = CareerService(store, repo, settings.raw_directory)
+        start_goal = career.create(
+            title="示例：从一个问题与一份资料开始",
+            goal="先理解实际工作，再补个人背景与岗位方向。",
+            background="", constraints="", job_ids=[],
+            first_question="这份工作说明真正交付什么，哪些责任仍未说明？",
+            material_title="虚构工作说明：请求记录核对",
+            material_text="【虚构预置说明】核对请求与回填记录，交付差异清单；"
+            "业务验收权、并发条件和生产效果均未说明。",
+        )
         book = career.create(
             title="示例：从业务应用看懂执行平台",
             goal="比较两类工作的交付与责任，用本地练习核对个人理解。",
@@ -308,18 +367,6 @@ async def populate(settings, model):
             resume_text="虚构人物小林。构造过超时样例与运行日志，未控制并发，没有生产效果数据。",
         )
         identity = book["id"]
-        book = career.add_story(
-            identity,
-            {
-                "title": "虚构项目：客服接口失败样例",
-                "situation": "在本地比较正常与超时响应。",
-                "action": "亲自构造超时输入，记录请求标识与写入次数。",
-                "result": "形成两组本地运行记录。",
-                "limits": "未控制并发、未在生产运行，没有业务效果数据。",
-                "requirement_key": "",
-            },
-        )
-        story = book["stories"][0]
 
         async def run(kind, **extra):
             prepared = career.prepare(identity, kind=kind, **extra)
@@ -405,8 +452,22 @@ async def populate(settings, model):
             artifact="虚构示例中的本地记录",
             artifact_title="虚构运行记录",
             artifact_text="情境A：正常响应，write=2；情境B：超时重试，write=2。并发条件未控制，本记录未独立执行。",
+            comparison_conditions=task["comparison_conditions"],
+            comparison_rows=[
+                {**row, "observed": "【虚构预置观察】write=2。不是实际运行结果；并发仍未控制。"}
+                for row in task["comparison_rows"]
+            ],
         )
         task = book["tasks"][0]
+        story = career.add_story(identity, {
+            "title": "虚构练习：客服接口失败样例",
+            "situation": "用两组虚构记录检查只归因于超时重试的解释。",
+            "action": "预置情境分别列出正常响应和超时重试的输入、预期与写入次数。",
+            "result": "虚构记录中，两组均为write=2；正常组也重复，原解释不足。",
+            "limits": "这是预置个人练习示例，未独立执行；并发未控制，未在生产运行，"
+            "没有业务效果数据，不代表企业工作经历。",
+            "requirement_key": "", "source_task_id": task["id"],
+        })["stories"][0]
         reviewed = await run("reflect", task_id=task["id"])
         book = career.add_insight(
             identity,
@@ -437,6 +498,17 @@ async def populate(settings, model):
             task_id=task["id"],
             source_step_id=initial["step_id"],
             question="带着新观察与修正后的认识，重新检查原解释还有哪些未解决部分？",
+        )
+        work_insight = career.add_insight(identity, {
+            "previous_view": "同样使用Python和Agent工具，可能就是同一类工作。",
+            "observation": "虚构JD分别描述原型与执行器，任务和交付物不同。",
+            "current_view": "应用接入与平台执行有不同交付；局部练习观察不能替代岗位运行责任。",
+            "open_question": "哪些检查方法可以迁移，哪些责任仍需分别核实？",
+            "source_step_id": mapped["step_id"],
+        })["insights"][-1]
+        synthesis = await run(
+            "ask", insight_ids=[old["id"], insight["id"], work_insight["id"]],
+            question="把三条分散认识连起来：工作分工、失败观察和解释修正各说明什么，不能推出什么？",
         )
         interview = await run("teachback", question_id=question["id"])
         answer = await run(
@@ -474,12 +546,19 @@ async def populate(settings, model):
         )
         career.focus_question(next_goal["id"], copied["questions"][0]["id"])
         return {
+            "start_goal": start_goal["id"],
+            "start_question": start_goal["focus_question_id"],
             "main": identity,
             "map": mapped["step_id"],
             "question": question["id"],
             "answer": answer["step_id"],
             "teachback": interview["step_id"],
             "insight": insight["id"],
+            "old_insight": old["id"],
+            "work_insight": work_insight["id"],
+            "synthesis": synthesis["step_id"],
+            "task": task["id"],
+            "story": story["id"],
             "pitch": pitch["id"],
             "next_goal": next_goal["id"],
             "next_question": copied["questions"][0]["id"],
@@ -522,43 +601,56 @@ class DemoSurface:
                     '<section class="career-demo-banner"><strong>虚构资料 · 预置脚本演示</strong>'
                     "<p>资料、经历和回答均为虚构示例，不代表真实模型研究效果。"
                     "此入口使用临时数据，不读取你的服务密钥；可通过导出保留准备包。</p>"
-                    '<details class="career-demo-jump"><summary>三分钟导览 · 跳到某一步</summary>'
+                    '<details class="career-demo-jump"><summary>完整闭环导览 · 跳到某一步</summary>'
                     '<nav aria-label="演示步骤">'
                 )
                 for index, (title, target, question, note) in enumerate([
                     (
-                        "① 看懂工作", f"career/{links['main']}/discussion/{links['map']}",
+                        "① 从问题与资料开始",
+                        f"career/{links['start_goal']}/inquiry/{links['start_question']}",
+                        "还没选岗位、没填履历，怎样开始研究？",
+                        "一个具体问题加一份工作说明，就能保存研究起点。导航先准备可编辑的提问，"
+                        "个人背景与JD可以后补；点击研究按钮后才运行预置脚本。",
+                    ),
+                    (
+                        "② 看懂实际工作", f"career/{links['main']}/discussion/{links['map']}",
                         "同样写Agent，实际在交付什么？",
                         "对照应用接入与执行平台的任务、交付物和原文。留意Python必备、商科背景加分，"
                         "共用工具并不等于承担相同工作。",
                     ),
                     (
-                        "② 原文、反例与实验", f"career/{links['main']}/journey/{links['question']}",
+                        "③ 用对照挑战解释", f"career/{links['main']}/task/{links['task']}",
                         "一条解释怎样被反例挑战？",
-                        "沿时间线看最初猜想、补充原文、最小实验和观察记录。正常响应也出现两次写入，"
-                        "只归因于重试的解释不足；并发仍未控制。",
+                        "逐组看输入、预期与虚构观察。正常响应也出现两次写入，"
+                        "挑战了只归因于重试的解释；并发仍未控制，分组不同不能直接证明因果。",
                     ),
                     (
-                        "③ 检查自己的理解", f"career/{links['main']}/discussion/{links['answer']}",
+                        "④ 检查自己的理解", f"career/{links['main']}/discussion/{links['answer']}",
                         "会复述，还是能解释条件与边界？",
                         "打开自测回答与对应反馈，区分挑战一种解释和已经找到原因。"
                         "再看追问如何改变条件；概念解释不证明做过生产项目。",
                     ),
                     (
-                        "④ 认识修正后回看研究",
+                        "⑤ 连起分散认识", f"career/{links['main']}/discussion/{links['synthesis']}",
+                        "几条认识怎样连成有条件的整体理解？",
+                        "查看三条明确选定的个人观点、末尾限定与回读的原文。工作分工与失败原因是"
+                        "不同维度，不能强行合并；被搁置的旧解释只作历史输入，不会自动恢复。",
+                    ),
+                    (
+                        "⑥ 认识修正后回看研究",
                         f"career/{links['main']}/understanding/{links['insight']}",
                         "认识改变后，哪些旧研究需要回看？",
                         "对照原先的理解与反例后的修正，回看带入过相关认识的研究。"
                         "历史答复仍然保留，较新不自动代表更正确。",
                     ),
                     (
-                        "⑤ 讲清行动与边界", f"career/{links['main']}/pitch/{links['pitch']}",
-                        "怎样把探索讲成有依据的项目经历？",
-                        "讲清亲自做的对照、观察和仍未验证的部分。保留并发未控制、没有生产上线和"
-                        "没有业务收益数据的边界，不把推断写成成果。",
+                        "⑦ 从练习整理面试材料", f"career/{links['main']}/story/{links['story']}",
+                        "个人练习怎样成为有边界的面试材料？",
+                        "从来源练习回看两组对照，再准备可编辑的项目讲述。失败观察也能成为取材，"
+                        "但个人练习不代表企业经历；保留并发未控制、没有生产和收益数据的边界。",
                     ),
                     (
-                        "⑥ 迁移到新岗位",
+                        "⑧ 迁移到新岗位",
                         f"career/{links['next_goal']}/question/{links['next_question']}",
                         "旧经验可以直接迁移到新岗位吗？",
                         "把同一条认识带到平台岗位，原结论只是待验证起点。"
@@ -574,11 +666,13 @@ class DemoSurface:
                     '</nav></details></section><aside class="career-demo-tourbar" '
                     'data-demo-tourbar aria-label="演示导览">'
                     '<details class="career-demo-points" open><summary data-demo-guide-label '
-                    'aria-live="polite">三分钟导览 · 看要点</summary>'
+                    'aria-live="polite">完整闭环导览 · 看要点</summary>'
                     '<div class="career-demo-point-content">'
                     '<p class="form-note" data-demo-position>'
-                    '六步看一条调查怎样推进</p><h3 data-demo-question>从工作差异到认识修正</h3>'
-                    '<p data-demo-note>点击开始，依次看工作、反例、自测、修正、项目表达和迁移。'
+                    '八步看一条调查怎样推进</p><h3 data-demo-question>'
+                    '从提出问题到有依据地讲清工作</h3>'
+                    '<p data-demo-note>点击开始，依次看问题、工作、对照、自测、'
+                    '综合、修正、表达和迁移。'
                     '导航只打开已有记录，不开始新的研究。</p></div></details>'
                     '<div class="result-actions"><button type="button" class="secondary small" '
                     'data-demo-direction="-1" disabled>上一步</button>'

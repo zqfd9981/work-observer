@@ -3123,10 +3123,10 @@ function updateDemoGuide(){
   if(selected&&bar.dataset.demoActiveStep!==String(index))$(".career-demo-points",bar).open=false;
   bar.dataset.demoActiveStep=String(index);
   links.forEach((link,position)=>{if(position===index)link.setAttribute("aria-current","step");else link.removeAttribute("aria-current");});
-  $("[data-demo-guide-label]",bar).textContent=selected?`${index+1} / ${links.length} · ${selected.textContent.replace(/^[①-⑥]\s*/,"")} · 看要点`:"三分钟导览 · 看要点";
-  $("[data-demo-position]",bar).textContent=selected?`第 ${index+1} / ${links.length} 步 · 查看预置记录`:"六步看一条调查怎样推进";
-  $("[data-demo-question]",bar).textContent=selected?.dataset.demoQuestion||"从工作差异到认识修正";
-  $("[data-demo-note]",bar).textContent=selected?.dataset.demoNote||"点击开始，依次看工作、反例、自测、修正、项目表达和迁移。导航只打开已有记录，不开始新的研究。";
+  $("[data-demo-guide-label]",bar).textContent=selected?`${index+1} / ${links.length} · ${selected.textContent.replace(/^[①-⑧]\s*/,"")} · 看要点`:"完整闭环导览 · 看要点";
+  $("[data-demo-position]",bar).textContent=selected?`第 ${index+1} / ${links.length} 步 · 查看预置记录`:"八步看一条调查怎样推进";
+  $("[data-demo-question]",bar).textContent=selected?.dataset.demoQuestion||"从提出问题到有依据地讲清工作";
+  $("[data-demo-note]",bar).textContent=selected?.dataset.demoNote||"点击开始，依次看问题、工作、对照、自测、综合、修正、表达和迁移。导航只打开已有记录，不开始新的研究。";
   $('[data-demo-direction="-1"]',bar).disabled=index<=0;
   $('[data-demo-direction="1"]',bar).textContent=index<0?"开始导览 ↗":index===links.length-1?"再看第一步 ↗":"下一步 →";
 }

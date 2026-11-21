@@ -38,7 +38,7 @@ def test_demo_walkthrough_ignores_user_configuration_and_keeps_provider_calls_at
         html = client.get("/").text
         assert 'name="wo-demo"' in html and "预置脚本演示" in html
         assert "不代表真实模型研究效果" in html and "synthetic-do-not-load" not in html
-        assert html.count('data-demo-step="') == 6
+        assert html.count('data-demo-step="') == 8
         assert 'data-demo-tourbar aria-label="演示导览"' in html
         assert 'data-demo-direction="-1"' in html and 'data-demo-direction="1"' in html
         assert "共用工具并不等于承担相同工作" in html
@@ -46,10 +46,47 @@ def test_demo_walkthrough_ignores_user_configuration_and_keeps_provider_calls_at
         auth = {"X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', html)[1]}
         main = app.links["main"]
         data = client.get(f"/api/career/{main}").json()
-        assert len(client.get("/api/career").json()) == 2
+        assert len(client.get("/api/career").json()) == 3
         assert len(data["requirements"]) == 7
         assert len(data["pitches"]) == 1
         assert data["tasks"][0]["state"] == "done"
+        task = data["tasks"][0]
+        assert len(task["comparison_rows"]) == 2
+        assert all("write=2" in row["observed"] and "虚构预置" in row["observed"]
+                   for row in task["comparison_rows"])
+        assert all(row["input"] and row["expected"] for row in task["comparison_rows"])
+        story = next(row for row in data["stories"] if row["id"] == app.links["story"])
+        assert story["source_task_id"] == task["id"]
+        archived_story = client.get("/api/public-documents/" + story["document_id"]).json()
+        assert "由个人练习整理" in archived_story["text"]
+        start = client.get("/api/career/" + app.links["start_goal"]).json()
+        assert start["profile"] is None and not start["jobs"] and not start["results"]
+        assert start["focus_question_id"] == app.links["start_question"]
+        assert start["questions"][0]["material_ids"] == [start["materials"][0]["id"]]
+        prepared_start = client.post(
+            f"/api/career/{start['id']}/prepare", headers=auth,
+            json={"kind": "plan", "question_id": start["focus_question_id"]},
+        )
+        assert prepared_start.status_code == 201, prepared_start.text
+        client.post(f"/api/projects/{start['id']}/run", headers=auth,
+                    json={"step_id": prepared_start.json()["step_id"]})
+        for _ in range(200):
+            starting = client.get(f"/api/career/{start['id']}").json()
+            if not starting["running"] and starting["results"][0]["result"]:
+                break
+            time.sleep(0.01)
+        start_result = starting["results"][0]["result"]
+        assert start_result["status"] == "completed", start_result.get("stop_reason")
+        assert start_result["application_plan"]["purpose"] == "understanding_check"
+        cases = start_result["application_plan"]["actions"][0]["comparison_rows"]
+        assert len(cases) == 2 and "差异为10" in cases[1]["expected"]
+        assert "谁决定验收仍未知" in cases[1]["expected"]
+        synthesis = next(row for row in data["results"] if row["step_id"] == app.links["synthesis"])
+        assert synthesis["result"]["status"] == "completed"
+        assert synthesis["insight_ids"] == [app.links[key]
+                                            for key in ("old_insight", "insight", "work_insight")]
+        inputs = synthesis["result"]["career_learning_context"]["selected_notes"]
+        assert len(inputs) == 3 and not inputs[0]["use_for_research"]
         assert data["insights"][0]["use_for_research"] is False
         assert data["insights"][1]["use_for_research"] is True
         inquiry = next(row for row in data["questions"] if row["id"] == app.links["question"])
@@ -63,7 +100,7 @@ def test_demo_walkthrough_ignores_user_configuration_and_keeps_provider_calls_at
             "requires",
             "produces",
         }
-        old_id, revised_id = (row["id"] for row in data["insights"])
+        old_id, revised_id = app.links["old_insight"], app.links["insight"]
         recalled = [
             note["id"]
             for row in data["results"]
