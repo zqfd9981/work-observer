@@ -156,6 +156,14 @@ class QuestionPassageInput(QuestionPassageNoteInput):
     passage: SourcePassageInput
 
 
+class CapturePassageInput(QuestionPassageInput):
+    goal_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    goal_title: str = Field(default="", max_length=150)
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    question: str = Field(default="", max_length=1500)
+    include_source: bool = True
+
+
 class ConversationNoteInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     asked_question: str = Field(min_length=1, max_length=1500)
@@ -358,6 +366,10 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         result = await run_in_threadpool(service().search, identity, **query.model_dump())
         return response(result)
 
+    async def capture_passage(request):
+        data = CapturePassageInput.model_validate(await read_json(request))
+        return change(lambda: service().capture_passage(**data.model_dump()), 201)
+
     async def update_goal(request):
         task = tasks.get("project:" + request.path_params["id"])
         if task and not task.done():
@@ -558,6 +570,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", listing),
         Route("/api/career/review", review),
         Route("/api/career/search", search),
+        Route("/api/career/capture-passage", capture_passage, methods=["POST"]),
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
         Route("/api/career/{id}/focus", focus, methods=["PATCH"]),

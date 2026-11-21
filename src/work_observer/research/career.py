@@ -1367,6 +1367,68 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def capture_passage(
+        self, *, passage, goal_id=None, goal_title="", question_id=None, question="",
+        include_source=True, relation="unclassified", user_note="", target_view="",
+    ):
+        """Save a reader selection into a chosen inquiry, without starting research."""
+        source = self._source_passage(passage)
+        if not question_id and not question.strip():
+            raise ValueError("请写下这段原文引出的调查问题。")
+        if question_id and not goal_id:
+            raise ValueError("请先选择已有问题所在的调查目标。")
+        project = self._project(goal_id) if goal_id else None
+        if question_id and not any(q["id"] == question_id
+                                   for q in project["career"].get("questions", [])):
+            raise ValueError("请选择这个目标中的调查问题。")
+        public_id, job_id = source.get("public_document_id"), source.get("job_id")
+        add_public = include_source and public_id and (
+            project is None or public_id not in project.get("public_document_ids", [])
+        )
+        add_job = include_source and job_id and (
+            project is None or job_id not in project["job_ids"]
+        )
+        if project and (add_public or add_job):
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("这个目标正在研究；可以暂时只保存摘录，或稍后再把原资料加入。")
+            if add_job and len(project["job_ids"]) >= 6:
+                raise ValueError("这个目标已有6个岗位；可以只保存摘录，或先调整目标岗位。")
+        created = project is None
+        if created:
+            saved = self.create(
+                title=goal_title.strip() or question.strip()[:150],
+                goal="沿着原文调查，逐步核实工作及适用条件。",
+                background="", constraints="", job_ids=[job_id] if add_job else [],
+            )
+            goal_id = saved["id"]
+            project = self._project(goal_id)
+        elif add_job:
+            project = self.projects.revise(
+                goal_id, revision=project["revision"], goal=project["goal"],
+                job_ids=[*project["job_ids"], job_id],
+            )
+        if add_public:
+            self.attach_material(goal_id, document_id=public_id)
+        if question_id:
+            saved = self.save_question_passage(goal_id, question_id, {
+                "passage": passage, "relation": relation,
+                "user_note": user_note, "target_view": target_view,
+            })
+        else:
+            saved = self.save_question(goal_id, {
+                "question": question.strip(), "why_matters": user_note,
+                "next_evidence": "", "state": "open", "conclusion": "",
+                "hypothesis_a": "", "hypothesis_b": "", "source_passage": passage,
+                "source_step_id": None,
+                "conclusion_step_id": None, "parent_question_id": None,
+                "selected_job_ids": [job_id] if include_source and job_id else [],
+                "material_ids": [public_id] if include_source and public_id else [],
+            })
+            question_id = saved["questions"][-1]["id"]
+        if created:
+            saved = self.focus_question(goal_id, question_id)
+        return {**saved, "captured_question_id": question_id, "created_goal": created}
+
     def _source_passage(self, reference):
         public_id, document_id = reference.get("public_document_id"), reference.get("document_id")
         if bool(public_id) == bool(document_id):

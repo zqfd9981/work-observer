@@ -266,3 +266,6 @@
 
 .career-search-sections{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}.career-search-sections>button{width:auto;flex:0 0 auto}.career-global-library .career-library-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}.career-global-library .career-library-results>section{min-width:0;overflow-wrap:anywhere;scroll-margin-top:20px}
 @media(max-width:900px){.career-global-library .career-library-results{grid-template-columns:1fr}}
+
+#career-capture-content{padding:22px}.career-capture-origin{padding:18px;background:var(--green-soft);border-radius:10px;margin-bottom:22px}.career-capture-origin h3{margin:12px 0}.career-capture-origin blockquote{margin:12px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto;line-height:1.8}.career-capture-question{padding:16px;border:1px solid var(--line);border-radius:8px;margin:16px 0;white-space:pre-wrap}.career-capture-include{display:flex;align-items:start;gap:10px}.career-capture-include input{width:auto;flex:0 0 auto;margin-top:3px}#career-capture-passage .result-actions{flex-wrap:wrap}
+@media(max-width:650px){#career-capture-content{padding:18px}.career-capture-origin{padding:14px}}

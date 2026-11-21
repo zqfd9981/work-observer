@@ -36,3 +36,13 @@ const limited=vm.runInContext('renderSourceOutline({sections:sourceOutline(large
 assert.ok(limited.includes('205 项')&&limited.includes('目录仅列出前200项'));
 assert.equal((limited.match(/<option value="\d+"/g)||[]).length,200);
 console.log('Source outline: literal task lines, complete qualifications, distinct repeated headings, CRLF/Unicode positions, preserved citation marks, escaped text and bounded directory passed.');
+
+{
+ ctx.location.hash='#career/search?q=conditions';vm.runInContext('state.page="career"',ctx);
+ const global=vm.runInContext('renderSourceReader(text,"原文",{query:"条件"},{public_document_id:"raw"})',ctx);
+ assert.ok(global.includes('source-reader-question')&&global.includes('data-reader-section-question')&&!global.includes('data-reader-question-target'));
+ assert.ok(global.includes('下一步可选择调查目标'));
+ ctx.location.hash='#career/review';assert.ok(!vm.runInContext('renderSourceReader(text,"原文",null,{public_document_id:"raw"})',ctx).includes('source-reader-question'));
+ ctx.location.hash='#career/'+'a'.repeat(32);const goal=vm.runInContext('renderSourceReader(text,"原文",null,{public_document_id:"raw"})',ctx);assert.ok(goal.includes('data-reader-question-target'));
+ console.log('Reader selections can enter a chosen inquiry from global search while existing goal readers keep their direct question selection.');
+}

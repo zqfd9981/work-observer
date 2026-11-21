@@ -1,6 +1,6 @@
 "use strict";
 (()=>{
-  const career={id:null,data:null,tab:"requirements",jobs:new Map(),selected:new Map(),timer:null,busy:false,drafts:new Map(),searches:new Map(),libraryRequest:0,reading:null,review:{filters:{q:"",goal_id:"",state:"selected",unknown:false},data:null,request:0}};
+  const career={id:null,data:null,tab:"requirements",jobs:new Map(),selected:new Map(),timer:null,busy:false,drafts:new Map(),searches:new Map(),libraryRequest:0,reading:null,capture:null,review:{filters:{q:"",goal_id:"",state:"selected",unknown:false},data:null,request:0}};
   const labels={teachback:"理解自测",reflect:"根据练习结果调整下一步",role:"看清岗位",map:"探索工作地图",gaps:"对照经历与差距",plan:"设计工作样本实验",interview:"准备模拟面试",answer:"反馈我的回答",followup:"沿着回答继续追问",ask:"我的问题",challenge:"两种解释的证据对照",pitch:"整理项目讲述",evidence:"逐项核对我的证据"};
   const questionStates={open:"待研究",answered:"已记结论",parked:"暂不研究"};
   const taskStates={planned:"待开始",doing:"进行中",done:"已记录结果"};
@@ -838,8 +838,30 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     const question=data.questions.find(row=>row.id===draft.question_id);if(!question)return "";
     return `<form id="career-passage-editor" class="panel career-passage-editor"><h3>${draft.id?"修改这段原文的标注":"把新原文带回已有调查"}</h3><p><strong>调查问题：</strong>${e(question.question)}</p>${passageOrigin({source_passage:draft.passage},data,false,"核对本次收集的原文")}<label>这项标注具体针对哪句解释（可选）<textarea name="target_view" rows="3" maxlength="700" placeholder="填入要支持、挑战或补充条件的原句，也可以暂留空。">${e(draft.target_view||"")}</textarea></label>${question.hypothesis_a||question.hypothesis_b?`<div class="result-actions">${["a","b"].filter(side=>question["hypothesis_"+side]).map(side=>`<button type="button" class="text-button" data-career-passage-target="${side}">针对当前解释 ${side.toUpperCase()}</button>`).join("")}</div><p class="form-note">保存这句具体表述；以后修改解释时，旧标注仍指向原句。</p>`:""}<label>原文与这句解释可能有什么关系<select name="relation">${Object.entries(passageRelations).map(([value,label])=>`<option value="${value}" ${draft.relation===value?"selected":""}>${label}</option>`).join("")}</select></label><label>为什么值得带回这个问题<textarea name="user_note" rows="3" maxlength="1000" placeholder="写清它支持或挑战哪一点，也可以先只记录疑问。">${e(draft.user_note||"")}</textarea></label><p class="form-note">保存不调用模型，不自动采用标注或改写结论。原资料仍按当前目标的选择参与研究。</p><div class="result-actions"><button class="primary">${draft.id?"保存我的标注":"收进这个调查问题"}</button><button type="button" class="text-button" data-career-cancel-passage>取消整理</button></div></form>`;
   }
+  function capturePassagePanel(passage,goals){
+    return `<form id="career-capture-passage"><div class="career-capture-origin"><span class="quiet-tag">${e(passage.evidence_kind==="search_answer"||passage.evidence_kind==="search_excerpt"?"搜索线索，尚未核网页正文":"已保存的原文摘录")}</span><h3>${e(passage.title||"所选原文")}</h3><p class="form-note">原文位置 ${e(passage.start)}–${e(passage.end)}；会保留完整选段与出处。</p><blockquote>${e(passage.quote)}</blockquote></div><label>这段原文放到哪里<select name="goal_id"><option value="">新建一个调查目标</option>${goals.map(row=>`<option value="${e(row.id)}">${e(row.title)}</option>`).join("")}</select></label><label data-capture-new-goal>新目标名称（可留空，用问题命名）<input name="goal_title" maxlength="150"></label><label data-capture-existing-goal hidden>带回哪个问题<select name="question_id"><option value="">提出一个新问题</option></select></label><div data-capture-existing-question hidden class="career-capture-question"></div><label data-capture-new-question>这段原文引出了什么问题<textarea name="question" required maxlength="1500" rows="4">这段资料说明了什么，又有哪些适用条件和未说明的部分？</textarea></label><div data-capture-relation hidden><label>具体针对哪句解释（可选）<textarea name="target_view" maxlength="700" rows="2"></textarea></label><label>原文与这句解释可能有什么关系<select name="relation">${Object.entries(passageRelations).map(([key,label])=>`<option value="${key}">${e(label)}</option>`).join("")}</select></label></div><label>为什么值得带回（可选）<textarea name="user_note" maxlength="1000" rows="3" placeholder="记录疑问、反例或需要核对的适用条件。"></textarea></label><label class="career-capture-include"><input type="checkbox" name="include_source" checked> 把原资料用于这个目标的后续研究</label><p class="form-note">岗位JD会把对应岗位加入目标；其他原文会加入资料书架。取消此项只收集摘录，不会移除目标中已有的资料。</p><p data-capture-status class="form-note" role="status">保存不调用模型；摘录与自己的标注仍需回查上下文。</p><div class="result-actions"><button class="primary" data-capture-submit>创建目标并保存问题</button><button type="button" class="text-button" data-close="career-capture-dialog">取消</button></div></form>`;
+  }
+  async function openPassageCapture(passage){
+    const dialog=$("#career-capture-dialog");if(dialog.open){notify("先保存或取消正在整理的摘录，再带入另一段原文。");return;}
+    const capture={passage,goal:null};career.capture=capture;$("#career-capture-content").innerHTML='<p class="form-note">正在读取调查目标…</p>';dialog.showModal();
+    try{const goals=await api("career");if(career.capture===capture&&dialog.open)$("#career-capture-content").innerHTML=capturePassagePanel(passage,goals);}catch(error){if(career.capture===capture&&dialog.open)$("#career-capture-content").innerHTML=errorBox(error);}
+  }
+  function updateCaptureQuestion(){
+    const form=$("#career-capture-passage");if(!form)return;const question=career.capture?.goal?.questions.find(row=>row.id===form.elements.question_id.value),existing=Boolean(question);
+    $("[data-capture-new-question]",form).hidden=existing;form.elements.question.required=!existing;$("[data-capture-relation]",form).hidden=!existing;const preview=$("[data-capture-existing-question]",form);preview.hidden=!existing;preview.innerHTML=question?`<strong>带回已有问题</strong><p>${e(question.question)}</p>${question.conclusion?`<details><summary>查看原有结论</summary><p>${e(question.conclusion)}</p></details>`:""}<p class="form-note">本次会添加一段摘录与标注，保留这个问题原有的状态和结论。</p>`:"";$("[data-capture-submit]",form).textContent=existing?"收进这个调查问题":form.elements.goal_id.value?"保存新问题与摘录":"创建目标并保存问题";
+  }
+  async function updateCaptureGoal(){
+    const form=$("#career-capture-passage"),capture=career.capture;if(!capture||!form)return;const id=form.elements.goal_id.value,questionChoice=form.elements.question_id,status=$("[data-capture-status]",form),submit=$("[data-capture-submit]",form);
+    capture.goal=null;questionChoice.innerHTML='<option value="">提出一个新问题</option>';$("[data-capture-new-goal]",form).hidden=Boolean(id);$("[data-capture-existing-goal]",form).hidden=!id;updateCaptureQuestion();questionChoice.disabled=Boolean(id);submit.disabled=Boolean(id);status.textContent=id?"正在读取这个目标的调查问题…":"保存不调用模型；摘录与自己的标注仍需回查上下文。";if(!id)return;
+    try{const data=await api("career/"+encodeURIComponent(id));if(career.capture!==capture||form.elements.goal_id.value!==id)return;capture.goal=data;questionChoice.innerHTML='<option value="">提出一个新问题</option>'+data.questions.map(row=>`<option value="${e(row.id)}">${e(row.question)}</option>`).join("");questionChoice.disabled=false;submit.disabled=false;status.textContent="选择已有问题时只添加摘录与标注；也可以提出新问题。保存不调用模型。";}catch(error){if(career.capture===capture&&form.elements.goal_id.value===id)status.textContent=error.message;}
+  }
+  async function savePassageCapture(form){
+    const capture=career.capture;if(!capture)throw new Error("请重新选择要整理的原文。");const values=Object.fromEntries(new FormData(form));values.goal_id=values.goal_id||null;values.question_id=values.question_id||null;values.include_source=form.elements.include_source.checked;values.passage=passageReference(capture.passage);
+    try{const saved=await api("career/capture-passage",{method:"POST",body:JSON.stringify(values)});for(const id of ["career-capture-dialog","source-dialog","detail-dialog"]){const dialog=$("#"+id);if(dialog?.open)dialog.close();}location.hash="career/"+saved.id+"/question/"+saved.captured_question_id;notify("原文摘录与问题已保存，可以先核对上下文，再决定是否开始研究。");}catch(error){$("[data-capture-status]",form).textContent=error.message;throw error;}
+  }
   window.careerPassageTargets=()=>career.data?.questions||[];
   window.addEventListener("work-observer:passage-question",event=>{
+    if(/^#career\/search(?:\?|$)/.test(location.hash)){openPassageCapture(event.detail).catch(error=>notify(error.message,true));return;}
     if(!career.id||location.hash.split("/")[0]!=="#career"||!career.data)return;
     if(storyDraft().passage_editor||!event.detail.target_question_id&&storyDraft().question_editor){notify("已有未保存的整理内容，请先保存或取消；原文仍留在阅读器中。");return;}
     captureDrafts();const passage=event.detail;career.tab="requirements";
@@ -1602,6 +1624,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     catch(error){notify(error.message,true);}finally{submit.disabled=false;}
   });
   $("#source-dialog").addEventListener("close",captureMaterialReading);
+  $("#career-capture-dialog").addEventListener("close",()=>{career.capture=null;});
   document.addEventListener("input",event=>{
     const storyForm=event.target.closest?.("#career-story");if(storyForm)updateStoryLength(storyForm);
     if(event.target.matches?.("[data-material-batch-field],[data-material-batch-include]")){syncMaterialBatch();return;}
@@ -1612,6 +1635,8 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     const form=event.target.closest("form"),length=event.target.value.length;form.querySelector("[data-conclusion-length]").textContent=length+" / 2000 字"+(length>2000?" · 请精简后保存；原答复仍可回看。":"");form.querySelector("button.primary").disabled=length>2000;
   });
   document.addEventListener("change",event=>{
+    if(event.target.matches?.("#career-capture-passage [name=goal_id]"))updateCaptureGoal().catch(error=>notify(error.message,true));
+    if(event.target.matches?.("#career-capture-passage [name=question_id]"))updateCaptureQuestion();
     if(event.target.matches?.("[data-career-result-view]")){captureDrafts();storyDraft().result_view=event.target.value;renderDetail();$(".career-result-area").scrollIntoView({block:"start",behavior:"smooth"});return;}
     if(event.target.matches?.("[data-career-reading-side]")){if(career.reading){captureMaterialReading();career.reading=materialReadingPair(career.reading,event.target.dataset.careerReadingSide,event.target.value);renderMaterialReading();}return;}
 
@@ -1807,10 +1832,11 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     }catch(error){target.disabled=false;notify(error.message,true);}
   });
   document.addEventListener("submit",async event=>{
-    const form=event.target;if(!["career-home-search","career-global-search-form","career-review-form","career-note-synthesis","career-synthesis","career-conversation-note","career-job-observation","career-passage-editor","career-story","career-interview-answer","career-resume-form","career-insight","career-manual-experiment","career-settings","career-inquiry","career-library-form","career-challenge","career-material-form","career-material-revision-form","career-material-batch","career-material-comparison","career-pitch-form","career-question-editor","career-proof-editor"].includes(form.id)&&!form.dataset.careerTaskForm)return;
+    const form=event.target;if(!["career-capture-passage","career-home-search","career-global-search-form","career-review-form","career-note-synthesis","career-synthesis","career-conversation-note","career-job-observation","career-passage-editor","career-story","career-interview-answer","career-resume-form","career-insight","career-manual-experiment","career-settings","career-inquiry","career-library-form","career-challenge","career-material-form","career-material-revision-form","career-material-batch","career-material-comparison","career-pitch-form","career-question-editor","career-proof-editor"].includes(form.id)&&!form.dataset.careerTaskForm)return;
     event.preventDefault();const submit=event.submitter||form.querySelector("button");submit.disabled=true;captureDrafts();
     try{
-      if(["career-home-search","career-global-search-form"].includes(form.id)){location.hash=careerSearchLink(Object.fromEntries(new FormData(form)));}
+      if(form.id==="career-capture-passage")await savePassageCapture(form);
+      else if(["career-home-search","career-global-search-form"].includes(form.id)){location.hash=careerSearchLink(Object.fromEntries(new FormData(form)));}
       else if(form.id==="career-review-form"){const values=Object.fromEntries(new FormData(form));career.review.filters={q:values.q.trim(),goal_id:values.goal_id,state:values.state,unknown:Boolean(values.unknown)};await loadNoteReview();}
       else if(form.id==="career-note-synthesis"){const draft=storyDraft(),group=draft.note_synthesis;career.tab="experiments";draft.inquiries={...draft.inquiries,experiments:insightGroupDraft(career.data,group.ids,group.question)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"start",behavior:"smooth"});notify("综合提问已准备，可编辑后开始研究。");}
       else if(form.id==="career-synthesis"){
