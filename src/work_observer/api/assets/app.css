@@ -220,3 +220,5 @@
 
 .career-focus-overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}.career-focus-overview>.career-inquiry-next{margin-top:0;min-width:0}.career-focus-overview:has(>details[open]){grid-template-columns:minmax(0,1fr)}
 @media(max-width:600px){.career-focus-overview{grid-template-columns:minmax(0,1fr)}}
+
+.career-experiment-recall article{padding:12px 0;border-top:1px solid #dbe5d4}.career-experiment-recall article p{white-space:pre-wrap;overflow-wrap:anywhere}

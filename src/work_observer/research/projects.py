@@ -1881,6 +1881,10 @@ class ProjectService:
                 ],
                 "omitted_stories": max(0, len(stories) - 3),
                 "omitted_experiments": max(0, len(observations) - 3),
+                "experiment_history_notice": (
+                    "开头只展示部分实验。可用search_experiments查找本目标较早的设计与观察，"
+                    "再read_experiments读取完整记录；前后条件可能不同，记录不是独立验证。"
+                ),
             }
             current_entry = next(
                 (row for row in career["runs"] if row["step_id"] == step["id"]), {},

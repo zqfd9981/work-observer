@@ -54,7 +54,7 @@ def learning_inquiry_links(career, note):
 
 
 class LearningNotebook:
-    """Read current personal notes; only an explicitly focused family opens shelved history."""
+    """Read this goal's personal notes and saved experiment records."""
 
     def __init__(self, project_reader, store, selected_note_id=None, counter_note_id=None):
         self.project_reader = project_reader
@@ -122,6 +122,91 @@ class LearningNotebook:
             "note": learning_record(row, project, self.store),
             "notice": "这是本次读取时保存的用户理解，不是已核实的事实或本轮原文证据。"
             "旧引用只供定位，形成判断仍须读取当前可用原文；不改变记录或选用状态。",
+        }
+
+    def search_experiments(self, terms, offset=0, question_id=""):
+        if terms != []:
+            terms = validated_terms(terms)
+        if type(offset) is not int or offset < 0:
+            raise ProbeError("INVALID_EXPERIMENT_OFFSET")
+        project = self.project_reader()
+        career = project.get("career", {})
+        if question_id and not any(row["id"] == question_id
+                                   for row in career.get("questions", [])):
+            raise ProbeError("EXPERIMENT_INQUIRY_NOT_AVAILABLE")
+        ranked = []
+        for row in career.get("tasks", []):
+            if question_id and row.get("question_id") != question_id:
+                continue
+            text = match_text("\n".join(row.get(key, "") for key in (
+                "title", "task_or_ability", "deliverable", "completion_check",
+                "hypothesis", "outcome", "design_change", "artifact",
+            )))
+            hits = [term for term in terms if match_text(term) in text]
+            if hits or not terms:
+                ranked.append((len(hits), row.get("updated_at") or row["created_at"],
+                               row["id"], row, hits))
+        ranked.sort(key=lambda row: row[:3], reverse=True)
+        page = ranked[offset:offset + 6]
+        return {
+            "experiments": [{
+                "id": row["id"], "title": row["title"],
+                "question_id": row.get("question_id"), "state": row["state"],
+                "has_reported_observation": bool(row.get("outcome", "").strip()),
+                "observation_preview": row.get("outcome", "")[:180],
+                "preview_is_partial": len(row.get("outcome", "")) > 180,
+                "previous_task_id": row.get("previous_task_id"),
+                "created_at": row["created_at"],
+                "recorded_at": row.get("updated_at") or row["created_at"],
+                "matched_terms": hits,
+            } for *_, row, hits in page],
+            "matching_count": len(ranked), "offset": offset,
+            "next_offset": offset + len(page) if offset + len(page) < len(ranked) else None,
+            "notice": "本目标的用户实验记录目录，不是验证结果。"
+            "预期与计划不等于实际观察；用read_experiments读取完整设计、观察和产物定位。",
+        }
+
+    def read_experiments(self, experiment_ids):
+        if (not isinstance(experiment_ids, list) or not 1 <= len(experiment_ids) <= 6
+                or any(not isinstance(key, str) for key in experiment_ids)
+                or len(set(experiment_ids)) != len(experiment_ids)):
+            raise ProbeError("INVALID_EXPERIMENT_SELECTION")
+        career = self.project_reader().get("career", {})
+        tasks = {row["id"]: row for row in career.get("tasks", [])}
+        if not set(experiment_ids) <= tasks.keys():
+            raise ProbeError("EXPERIMENT_NOT_AVAILABLE")
+        questions = {row["id"]: row for row in career.get("questions", [])}
+        records = []
+        for key in experiment_ids:
+            row = tasks[key]
+            inquiry = questions.get(row.get("question_id"), {})
+            records.append({
+                "id": key, "title": row["title"], "question_id": row.get("question_id"),
+                "inquiry_question": inquiry.get("question"),
+                "task_or_ability": row["task_or_ability"],
+                "planned_deliverable": row["deliverable"],
+                "proposed_check": row["completion_check"], "state": row["state"],
+                "prior_expectation": row.get("hypothesis", ""),
+                "reported_observation": row.get("outcome", ""),
+                "design_change": row.get("design_change", ""),
+                "previous_task_id": row.get("previous_task_id"),
+                "source_step_id": row.get("source_step_id"),
+                "target_requirement": row.get("target_requirement"),
+                "origin": row.get("origin", "research"),
+                "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
+                "artifact": row.get("artifact", ""),
+                "artifact_document": {
+                    "document_id": row["artifact_document_id"],
+                    "title": row.get("artifact_title") or row["title"],
+                } if row.get("artifact_document_id") else None,
+                "recorded_at": row.get("updated_at") or row["created_at"],
+                "created_at": row["created_at"],
+            })
+        return {
+            "experiments": records,
+            "notice": "用户保存的完整实验设计与观察，不是独立运行或能力认证。"
+            "即使state为done，也可能记录失败。产物定位不表示已经读取原文；"
+            "须按本轮可用document_id读取日志并保留条件、反例与未知。",
         }
 
 
