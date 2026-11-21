@@ -242,6 +242,28 @@ function sourceContextButton(source, label="核对引用与前后文 ↗", query
 function sourceFocus(element) {
   try{return JSON.parse(element.dataset.readerFocus||"null");}catch{return null;}
 }
+function sourceOutline(text){
+  const sections=[],parents=[];let position=0;
+  for(const match of String(text).matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g)){
+    const raw=match[0];if(!raw)break;
+    const line=raw.replace(/[\r\n]+$/, ""),label=line.trim(),markdown=/^(#{1,6})\s+\S/.exec(label);
+    const major=/^(?:岗位职责|岗位要求|任职要求|任职资格|职位描述|工作内容|业务背景|加分项|优先加分项|优先条件)[：:]?$/.test(label);
+    const numbered=/^(?:\d{1,2}[.．、)）]|[一二三四五六七八九十]{1,3}[、.．])\s*\S/.test(label);
+    const level=markdown?markdown[1].length:major?1:numbered?2:0;
+    if(level&&Array.from(label).length<=100){
+      while(parents.length&&parents.at(-1).level>=level)parents.pop().end=position;
+      const section={label,level,start:position,heading_end:position+Array.from(line).length,end:null};
+      sections.push(section);parents.push(section);
+    }
+    position+=Array.from(raw).length;
+  }
+  for(const section of parents)section.end=position;
+  return sections;
+}
+function renderSourceOutline(reader,canInvestigate){
+  const sections=reader.sections;if(!sections.length)return "";
+  return `<details class="source-reader-outline"><summary>按原文段落定位 · ${sections.length} 项</summary><p class="form-note">按标题和短编号行定位；每一项保留它在原文中的位置。</p><div class="source-reader-outline-controls"><label>选择要看的部分<select data-reader-section><option value="">选择原文位置</option>${sections.slice(0,200).map((row,index)=>`<option value="${index}">${e("　".repeat(Math.min(row.level-1,3))+row.label)}</option>`).join("")}</select></label>${canInvestigate?'<button type="button" class="secondary small" data-reader-section-question disabled>围绕这一节提问 ↗</button>':""}</div>${sections.length>200?'<p class="form-note">目录仅列出前200项，后文仍可直接阅读或查找。</p>':""}</details>`;
+}
 function renderSourceReader(text, title, focus=null, source=null) {
   text=String(text||"");const chars=Array.from(text),id="source-reader-"+(++sourceReaderSerial);
   let citation=null,notice="";
@@ -256,11 +278,19 @@ function renderSourceReader(text, title, focus=null, source=null) {
     }
   }
   const offsets=new Map();let utf16=0;chars.forEach((char,index)=>{offsets.set(utf16,index);utf16+=char.length;});offsets.set(text.length,chars.length);
-  const reader={id,text,chars,offsets,citation,notice,matches:[],index:0,source};sourceReaders.set(id,reader);
+  const reader={id,text,chars,offsets,citation,notice,matches:[],index:0,source,sections:sourceOutline(text)};sourceReaders.set(id,reader);
   const query=String(focus?.query||"");searchSourceReader(reader,query);if(citation){const near=reader.matches.findIndex(match=>match.start>=citation.start&&match.end<=citation.end);if(near>=0)reader.index=near;}
-  return `<section class="detail-section source-reader" data-source-reader="${id}"><h3>${e(title)}</h3>${notice?`<p class="form-note source-reader-notice">${e(notice)}</p>`:""}<div class="source-reader-toolbar"><label>在这份原文里查找<input type="search" data-reader-query value="${e(query)}" maxlength="200" placeholder="输入字词，如：加分、验收、并发"></label><div class="result-actions"><button type="button" class="secondary small" data-reader-move="-1" ${reader.matches.length?"":"disabled"}>上一处</button><button type="button" class="secondary small" data-reader-move="1" ${reader.matches.length?"":"disabled"}>下一处</button>${citation?'<button type="button" class="text-button" data-reader-citation>回到本次引用</button>':""}</div><p class="form-note" data-reader-status role="status">${reader.matches.length?`${reader.index+1} / ${reader.matches.length} 处匹配`:"查找只在本机保存的全文中进行。"}</p></div><div class="body-text source-reader-text" tabindex="0" aria-label="可滚动的原文正文">${sourceReaderText(reader)}</div>${source&&state.page==="career"&&/^#career\/[a-f0-9]{32}(?:\/|$)/.test(location.hash)?`<section class="source-reader-question"><p class="form-note">选取1至2000字原文，留下值得继续调查的问题；也可从当前引用或查找位置开始。</p><label>这段原文用于<select data-reader-question-target><option value="">提出一个新的调查问题</option>${(window.careerPassageTargets?.()||[]).map(row=>`<option value="${e(row.id)}">带回：${e(row.question.slice(0,120))}${row.question.length>120?"…":""}</option>`).join("")}</select></label><blockquote data-reader-selection hidden></blockquote><p class="form-note" data-reader-selection-status role="status"></p><button type="button" class="secondary small" data-reader-question ${citation||reader.matches.length?"":"disabled"}>${citation?"从这段引用留下调查问题":reader.matches.length?"从当前查找位置留下调查问题":"先选取一段原文"}</button></section>`:""}</section>`;
+  return `<section class="detail-section source-reader" data-source-reader="${id}"><h3>${e(title)}</h3>${notice?`<p class="form-note source-reader-notice">${e(notice)}</p>`:""}${renderSourceOutline(reader,source&&state.page==="career"&&/^#career\/[a-f0-9]{32}(?:\/|$)/.test(location.hash))}<div class="source-reader-toolbar"><label>在这份原文里查找<input type="search" data-reader-query value="${e(query)}" maxlength="200" placeholder="输入字词，如：加分、验收、并发"></label><div class="result-actions"><button type="button" class="secondary small" data-reader-move="-1" ${reader.matches.length?"":"disabled"}>上一处</button><button type="button" class="secondary small" data-reader-move="1" ${reader.matches.length?"":"disabled"}>下一处</button>${citation?'<button type="button" class="text-button" data-reader-citation>回到本次引用</button>':""}</div><p class="form-note" data-reader-status role="status">${reader.matches.length?`${reader.index+1} / ${reader.matches.length} 处匹配`:"查找只在本机保存的全文中进行。"}</p></div><div class="body-text source-reader-text" tabindex="0" aria-label="可滚动的原文正文">${sourceReaderText(reader)}</div>${source&&state.page==="career"&&/^#career\/[a-f0-9]{32}(?:\/|$)/.test(location.hash)?`<section class="source-reader-question"><p class="form-note">选取1至2000字原文，留下值得继续调查的问题；也可从当前引用或查找位置开始。</p><label>这段原文用于<select data-reader-question-target><option value="">提出一个新的调查问题</option>${(window.careerPassageTargets?.()||[]).map(row=>`<option value="${e(row.id)}">带回：${e(row.question.slice(0,120))}${row.question.length>120?"…":""}</option>`).join("")}</select></label><blockquote data-reader-selection hidden></blockquote><p class="form-note" data-reader-selection-status role="status"></p><button type="button" class="secondary small" data-reader-question ${citation||reader.matches.length?"":"disabled"}>${citation?"从这段引用留下调查问题":reader.matches.length?"从当前查找位置留下调查问题":"先选取一段原文"}</button></section>`:""}</section>`;
 }
 document.addEventListener("change",event=>{
+  if(event.target.matches?.("[data-reader-section]")){
+    const root=event.target.closest("[data-source-reader]"),reader=sourceReaders.get(root.dataset.sourceReader);if(!reader)return;
+    const section=event.target.value===""?null:reader.sections[Number(event.target.value)];
+    reader.section=section?{start:section.start,end:section.heading_end}:null;
+    reader.selected=section?{start:section.start,end:section.end}:null;
+    $(".source-reader-text",root).innerHTML=sourceReaderText(reader);updatePassageQuestion(root,reader);
+    if(section)scrollSourceReader(root,"[data-reader-section-anchor]");return;
+  }
   if(!event.target.matches?.("[data-reader-question-target]"))return;
   const root=event.target.closest("[data-source-reader]"),reader=sourceReaders.get(root.dataset.sourceReader);if(reader)updatePassageQuestion(root,reader);
 });
@@ -273,6 +303,7 @@ function updatePassageQuestion(root,reader){
   const button=$("[data-reader-question]",root);if(!button)return;
   const passage=reader.selected||reader.citation||reader.matches[reader.index],length=passage?passage.end-passage.start:0;
   button.disabled=!length||length>2000;button.textContent=$("[data-reader-question-target]",root)?.value?"把这段原文带回所选问题":reader.selected?"把选中原文变成调查问题":reader.citation?"从这段引用留下调查问题":length?"从当前查找位置留下调查问题":"先选取一段原文";
+  const sectionButton=$("[data-reader-section-question]",root);if(sectionButton){sectionButton.disabled=!reader.section||button.disabled;sectionButton.textContent=$("[data-reader-question-target]",root)?.value?"把这一节带回所选问题 ↗":"围绕这一节提出新问题 ↗";}
   const preview=$("[data-reader-selection]",root);preview.hidden=!reader.selected;preview.textContent=reader.selected?reader.chars.slice(passage.start,passage.end).join(""):"";
   $("[data-reader-selection-status]",root).textContent=reader.selected?`已选 ${length} 字${length>2000?"，请缩小至2000字以内，保留关键条件。":"；位置与原文会一起保留，保存不调用模型。"}`:"";
 }
@@ -284,15 +315,16 @@ document.addEventListener("selectionchange",()=>{
   if(body.textContent!==reader.text.replace(/\r\n?/g,"\n"))return;
   const before=range.cloneRange();before.selectNodeContents(body);before.setEnd(range.startContainer,range.startOffset);
   const start=Array.from(before.toString()).length,end=start+Array.from(range.toString()).length;
+  reader.section=null;const sectionChoice=$("[data-reader-section]",root);if(sectionChoice)sectionChoice.value="";
   reader.selected=sourceSelectionOffsets(reader.text,start,end);updatePassageQuestion(root,reader);
 });
 function sourceReaderText(reader) {
-  const current=reader.matches[reader.index],citation=reader.citation;
-  const boundaries=[...new Set([0,reader.chars.length,...[current,citation].filter(Boolean).flatMap(row=>[row.start,row.end])])].sort((a,b)=>a-b);
+  const current=reader.matches[reader.index],citation=reader.citation,section=reader.section;
+  const boundaries=[...new Set([0,reader.chars.length,...[current,citation,section].filter(Boolean).flatMap(row=>[row.start,row.end])])].sort((a,b)=>a-b);
   return boundaries.slice(0,-1).map((start,index)=>{
-    const end=boundaries[index+1],hit=current&&start>=current.start&&end<=current.end,cited=citation&&start>=citation.start&&end<=citation.end;
+    const end=boundaries[index+1],hit=current&&start>=current.start&&end<=current.end,cited=citation&&start>=citation.start&&end<=citation.end,located=section&&start>=section.start&&end<=section.end;
     const value=e(reader.chars.slice(start,end).join(""));
-    return hit||cited?`<mark class="${[hit?"source-search-hit":"",cited?"source-citation-hit":""].filter(Boolean).join(" ")}" ${hit&&start===current.start?"data-reader-current":""} ${cited&&start===citation.start?"data-reader-anchor":""}>${value}</mark>`:value;
+    return hit||cited||located?`<mark class="${[hit?"source-search-hit":"",cited?"source-citation-hit":"",located?"source-section-hit":""].filter(Boolean).join(" ")}" ${hit&&start===current.start?"data-reader-current":""} ${cited&&start===citation.start?"data-reader-anchor":""} ${located&&start===section.start?"data-reader-section-anchor":""}>${value}</mark>`:value;
   }).join("");
 }
 function scrollSourceReader(root, selector) {
@@ -314,7 +346,7 @@ function searchSourceReader(reader,query){
   reader.matches=query?[...reader.text.matchAll(new RegExp(escaped,"giu"))].map(match=>({start:reader.offsets.get(match.index),end:reader.offsets.get(match.index+match[0].length)})):[];
 }
 function updateSourceReader(root,reader){
-  reader.selected=null;
+  reader.selected=null;reader.section=null;const sectionChoice=$("[data-reader-section]",root);if(sectionChoice)sectionChoice.value="";
   $(".source-reader-text",root).innerHTML=sourceReaderText(reader);
   $("[data-reader-status]",root).textContent=reader.matches.length?`${reader.index+1} / ${reader.matches.length} 处匹配`:$("[data-reader-query]",root).value?"这份原文中没有找到该字词。":"查找只在本机保存的全文中进行。";
   for(const button of $$("[data-reader-move]",root))button.disabled=!reader.matches.length;
@@ -322,13 +354,13 @@ function updateSourceReader(root,reader){
   updatePassageQuestion(root,reader);
 }
 document.addEventListener("click",event=>{
-  const button=event.target.closest("[data-reader-question],[data-reader-move],[data-reader-citation]");if(!button)return;
+  const button=event.target.closest("[data-reader-section-question],[data-reader-question],[data-reader-move],[data-reader-citation]");if(!button)return;
   const root=button.closest("[data-source-reader]"),reader=sourceReaders.get(root.dataset.sourceReader);if(!reader)return;
-  if(button.hasAttribute("data-reader-question")){
+  if(button.hasAttribute("data-reader-question")||button.hasAttribute("data-reader-section-question")){
     const passage=reader.selected||reader.citation||reader.matches[reader.index];if(!reader.source||!passage||passage.end-passage.start>2000)return;
     window.dispatchEvent(new CustomEvent("work-observer:passage-question",{detail:{...reader.source,...passage,target_question_id:$("[data-reader-question-target]",root)?.value||"",quote:reader.chars.slice(passage.start,passage.end).join("")}}));return;
   }
-  if(button.hasAttribute("data-reader-citation")){scrollSourceReader(root,"[data-reader-anchor]");return;}
+  if(button.hasAttribute("data-reader-citation")){updateSourceReader(root,reader);scrollSourceReader(root,"[data-reader-anchor]");return;}
   if(reader.matches.length){reader.index=(reader.index+Number(button.dataset.readerMove)+reader.matches.length)%reader.matches.length;updateSourceReader(root,reader);}
 });
 document.addEventListener("keydown",event=>{
