@@ -165,6 +165,7 @@ class PitchInput(BaseModel):
     text: str = Field(min_length=1, max_length=2500)
     story_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class TaskImport(BaseModel):

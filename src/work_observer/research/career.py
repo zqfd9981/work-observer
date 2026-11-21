@@ -1146,6 +1146,10 @@ class CareerService:
         with self.store.lock, self.store.db:
             project = self._project(identity)
             career = project["career"]
+            if data.get("question_id") and not any(
+                row["id"] == data["question_id"] for row in career.get("questions", [])
+            ):
+                raise ValueError("未找到这张讲述卡关联的调查问题，请选择当前目标中的问题。")
             if data.get("story_id") and not any(
                 row["id"] == data["story_id"] for row in career["stories"]
             ):
