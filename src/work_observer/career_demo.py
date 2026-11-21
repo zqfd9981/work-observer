@@ -39,6 +39,20 @@ JOBS = [
 ]
 
 
+DEMO_RETRY_QUESTION = "按请求编号去重，就能保证同一业务动作只处理一次吗？"
+DEMO_RETRY_HYPOTHESIS = "只要按请求编号去重，同一业务动作就不会重复执行。"
+DEMO_RETRY_CASES = [
+    {"name": "同一动作，重试更换请求编号", "requests": [
+        {"request_id": "请求1", "business_id": "业务A", "action": "确认"},
+        {"request_id": "请求2", "business_id": "业务A", "action": "确认"},
+    ]},
+    {"name": "同一业务，确认与取消两种动作", "requests": [
+        {"request_id": "请求1", "business_id": "业务A", "action": "确认"},
+        {"request_id": "请求2", "business_id": "业务A", "action": "取消"},
+    ]},
+]
+
+
 class DemoModel:
     """Finite local tool scripts. These responses are examples, not model evaluation."""
 
@@ -113,6 +127,12 @@ class DemoModel:
             return self.call(
                 history, "read_archived_document", {"document_id": pending[0], "start": 0}
             )
+        if action == "ask" and DEMO_RETRY_QUESTION in context["question"] and not any(
+            row.get("kind") == "local_sequential_simulation" for row in outputs
+        ):
+            return self.call(history, "run_retry_experiment", {
+                "hypothesis": DEMO_RETRY_HYPOTHESIS, "cases": DEMO_RETRY_CASES,
+            })
         starting_material = any(ev.get("title") == "虚构工作说明：请求记录核对" for ev in evidence)
         claims, relations, work_types = [], [], []
         for ev in evidence:
@@ -197,15 +217,10 @@ class DemoModel:
             text = "【预置示例】可用实际记录讨论检查方法；生产情境和效果仍需证据。"
             if action in {"ask", "reflect", "challenge"}:
                 text = "【预置示例】原文能帮助定位工作要求，但不能只靠工具词判断失败原因。"
-                if any(
-                    ev.get("public_document_id")
-                    and "正常" in ev["quote"]
-                    and ("write=2" in ev["quote"] or "两次写入" in ev["quote"])
-                    for ev in evidence
-                ):
+                if any("本机计算输出" in ev["quote"] for ev in evidence):
                     text = (
-                        "【预置示例】正常响应也有两次写入，挑战了只归因于重试的解释。"
-                        "并发尚未控制，具体原因仍未知。"
+                        "【预置脚本说明】这份记录展示了给定输入上的内存规则输出；"
+                        "实际业务协议、原子性、并发与故障恢复仍需另行核实。"
                     )
             if action in {"answer", "followup"} and career.get("understanding_check"):
                 text = (
@@ -223,7 +238,7 @@ class DemoModel:
             if career.get("selected_learning_notes"):
                 text = (
                     "【预置示例】工作分工与失败原因是不同维度。应用侧交付原型，平台侧交付执行器；"
-                    "局部重复写入记录只能挑战一种解释，不能据此合并责任。"
+                    "局部顺序模拟只能挑战一种规则解释，不能据此合并责任。"
                 )
             args["claims"] = [
                 {
@@ -234,7 +249,7 @@ class DemoModel:
                     "evidence_ids": refs,
                 }
             ]
-            args["gaps"] = ["还需控制哪些条件，才能区分并发、重复提交与重试的影响？"]
+            args["gaps"] = ["哪些业务操作可以合并，真实协议、原子性、并发与恢复还需怎样的验证？"]
             if action == "interview":
                 args["gaps"] = [
                     "请结合亲自做过的本地样例，说明怎么检查失败、留下了什么运行记录，哪些结果还不能确定？",
@@ -242,7 +257,7 @@ class DemoModel:
                 ]
             if action == "teachback":
                 args["gaps"] = [
-                    "为什么正常响应也出现重复写入，会挑战只归因于重试的解释？还有哪些原因未排除？",
+                    "重试更换请求编号时，为什么旧解释会失效？只按业务编号又会合并什么？",
                     "如果固定请求标识但改变并发条件，怎样设计一次可能推翻原解释的检查？",
                 ]
             if action == "followup":
@@ -252,26 +267,29 @@ class DemoModel:
                     "background_memory_id": context["application_background"]["memory_id"],
                     "actions": [
                         {
-                            "title": "比较正常响应与超时重试的写入记录",
-                            "task_or_ability": "失败处理与验证",
-                            "deliverable": "两组输入、输出、请求标识与差异说明",
-                            "completion_check": "若正常响应也写入两次，保留反例，不只归因于重试。",
-                            "hypothesis": "重复写入只会发生在超时重试时；这是准备检验的解释。",
+                            "title": "比较请求编号与业务动作的去重边界",
+                            "task_or_ability": "构造条件与反例，区分输入规则与真实业务协议",
+                            "deliverable": "完整输入、四种规则的执行与跳过位置、仍未知的条件",
+                            "completion_check": "改变请求编号或动作，观察结果；"
+                            "不把内存计算当成真实服务测试。",
+                            "hypothesis": DEMO_RETRY_HYPOTHESIS,
                             "evidence_ids": refs,
                             "assumptions": ["使用本地虚构输入，不接触生产系统。"],
-                            "comparison_conditions": "虚构情境使用同类请求字段和记录方式；"
-                            "请求去重规则与并发条件仍未控制。",
+                            "comparison_conditions": "各组独立、按输入顺序处理；"
+                            "分别改变请求编号或动作，不连接真实服务。",
                             "comparison_rows": [
-                                {"condition": "正常响应",
-                                 "input": "虚构请求A：正常返回并记录写入次数。",
-                                 "expected": "若只由超时重试引起重复，正常组预计只写入一次。"},
-                                {"condition": "超时重试",
-                                 "input": "虚构请求B：超时后重试并记录写入次数。",
-                                 "expected": "若只由超时重试引起重复，重试组可能写入两次。"},
+                                {"condition": "重试更换请求编号",
+                                 "input": "业务A执行确认，分别使用请求1和请求2。",
+                                 "expected": "旧解释预计只执行一次；"
+                                 "若换编号后仍执行两次，它的适用条件就不足。"},
+                                {"condition": "同一业务的不同动作",
+                                 "input": "业务A分别执行确认和取消，使用不同请求编号。",
+                                 "expected": "检查只按业务编号是否会合并不同动作，"
+                                 "保留实际执行和跳过位置。"},
                             ],
                         }
                     ],
-                    "open_questions": ["并发和请求去重仍待控制。"],
+                    "open_questions": ["真实业务键、原子性、并发与恢复仍需另证。"],
                 }
         if starting_material and action != "map":
             refs = [ev["id"] for ev in evidence]
@@ -364,7 +382,8 @@ async def populate(settings, model):
             constraints="只使用虚构资料和本地样例。",
             job_ids=jobs,
             resume_title="虚构简历",
-            resume_text="虚构人物小林。构造过超时样例与运行日志，未控制并发，没有生产效果数据。",
+            resume_text="虚构人物小林。预置情境是用本地顺序模拟探索请求编号与动作。"
+            "没有真实业务、并发或故障恢复测试，也没有生产效果数据。",
         )
         identity = book["id"]
 
@@ -386,15 +405,18 @@ async def populate(settings, model):
 
         await run("role")
         mapped = await run("map")
-        work_text = "虚构操作说明：超时后可重试，需记录输入、请求标识与写入次数；重复原因未说明。"
+        work_text = (
+            "虚构操作说明：需检查失败、重试与重复记录，记录请求编号和业务动作；"
+            "真实业务键、原子性、并发与恢复协议未说明。"
+        )
         book = career.add_material(identity, title="虚构操作说明", text=work_text)
         work_document = book["materials"][-1]["id"]
         question_values = {
-            "question": "超时重试足以解释重复写入吗？",
-            "why_matters": "避免用工具关键词替代因果检查。",
-            "next_evidence": "需要正常与超时两组输入输出，并控制并发。",
-            "hypothesis_a": "重复写入只会发生在超时重试时；仍需核实。",
-            "hypothesis_b": "正常响应下的重复提交或并发也可能有关，具体原因未知。",
+            "question": DEMO_RETRY_QUESTION,
+            "why_matters": "区分请求编号与业务操作，避免从工具名称推断保证。",
+            "next_evidence": "比较更换请求编号与改变动作的输入；真实协议和并发需要另行验证。",
+            "hypothesis_a": DEMO_RETRY_HYPOTHESIS,
+            "hypothesis_b": "请求编号不一定标识业务操作；只按业务编号也可能合并不同动作。",
             "state": "open",
             "conclusion": "",
             "source_step_id": None,
@@ -419,12 +441,15 @@ async def populate(settings, model):
                 "question_id": question["id"],
                 "previous_view": "只看到工具说明。",
                 "observation": "还没有做对照。",
-                "current_view": "重试应该能解释重复写入。",
-                "open_question": "正常响应会怎样？",
+                "current_view": DEMO_RETRY_HYPOTHESIS,
+                "open_question": "重试换了请求编号，或者同一业务执行不同动作，会怎样？",
             },
         )["insights"][-1]
         initial = await run("ask", question_id=question["id"], question=question["question"])
-        counter_text = "虚构排查说明：正常响应也应检查重复提交；并发相关原因仍需受控观察。"
+        counter_text = (
+            "虚构排查说明：请求编号不必等于业务操作标识；同一业务可能有不同动作。"
+            "去重规则需要结合实际业务协议，原子性、并发与恢复仍需另行验证。"
+        )
         book = career.add_material(identity, title="虚构排查说明", text=counter_text)
         counter_document = book["materials"][-1]["id"]
         career.save_question_passage(
@@ -437,35 +462,23 @@ async def populate(settings, model):
                     "end": len(counter_text),
                 },
                 "relation": "challenges",
-                "user_note": "可能挑战只归因于重试的解释；这仍是排查建议，不是实验结果。",
+                "user_note": "可能挑战请求编号足以去重的解释；这仍是排查建议，不是实验结果。",
             },
         )
-        plan = await run("challenge", question_id=question["id"])
-        book = career.import_tasks(identity, plan["step_id"])
-        task = book["tasks"][0]
-        book = career.update_task(
-            identity,
-            task["id"],
-            state="done",
-            hypothesis="重复写入只会发生在超时重试时。",
-            outcome="虚构观察：正常响应也有两次写入。并发条件未控制，原因仍不能确定。",
-            artifact="虚构示例中的本地记录",
-            artifact_title="虚构运行记录",
-            artifact_text="情境A：正常响应，write=2；情境B：超时重试，write=2。并发条件未控制，本记录未独立执行。",
-            comparison_conditions=task["comparison_conditions"],
-            comparison_rows=[
-                {**row, "observed": "【虚构预置观察】write=2。不是实际运行结果；并发仍未控制。"}
-                for row in task["comparison_rows"]
-            ],
+        await run("challenge", question_id=question["id"])
+        local = career.retry_experiment(
+            identity, cases=DEMO_RETRY_CASES, question_id=question["id"],
+            hypothesis=DEMO_RETRY_HYPOTHESIS, save=True,
         )
-        task = book["tasks"][0]
+        book = local["career"]
+        task = next(row for row in book["tasks"] if row["id"] == local["task_id"])
         story = career.add_story(identity, {
-            "title": "虚构练习：客服接口失败样例",
-            "situation": "用两组虚构记录检查只归因于超时重试的解释。",
-            "action": "预置情境分别列出正常响应和超时重试的输入、预期与写入次数。",
-            "result": "虚构记录中，两组均为write=2；正常组也重复，原解释不足。",
-            "limits": "这是预置个人练习示例，未独立执行；并发未控制，未在生产运行，"
-            "没有业务效果数据，不代表企业工作经历。",
+            "title": "预置讲述素材：本地重试与去重实验",
+            "situation": "用虚构输入探索请求编号与业务动作的区别。",
+            "action": "演示程序在本机按顺序计算两组输入、四种规则，保留执行与跳过位置。",
+            "result": "更换请求编号后，请求编号规则保留两次动作；只按业务编号又会合并不同动作。",
+            "limits": "人物与讲述为预置示例；本地计算确实执行，但只有虚构输入和内存规则。"
+            "未验证真实业务协议、原子性、并发或故障恢复，不代表企业经历或生产能力。",
             "requirement_key": "", "source_task_id": task["id"],
         })["stories"][0]
         reviewed = await run("reflect", task_id=task["id"])
@@ -474,8 +487,9 @@ async def populate(settings, model):
             {
                 "previous_view": old["current_view"],
                 "question_id": question["id"],
-                "observation": task.get("outcome") or "虚构对照中，正常响应也出现两次写入。",
-                "current_view": "原解释不足；还需要控制并发和请求去重，不能仅凭两次输出判断原因。",
+                "observation": task["outcome"],
+                "current_view": "原解释不足；请求编号变化会改变去重结果，只看业务编号也会合并动作。"
+                "这些只说明给定输入下的内存规则；真实业务协议、原子性、并发与恢复仍需另证。",
                 "open_question": "这套检查方法迁移到平台工作还需要什么条件？",
                 "task_id": task["id"],
                 "source_step_id": reviewed["step_id"],
@@ -515,8 +529,9 @@ async def populate(settings, model):
             "answer",
             source_step_id=interview["step_id"],
             answer=(
-                "虚构回答（理解自测）：正常响应也重复写入，只能挑战把重试当作唯一原因的解释。"
-                "还需要固定请求标识、控制并发；没有排除其他原因，也不证明生产有效。"
+                "虚构回答（预置理解自测）：换请求编号后，请求编号规则仍会执行两次同一动作；"
+                "只按业务编号又会把确认和取消混在一起。模拟只说明所给输入上的规则行为，"
+                "真实业务协议、原子性、并发与恢复没有验证，也不证明生产能力。"
             ),
         )
         await run("followup", source_step_id=answer["step_id"])
@@ -525,9 +540,9 @@ async def populate(settings, model):
             {
                 "title": "虚构项目讲述：行动、观察与限制",
                 "text": (
-                    "我在本地构造正常与超时两组输入，记录请求标识和写入次数。"
-                    "正常响应也出现重复写入，原先只归因于重试的解释不足。"
-                    "并发未控制，尚不能确定原因；我没有生产上线或业务收益数据。"
+                    "这是一段预置讲述素材：用两组虚构输入比较四种去重规则。"
+                    "演示程序实际完成了顺序内存计算：换编号会影响请求去重，只看业务编号又会合并动作。"
+                    "这不验证真实服务、业务协议、原子性、并发或恢复；人物并无生产上线或收益数据。"
                 ),
                 "story_id": story["id"],
                 "source_step_id": None,
@@ -558,6 +573,7 @@ async def populate(settings, model):
             "work_insight": work_insight["id"],
             "synthesis": synthesis["step_id"],
             "task": task["id"],
+            "local_probe": initial["step_id"],
             "story": story["id"],
             "pitch": pitch["id"],
             "next_goal": next_goal["id"],
@@ -599,7 +615,8 @@ class DemoSurface:
                 links = self.links
                 notice = (
                     '<section class="career-demo-banner"><strong>虚构资料 · 预置脚本演示</strong>'
-                    "<p>资料、经历和回答均为虚构示例，不代表真实模型研究效果。"
+                    "<p>岗位、人物与模型答复均为预置示例，不代表真实模型研究效果。"
+                    "本地实验会实际计算给定输入，但不测试真实服务。"
                     "此入口使用临时数据，不读取你的服务密钥；可通过导出保留准备包。</p>"
                     '<details class="career-demo-jump"><summary>完整闭环导览 · 跳到某一步</summary>'
                     '<nav aria-label="演示步骤">'
@@ -619,15 +636,16 @@ class DemoSurface:
                         "共用工具并不等于承担相同工作。",
                     ),
                     (
-                        "③ 用对照挑战解释", f"career/{links['main']}/task/{links['task']}",
-                        "一条解释怎样被反例挑战？",
-                        "逐组看输入、预期与虚构观察。正常响应也出现两次写入，"
-                        "挑战了只归因于重试的解释；并发仍未控制，分组不同不能直接证明因果。",
+                        "③ Agent运行反例实验",
+                        f"career/{links['main']}/discussion/{links['local_probe']}",
+                        "Agent能运行实验，而不只是写一份建议吗？",
+                        "展开本轮本地模拟，检查输入、原先预期、执行与跳过位置。"
+                        "可把输入放进实验台复跑或修改；这些是实际内存计算，不是网络或并发实测。",
                     ),
                     (
                         "④ 检查自己的理解", f"career/{links['main']}/discussion/{links['answer']}",
                         "会复述，还是能解释条件与边界？",
-                        "打开自测回答与对应反馈，区分挑战一种解释和已经找到原因。"
+                        "打开自测回答与对应反馈，区分局部规则反例和真实系统保证。"
                         "再看追问如何改变条件；概念解释不证明做过生产项目。",
                     ),
                     (
@@ -646,8 +664,8 @@ class DemoSurface:
                     (
                         "⑦ 从练习整理面试材料", f"career/{links['main']}/story/{links['story']}",
                         "个人练习怎样成为有边界的面试材料？",
-                        "从来源练习回看两组对照，再准备可编辑的项目讲述。失败观察也能成为取材，"
-                        "但个人练习不代表企业经历；保留并发未控制、没有生产和收益数据的边界。",
+                        "从来源练习回看两组实际计算，再准备可编辑的项目讲述。"
+                        "人物情境仍为预置素材；局部内存实验不代表企业经历、生产能力或收益。",
                     ),
                     (
                         "⑧ 迁移到新岗位",

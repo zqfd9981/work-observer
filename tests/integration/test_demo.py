@@ -6,7 +6,11 @@ import time
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
-from work_observer.career_demo import create_demo_app
+from work_observer.career_demo import (
+    DEMO_RETRY_CASES,
+    DEMO_RETRY_HYPOTHESIS,
+    create_demo_app,
+)
 from work_observer.cli import app as cli
 from work_observer.config import Settings
 from work_observer.connectors import public_documents
@@ -52,9 +56,23 @@ def test_demo_walkthrough_ignores_user_configuration_and_keeps_provider_calls_at
         assert data["tasks"][0]["state"] == "done"
         task = data["tasks"][0]
         assert len(task["comparison_rows"]) == 2
-        assert all("write=2" in row["observed"] and "虚构预置" in row["observed"]
+        assert all(row["input"] and row["observed"] and not row["expected"]
                    for row in task["comparison_rows"])
-        assert all(row["input"] and row["expected"] for row in task["comparison_rows"])
+        assert task["hypothesis"] == DEMO_RETRY_HYPOTHESIS
+        probe_study = next(row for row in data["results"]
+                           if row["step_id"] == app.links["local_probe"])
+        probe = probe_study["result"]["career_learning_context"]["local_experiments"][0]
+        assert [{"name": row["name"], "requests": row["requests"]}
+                for row in probe["cases"]] == DEMO_RETRY_CASES
+        assert probe["cases"][0]["runs"][1]["accepted"] == [1, 2]
+        assert probe["cases"][1]["runs"][2]["accepted"] == [1]
+        assert probe["cases"][1]["runs"][3]["accepted"] == [1, 2]
+        assert any(entry["tool"] == "run_retry_experiment"
+                   for entry in probe_study["result"]["trace"])
+        archived_run = client.get("/api/public-documents/" + task["artifact_document_id"]).json()
+        assert "本机计算输出" in archived_run["text"] and "没有网络" in archived_run["text"]
+        assert "虚构预置观察" not in archived_run["text"] and "write=2" not in archived_run["text"]
+        assert "Agent运行反例实验" in html and "本地实验会实际计算" in html
         story = next(row for row in data["stories"] if row["id"] == app.links["story"])
         assert story["source_task_id"] == task["id"]
         archived_story = client.get("/api/public-documents/" + story["document_id"]).json()
