@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -282,3 +282,16 @@ const selected=ctx.sourceSelectionOffsets(canonical,7,11);
 assert.equal(Array.from(canonical).slice(selected.start,selected.end).join(''),'same');
 assert.equal(selected.start,9);
 console.log('Original passage inquiry: exact repeated-text positions, Unicode and CRLF, readable origin and source-aware export passed.');
+
+const counterPassage={...passage,id:'counter-passage',recorded_at:stamp(4),relation:'challenges',user_note:'Could be a counterexample <check conditions>.'};
+const collectedQuestion={...passageQuestion,evidence_passages:[counterPassage]};
+const collectedBefore=JSON.stringify(collectedQuestion);
+const collectedMarkup=ctx.window.journeyTest.questionPassages(collectedQuestion,passageData);
+assert.ok(collectedMarkup.includes('可能挑战原解释')&&collectedMarkup.includes('&lt;check conditions&gt;'));
+assert.ok(collectedMarkup.includes('data-career-edit-passage="q:counter-passage"'));
+assert.ok(collectedMarkup.includes('data-career-question-ask="q"'));
+const collectedJourney=ctx.window.journeyTest.questionJourney(collectedQuestion,passageData,true);
+assert.ok(collectedJourney.includes('data-journey-kind="passage"')&&collectedJourney.includes('&lt;check conditions&gt;'));
+assert.ok(collectedJourney.includes('当时收集的原文与出处')&&!collectedJourney.includes('data-career-remove-passage'));
+assert.equal(JSON.stringify(collectedQuestion),collectedBefore);
+console.log('Collected inquiry passages: qualified labels, complete original text, chronology, continued inquiry and safe standalone export passed.');

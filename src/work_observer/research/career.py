@@ -447,7 +447,11 @@ class CareerService:
                         carried.get(key, "")
                         for key in ("understanding", "observation", "previous_view")
                     )
-                    + "\n" + passage.get("title", "") + "\n" + passage.get("quote", ""),
+                    + "\n" + passage.get("title", "") + "\n" + passage.get("quote", "")
+                    + "\n" + "\n".join(
+                        "\n".join(item.get(key, "") for key in ("title", "quote", "user_note"))
+                        for item in row.get("evidence_passages", [])
+                    ),
                     "requirements",
                     step_id=row.get("conclusion_step_id") or row.get("source_step_id"),
                 )
@@ -1168,6 +1172,40 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def save_question_passage(self, identity, question_id, data, passage_id=None):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            question = next((row for row in project["career"].get("questions", [])
+                             if row["id"] == question_id), None)
+            if not question:
+                raise ValueError("请选择当前目标中的调查问题，再收集这段原文。")
+            passages = question.setdefault("evidence_passages", [])
+            if passage_id:
+                passage = next((row for row in passages if row["id"] == passage_id), None)
+                if not passage:
+                    raise ValueError("未找到这段收集的原文，请刷新调查问题。")
+                passage.update(**data, updated_at=now())
+            else:
+                passages.append({"id": uuid4().hex, **self._source_passage(data["passage"]),
+                                 "relation": data["relation"], "user_note": data["user_note"]})
+            question["updated_at"] = now()
+            self.projects._write(project)
+        return self.get(identity)
+
+    def remove_question_passage(self, identity, question_id, passage_id):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            question = next((row for row in project["career"].get("questions", [])
+                             if row["id"] == question_id), None)
+            if not question or not any(row["id"] == passage_id
+                                       for row in question.get("evidence_passages", [])):
+                raise ValueError("未找到这个问题收集的原文段落，请刷新后重试。")
+            question["evidence_passages"] = [row for row in question["evidence_passages"]
+                                             if row["id"] != passage_id]
+            question["updated_at"] = now()
+            self.projects._write(project)
+        return self.get(identity)
+
     def use_insight(self, identity, insight_id, use_for_research):
         with self.store.lock, self.store.db:
             project = self._project(identity)
@@ -1705,6 +1743,14 @@ class CareerService:
                         "先从本轮目录读取对应原文及前后条件，不能把摘录当作已经核对全文。"
                         "若原资料不在本轮可读范围，明确无法重核，不自动恢复资料、不用旧摘录冒充新引用。"
                     )
+                if saved_question.get("evidence_passages"):
+                    question += (
+                        "selected_inquiry.evidence_passages是用户为同一问题收集的原文线索，"
+                        "relation与user_note只是用户标注，不是已确定的支持、冲突或因果关系。"
+                        "回读本轮可用的各份原文，核对表面分歧是否来自适用条件或语境；"
+                        "允许多种解释同时成立、都不成立或资料不足。未能重核的摘录保留未知，"
+                        "不能把保存的摘录当作本轮新读证据或引用ID，也不自动改写用户结论。"
+                    )
                 if saved_question.get("hypothesis_a") or saved_question.get("hypothesis_b"):
                     question += (
                         "selected_inquiry.hypothesis_a与hypothesis_b是用户保留的待验证解释，"
@@ -1801,6 +1847,10 @@ class CareerService:
                 if passage.get("public_document_id") in project["public_document_ids"]:
                     preferred.append(passage["public_document_id"])
                 topic.append(passage.get("quote", ""))
+                for collected in reversed(saved_question.get("evidence_passages", [])):
+                    if collected.get("public_document_id") in project["public_document_ids"]:
+                        preferred.append(collected["public_document_id"])
+                    topic.extend((collected.get("quote", ""), collected.get("user_note", "")))
                 preferred.extend(row.get("artifact_document_id") for row in [
                     item for item in project["career"]["tasks"]
                     if item.get("question_id") == question_id

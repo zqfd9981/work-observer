@@ -112,6 +112,16 @@ class SourcePassageInput(BaseModel):
     end: int = Field(strict=True, ge=1)
 
 
+class QuestionPassageNoteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    relation: Literal["unclassified", "supports", "challenges", "conditions"] = "unclassified"
+    user_note: str = Field(default="", max_length=1000)
+
+
+class QuestionPassageInput(QuestionPassageNoteInput):
+    passage: SourcePassageInput
+
+
 class ResearchQuestionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     question: str = Field(min_length=1, max_length=1500)
@@ -331,6 +341,20 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             )
         )
 
+    async def question_passage(request):
+        identity, question_id = request.path_params["id"], request.path_params["question_id"]
+        passage_id = request.path_params.get("passage_id")
+        if request.method == "DELETE":
+            return change(
+                lambda: service().remove_question_passage(identity, question_id, passage_id)
+            )
+        schema = QuestionPassageNoteInput if passage_id else QuestionPassageInput
+        values = schema.model_validate(await read_json(request)).model_dump(exclude_none=True)
+        return change(
+            lambda: service().save_question_passage(identity, question_id, values, passage_id),
+            200 if passage_id else 201,
+        )
+
     async def pitch(request):
         data = PitchInput.model_validate(await read_json(request))
         return change(
@@ -429,6 +453,10 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/insights/{insight_id}/use", insight_use, methods=["POST"]),
         Route("/api/career/{id}/questions", question, methods=["POST"]),
         Route("/api/career/{id}/questions/{question_id}", question, methods=["PATCH"]),
+        Route("/api/career/{id}/questions/{question_id}/passages",
+              question_passage, methods=["POST"]),
+        Route("/api/career/{id}/questions/{question_id}/passages/{passage_id}",
+              question_passage, methods=["PATCH", "DELETE"]),
         Route("/api/career/{id}/requirement-evidence", requirement_evidence, methods=["POST"]),
         Route("/api/career/{id}/pitches", pitch, methods=["POST"]),
         Route("/api/career/{id}/pitches/{pitch_id}", pitch, methods=["PATCH"]),
