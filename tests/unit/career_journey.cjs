@@ -105,3 +105,12 @@ assert.ok(familyHtml.includes('#career/goal/understanding/middle')&&familyHtml.i
 assert.ok(!familyHtml.includes('Unrelated record.')&&!familyHtml.includes('<script>view</script>')&&familyHtml.includes('&lt;script&gt;view&lt;/script&gt;'));
 assert.equal(JSON.stringify(familyNotes),familyBefore);
 console.log('Understanding journey: continuous revisions, parallel views, selected record and retained limits passed.');
+
+const activelyRead={...sentNote,id:'read-old',use_for_research:false,current_user_view:'Long remembered view; final limitation remains.',original_analysis:{text:'Old derived claim.'},source_locators:[{title:'Old source',quote:'<script>unsafe source</script>'}]};
+const lookedUp={...recalledResult,career_learning_context:{...recalledResult.career_learning_context,searches:[{offset:0},{offset:6}],read_notes:[activelyRead]}};
+const lookedUpHtml=ctx.window.journeyTest.learningRecall(lookedUp,'goal');
+assert.ok(lookedUpHtml.includes('本轮带入的个人认识 · 2 份')&&lookedUpHtml.includes('Agent另检索 2 次，完整读取 1 次'));
+assert.ok(lookedUpHtml.includes('data-learning-read="true"')&&lookedUpHtml.includes('Long remembered view; final limitation remains.'));
+assert.ok(lookedUpHtml.includes('当时已搁置')&&lookedUpHtml.includes('Old derived claim.')&&lookedUpHtml.includes('&lt;script&gt;unsafe source&lt;/script&gt;'));
+assert.ok(!ctx.window.journeyTest.learningRecall(lookedUp,'goal',true).includes('href='));
+console.log('Notebook tool reads: complete historical text, separate initial context, old sources and escaped export passed.');
