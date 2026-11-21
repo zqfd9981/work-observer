@@ -182,6 +182,17 @@ def test_history_notebook_pages_only_eligible_owned_research_and_copies_full_lim
     assert "quote" not in old["source_references_to_reread"][0]
     old["work_map_then"]["scope_note"] = "Changed returned object only"
     assert runs["0"]["result"]["work_map"]["scope_note"] == "Full old map limit."
+    cutoff = "2026-11-20T10:00:00+00:00"
+    runs["0"]["result"]["evidence"].append({
+        "id": "old-job-cite", "title": "旧岗位正文", "job_id": "job",
+        "document_id": "doc", "snapshot_id": "snapshot", "historical_cutoffs": [cutoff],
+        "start": 0, "end": 10, "quote": "旧原句不是新引用",
+    })
+    historical = notebook.read_research_history("0")["research"]["source_references_to_reread"][-1]
+    assert historical["as_of"] == cutoff and historical["historical_cutoffs"] == [cutoff]
+    assert "id" not in historical and "quote" not in historical
+    historical["historical_cutoffs"].append("changed only in returned record")
+    assert runs["0"]["result"]["evidence"][-1]["historical_cutoffs"] == [cutoff]
     for key in ("7", "8", "another-goal-step"):
         with pytest.raises(ProbeError, match="RESEARCH_HISTORY_NOT_AVAILABLE"):
             notebook.read_research_history(key)

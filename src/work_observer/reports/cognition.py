@@ -280,3 +280,29 @@ def render_revisions(result, labels):
             ]
         )
     return lines
+
+
+def work_map_search_parts(work_map):
+    """Expose saved text fields with their report-local positions, without interpreting them."""
+    parts = []
+    for section, collection, fields in (
+        ("boundary", "work_types", ("name", "problem", "tasks", "deliverables",
+                                    "boundary", "next_check")),
+        ("relation", "work_relations", ("source_text", "target_text", "rationale",
+                                        "transfer_limit")),
+        ("ability", "ability_relations", ("task", "ability", "rationale", "transfer_limit")),
+        ("comparison", "comparisons", ("common_ground", "differences", "transfer_conditions",
+                                       "unknowns")),
+    ):
+        for index, item in enumerate(work_map.get(collection, [])):
+            values = {key: "\n".join(item[key]) if isinstance(item.get(key), list)
+                      else item.get(key, "") for key in fields}
+            parts.append({"section": section, "index": index, "fields": values,
+                          "basis": item.get("basis"),
+                          "claim_indices": item.get("claim_indices", [])})
+    parts.extend({"section": "unknown", "index": index, "fields": {"unknown": text},
+                  "claim_indices": []} for index, text in enumerate(work_map.get("unknowns", [])))
+    if work_map.get("scope_note"):
+        parts.append({"section": "scope", "index": 0,
+                      "fields": {"scope_note": work_map["scope_note"]}, "claim_indices": []})
+    return parts

@@ -260,7 +260,8 @@ LEARNING_TOOLS = [
     },
     tool(
         "search_research_history",
-        "查找同一目标已完成的旧研究，按问题、判断和未知检索；关键词任一命中，"
+        "查找同一目标已完成的旧研究，按问题、判断、工作地图、连接理由、迁移限制和未知检索；"
+        "关键词任一命中，地图预览可能省略末尾条件，需read_research_history读完整地图。"
         "空列表看目录，每页6条，可按next_offset继续。预览不等于完整判断或新证据。",
         {"terms": {"type": "array", "items": {"type": "string", "maxLength": 100},
                    "maxItems": 10}, "offset": {"type": "integer", "minimum": 0}},
@@ -269,6 +270,7 @@ LEARNING_TOOLS = [
     tool(
         "read_research_history",
         "按step_id读取一份完整旧研究的判断、要求性质、地图限定、未知与来源定位。"
+        "旧JD定位含as_of与snapshot_id，用read_historical_job回读相应时点，不能以当前JD替代。"
         "旧分析不提供可引用证据；需要本轮读取原文，不能恢复已移出或其他目标的资料。",
         {"step_id": {"type": "string"}},
         ["step_id"],
@@ -2086,9 +2088,12 @@ async def _research(
                         "terms", "offset",
                     }:
                         data = learning_notebook.search_research_history(**arguments)
-                        entry.update(terms=arguments["terms"], matched=data["matching_count"])
+                        map_count = sum(row["map_match_count"] for row in data["research"])
+                        entry.update(terms=arguments["terms"], matched=data["matching_count"],
+                                     map_matches=map_count)
                         learning.setdefault("history_searches", []).append({
                             **arguments, "matching_count": data["matching_count"],
+                            "map_match_count": map_count,
                             "returned_step_ids": [row["step_id"] for row in data["research"]],
                         })
                     elif name == "read_research_history" and set(arguments) == {"step_id"}:

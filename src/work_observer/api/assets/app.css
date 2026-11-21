@@ -313,3 +313,4 @@
 .career-passage-summary{padding:12px;background:var(--green-soft);border-radius:8px;margin:12px 0}.career-passage-summary .quiet-tag{white-space:normal}.career-passage-filter{max-width:360px;margin:16px 0}.career-passage-hypotheses>section{min-width:0}
 
 .career-library-map-matches{margin:14px 0}.career-library-map-part{padding:14px;margin:12px 0;background:var(--green-soft);border-radius:8px}.career-library-map-part p,.career-library-map-part blockquote{white-space:pre-wrap;overflow-wrap:anywhere}.career-library-map-part>summary{font-weight:600}.is-located-map{outline:2px solid #b18c47;outline-offset:6px;scroll-margin-top:90px}
+.career-history-map p,.career-history-map h5,.career-history-map li{white-space:pre-wrap;overflow-wrap:anywhere}

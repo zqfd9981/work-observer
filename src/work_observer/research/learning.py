@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.memory.service import _tokens
+from work_observer.reports.cognition import work_map_search_parts
 from work_observer.retrieval.enhanced import validated_terms
 from work_observer.text_match import match_text
 
@@ -324,8 +325,10 @@ class LearningNotebook:
         for entry, result in self._research_history():
             question = entry.get("user_question") or entry.get("interview_question") or ""
             claims = result.get("claims", [])
+            parts = work_map_search_parts(result.get("work_map") or {})
             text = match_text("\n".join([
                 question, *(row["text"] for row in claims), *result.get("gaps", []),
+                *(value for part in parts for value in part["fields"].values()),
             ]))
             hits = [term for term in terms if match_text(term) in text]
             if terms and not hits:
@@ -333,6 +336,20 @@ class LearningNotebook:
             matches = [index for index, claim in enumerate(claims)
                        if not terms or any(match_text(term) in match_text(claim["text"])
                                            for term in terms)]
+            map_matches = []
+            for part in parts:
+                fields = [key for key, value in part["fields"].items()
+                          if not terms or any(match_text(term) in match_text(value)
+                                              for term in terms)]
+                if fields:
+                    map_matches.append({
+                        "section": part["section"], "index": part["index"],
+                        "matched_fields": fields, "basis": part.get("basis"),
+                        "fields_preview": {key: value[:180]
+                                           for key, value in part["fields"].items()},
+                        "preview_is_partial": any(len(value) > 180
+                                                  for value in part["fields"].values()),
+                    })
             ranked.append((len(hits), entry["created_at"], entry["step_id"], {
                 "step_id": entry["step_id"], "kind": entry["kind"], "question": question,
                 "question_id": entry.get("question_id"), "recorded_at": entry["created_at"],
@@ -343,6 +360,7 @@ class LearningNotebook:
                     "requirement": claims[index].get("requirement"),
                 } for index in matches[:3]],
                 "matching_claim_count": len(matches), "matched_terms": hits,
+                "map_previews": map_matches[:3], "map_match_count": len(map_matches),
             }))
         ranked.sort(key=lambda row: row[:3], reverse=True)
         page = ranked[offset:offset + 6]
@@ -350,7 +368,8 @@ class LearningNotebook:
             "research": [row[3] for row in page], "matching_count": len(ranked),
             "offset": offset,
             "next_offset": offset + len(page) if offset + len(page) < len(ranked) else None,
-            "notice": "本目标已完成研究的关键词预览，不是新证据或已确认的结论。"
+            "notice": "本目标已完成研究的关键词预览，包含工作地图的关系、理由、迁移限制和未知。"
+            "预览可能省略末尾条件，不能当作完整内容、新证据或已确认的结论。"
             "先read_research_history读取完整判断与限定，再回读本轮可用原文。",
         }
 
@@ -360,10 +379,15 @@ class LearningNotebook:
         if not found:
             raise ProbeError("RESEARCH_HISTORY_NOT_AVAILABLE")
         entry, result = found
-        references = {row["id"]: {key: row[key] for key in (
+        references = {row["id"]: {key: deepcopy(row[key]) for key in (
             "title", "job_id", "document_id", "snapshot_id", "public_document_id",
-            "start", "end", "evidence_kind",
+            "start", "end", "evidence_kind", "historical_cutoffs",
         ) if row.get(key) is not None} for row in result.get("evidence", [])}
+        for source in result.get("evidence", []):
+            if source.get("job_id"):
+                references[source["id"]]["as_of"] = (source.get("historical_cutoffs") or [
+                    result.get("created_at") or entry["created_at"],
+                ])[0]
         record = {
             "step_id": entry["step_id"], "kind": entry["kind"],
             "question": entry.get("user_question") or entry.get("interview_question") or "",
@@ -384,7 +408,8 @@ class LearningNotebook:
             "research": record,
             "notice": "完整旧分析，只供重新核对；原范围、判断性质和末尾限定仍需保留。"
             "旧来源仅用于定位，不提供旧引用ID，须本轮读取原文后再引用。"
-            "当前范围以fixed_scope为准；已移出或只属于其他目标的资料不自动恢复。"
+            "JD定位保留historical_cutoffs和as_of，用read_historical_job读取并核对snapshot_id；"
+            "当前JD不能代替旧版本。当前范围以fixed_scope为准，已移出或其他目标的资料不自动恢复。"
             "计划不等于实际结果，旧研究不能证明当前事实或个人能力，不修改原记录。",
         }
 
