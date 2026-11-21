@@ -1205,6 +1205,56 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def record_conversation(self, identity, question_id, data):
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            question = next((row for row in project["career"].get("questions", [])
+                             if row["id"] == question_id), None)
+            if not question:
+                raise ValueError("请选择当前目标中的调查问题，再记录沟通回复。")
+            if any(step["state"] == "running" for step in project["steps"]):
+                raise ValueError("请等本轮研究结束后再保存沟通回复，输入仍保留。")
+            wording = ("用户记录的原话（系统未独立核实）" if data["wording"] == "quoted"
+                       else "用户自己的转述（不是逐字原话）")
+            prefix = (
+                "用户提供的沟通或访谈记录，系统未参与或独立核实。"
+                "这不是正式招聘原文、组织承诺或用户能力的证明。\n\n"
+                f"关联调查问题：{question['question']}\n"
+                f"沟通对象（用户填写）：{data['speaker'] or '未说明'}\n"
+                f"沟通场景：{data['context'] or '未说明'}\n"
+                f"发生时间（用户填写，未核实）：{data['said_when'] or '未说明'}\n"
+                f"我询问的问题：{data['asked_question']}\n"
+                f"记录方式：{wording}\n\n我记录的答复：\n"
+            )
+            answer = data["answer"]
+            text = prefix + answer + (
+                "\n\n保留条件、未说清或需要再次确认之处：\n"
+                + (data["limits"] or "未填写；不能据此认为没有限制或已经全部确认。")
+            )
+            document = PublicDocumentService(
+                self.repository, self.raw_directory / "public"
+            ).archive_text(
+                "沟通记录 · " + question["question"][:120], text,
+                "用户提供的沟通记录，" + wording + "，不等于招聘原文或独立验证。",
+            )["document"]
+            project["public_document_ids"] = [
+                *project.get("public_document_ids", []), document["id"]
+            ]
+            end = len(prefix) + len(answer)
+            passage = self._source_passage({
+                "public_document_id": document["id"],
+                "start": max(len(prefix), end - 2000), "end": end,
+            })
+            question.setdefault("evidence_passages", []).append({
+                "id": uuid4().hex, **passage, "relation": "unclassified",
+                "user_note": "用户提供的沟通记录，" + wording + "。"
+                + ("答复较长，这里仅定位末尾2000字；" if len(answer) > 2000 else "")
+                + "完整记录含提问、场景与保留条件，后续需回读全文，不能把回复直接当成岗位事实。",
+            })
+            question["updated_at"] = now()
+            self.projects._write(project)
+        return self.get(identity)
+
     def save_question_passage(self, identity, question_id, data, passage_id=None):
         with self.store.lock, self.store.db:
             project = self._project(identity)
@@ -1802,6 +1852,9 @@ class CareerService:
                         "回读本轮可用的各份原文，核对表面分歧是否来自适用条件或语境；"
                         "允许多种解释同时成立、都不成立或资料不足。未能重核的摘录保留未知，"
                         "不能把保存的摘录当作本轮新读证据或引用ID，也不自动改写用户结论。"
+                        "若原文标为用户提供的沟通、访谈或转述，须区分对方据记录如何回答与已证实事实；"
+                        "保留提问、场景、记录方式和未确认条件，不能将其升级为正式招聘要求、"
+                        "组织承诺、独立验证或用户已有能力。与JD不一致时先列分歧和待核实问题。"
                     )
                 if saved_question.get("hypothesis_a") or saved_question.get("hypothesis_b"):
                     question += (

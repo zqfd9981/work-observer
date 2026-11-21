@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={answerRevisionChoice,answerRevisionDraft,questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={conversationNoteEditor,answerRevisionChoice,answerRevisionDraft,questionSourceChanges,questionSourceNotice,sourceFollowups,sourceReviewDraft,jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},conversation_note:draft.conversation_note,jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -491,4 +491,20 @@ assert.ok(ctx.window.journeyTest.answerRevisionDraft(question,preferredSource,pr
 assert.ok(!ctx.window.journeyTest.questionAnswer(question,revisionData,true).includes('data-career-revise-answer'));
 assert.equal(JSON.stringify(revisionData),revisionBefore);
 console.log('Answer to revised understanding: explicitly selected prior record, full old view and cited source, original limits, new discussion link and unchanged stored records passed.');
+}
+
+{
+ctx.window.journeyTest.setDraft(data,{});
+assert.equal(ctx.window.journeyTest.conversationNoteEditor(data),'');
+const completeReply='Reported statement <source>. '.repeat(160)+'FINAL REPORTED QUALIFICATION';
+const interviewDraft={question_id:'q',asked_question:'Who accepts the output?',answer:completeReply,wording:'paraphrased',speaker:'A reported role <check>',context:'Only one conversation.',said_when:'Exact date unknown.',limits:'Team work does not establish personal authority.'};
+ctx.window.journeyTest.setDraft(data,{conversation_note:interviewDraft});
+const interviewHtml=ctx.window.journeyTest.conversationNoteEditor(data);
+assert.ok(interviewHtml.includes('FINAL REPORTED QUALIFICATION')&&interviewHtml.includes('Team work does not establish personal authority.'));
+assert.ok(interviewHtml.includes('A reported role &lt;check&gt;')&&!interviewHtml.includes('<source>.'));
+assert.ok(interviewHtml.includes('value="paraphrased" selected')&&interviewHtml.includes('Exact date unknown.'));
+assert.ok(interviewHtml.includes('name="question_id" value="q"'));
+assert.ok(!ctx.window.journeyTest.conversationNoteEditor(data).includes('name="state"'));
+assert.ok(ctx.window.journeyTest.conversationNoteEditor({...data,running:true}).includes('disabled'));
+console.log('Reported conversation entry: full reply and final qualification, explicit paraphrase, user supplied date, inquiry link and escaped source text passed.');
 }

@@ -136,6 +136,17 @@ class QuestionPassageInput(QuestionPassageNoteInput):
     passage: SourcePassageInput
 
 
+class ConversationNoteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    asked_question: str = Field(min_length=1, max_length=1500)
+    answer: str = Field(min_length=1, max_length=12_000)
+    wording: Literal["quoted", "paraphrased"] = "paraphrased"
+    speaker: str = Field(default="", max_length=200)
+    context: str = Field(default="", max_length=700)
+    said_when: str = Field(default="", max_length=200)
+    limits: str = Field(default="", max_length=1500)
+
+
 class ResearchQuestionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     question: str = Field(min_length=1, max_length=1500)
@@ -427,6 +438,14 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             lambda: service().add_material(request.path_params["id"], **data.model_dump()), 201
         )
 
+    async def conversation_note(request):
+        if busy():
+            return response({"message": "请等本轮研究结束后再保存沟通回复，输入仍保留。"}, 409)
+        data = ConversationNoteInput.model_validate(await read_json(request))
+        return change(lambda: service().record_conversation(
+            request.path_params["id"], request.path_params["question_id"], data.model_dump()
+        ), 201)
+
     async def attach_material(request):
         if busy():
             return response({"message": "请等本轮研究结束后再加入材料。"}, 409)
@@ -495,6 +514,8 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/questions/{question_id}", question, methods=["PATCH"]),
         Route("/api/career/{id}/questions/{question_id}/passages",
               question_passage, methods=["POST"]),
+        Route("/api/career/{id}/questions/{question_id}/conversation-notes",
+              conversation_note, methods=["POST"]),
         Route("/api/career/{id}/questions/{question_id}/passages/{passage_id}",
               question_passage, methods=["PATCH", "DELETE"]),
         Route("/api/career/{id}/requirement-evidence", requirement_evidence, methods=["POST"]),
