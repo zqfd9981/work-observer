@@ -7,6 +7,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 from work_observer.research.career import CareerService
+from work_observer.research.retry_experiment import RetryCasesInput
 
 
 class CareerGoalInput(BaseModel):
@@ -282,22 +283,7 @@ class ExperimentInput(BaseModel):
     design_change: str = Field(default="", max_length=1500)
 
 
-class RetryRequestInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    request_id: str = Field(min_length=1, max_length=60)
-    business_id: str = Field(min_length=1, max_length=60)
-    action: str = Field(min_length=1, max_length=60)
-
-
-class RetryCaseInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    name: str = Field(min_length=1, max_length=150)
-    requests: list[RetryRequestInput] = Field(min_length=1, max_length=20)
-
-
-class RetryExperimentInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    cases: list[RetryCaseInput] = Field(min_length=1, max_length=6)
+class RetryExperimentInput(RetryCasesInput):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     hypothesis: str = Field(default="", max_length=1500)
     save: bool = False

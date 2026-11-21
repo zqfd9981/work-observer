@@ -2,6 +2,31 @@
 
 import json
 
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class RetryRequestInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    request_id: str = Field(min_length=1, max_length=60)
+    business_id: str = Field(min_length=1, max_length=60)
+    action: str = Field(min_length=1, max_length=60)
+
+
+class RetryCaseInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=150)
+    requests: list[RetryRequestInput] = Field(min_length=1, max_length=20)
+
+
+class RetryCasesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    cases: list[RetryCaseInput] = Field(min_length=1, max_length=6)
+
+
+class RetryProbeInput(RetryCasesInput):
+    hypothesis: str = Field(min_length=1, max_length=1500)
+
+
 RULES = (
     ("none", "不去重"),
     ("request", "按请求编号"),

@@ -16,6 +16,7 @@ from work_observer.config import validate_url
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
 from work_observer.research import requirements as qualification
+from work_observer.research.retry_experiment import RetryProbeInput, run_retry_experiment
 from work_observer.retrieval.catalog import Catalog, Filters
 from work_observer.text_match import match_text
 
@@ -226,6 +227,14 @@ EXTRA_TOOLS = [
     ),
 ]
 LEARNING_TOOLS = [
+    {
+        "type": "function", "name": "run_retry_experiment", "strict": True,
+        "description": "先写一句待检验的预期，再给出最多6组、合计20条请求输入。"
+        "在本机顺序比较四种去重规则，返回完整输入与实际执行/跳过位置。"
+        "不连接服务、不做并发或故障恢复测试，也不确认真实业务键。"
+        "只返回本轮模拟观察，不创建练习、不改变资料或个人认识，不提供原文证据ID。",
+        "parameters": RetryProbeInput.model_json_schema(),
+    },
     tool(
         "search_research_history",
         "查找同一目标已完成的旧研究，按问题、判断和未知检索；关键词任一命中，"
@@ -1569,6 +1578,12 @@ async def _research(
         system += feedback_policy
     if learning_enabled:
         system += (
+            "\n需要用反例探索重试与去重的边界时，可run_retry_experiment运行本地顺序模拟。"
+            "先明确一条可被输入推翻的预期，再选用能区分解释的少量请求，观察执行与跳过位置。"
+            "工具输入由你构造，不是从JD独立核实的业务协议；输出只证明这套内存规则的行为。"
+            "不得把模拟说成真实服务、并发测试、故障恢复、岗位权限或个人能力的验证。"
+            "报告时把原文、运行前预期、本地观察和仍未知的条件分开；工具记录不是可引用原文。"
+            "仍需读取当前原文，不能因跑了模拟就把调查标为已解决。"
             "\n需要找回以前研究过的问题或判断时，可search_research_history检索同一目标，"
             "再read_research_history读取完整旧判断、工作关系、末尾限定和未知。"
             "旧分析只是待重核的线索，不能用搜索预览替代全文，也不能当成本轮证据。"
@@ -1955,11 +1970,39 @@ async def _research(
                     queried = True
                 elif name in {"search_learning_notes", "read_learning_note",
                               "search_research_history", "read_research_history",
-                              "search_experiments", "read_experiments"}:
+                              "search_experiments", "read_experiments", "run_retry_experiment"}:
                     if not learning_enabled:
                         raise ProbeError("RESEARCH_TOOL_DENIED")
                     learning = result.setdefault("career_learning_context", {})
-                    if name == "search_research_history" and set(arguments) == {"terms", "offset"}:
+                    if name == "run_retry_experiment":
+                        try:
+                            probe = RetryProbeInput.model_validate(arguments)
+                            observed = run_retry_experiment(
+                                [case.model_dump() for case in probe.cases],
+                            )
+                            data = {
+                                "kind": "local_sequential_simulation",
+                                "hypothesis": probe.hypothesis,
+                                **{key: observed[key]
+                                   for key in ("conditions", "cases", "outcome")},
+                                "notice": "本轮内存规则的计算输出，不是原文证据，"
+                                "不验证真实业务或系统。",
+                            }
+                        except (ValidationError, ValueError) as exc:
+                            data = {"error": "INVALID_RETRY_EXPERIMENT_INPUT",
+                                    "notice": "未运行或保存实验；请在原预算内修正输入。",
+                                    "details": exc.errors(include_url=False, include_input=False,
+                                                          include_context=False)
+                                    if isinstance(exc, ValidationError) else str(exc)}
+                            entry["validation"] = data["error"]
+                        else:
+                            entry.update(case_count=len(probe.cases), request_count=sum(
+                                len(case.requests) for case in probe.cases
+                            ))
+                            learning.setdefault("local_experiments", []).append(data)
+                    elif name == "search_research_history" and set(arguments) == {
+                        "terms", "offset",
+                    }:
                         data = learning_notebook.search_research_history(**arguments)
                         entry.update(terms=arguments["terms"], matched=data["matching_count"])
                         learning.setdefault("history_searches", []).append({
