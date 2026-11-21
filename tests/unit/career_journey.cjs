@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -295,3 +295,35 @@ assert.ok(collectedJourney.includes('data-journey-kind="passage"')&&collectedJou
 assert.ok(collectedJourney.includes('当时收集的原文与出处')&&!collectedJourney.includes('data-career-remove-passage'));
 assert.equal(JSON.stringify(collectedQuestion),collectedBefore);
 console.log('Collected inquiry passages: qualified labels, complete original text, chronology, continued inquiry and safe standalone export passed.');
+
+{
+const historicalView='Original interpretation. '.repeat(55)+'TAIL CONDITION: production remains unknown.';
+const oldInput={id:'belief-a',current_user_view:historicalView,previous_view:'Initial question.',reported_observation:'Only a local record.',open_question:'Need a counterexample.',use_for_research:true};
+const changedBeliefs=[{id:'belief-a',created_at:stamp(1),current_view:'Edited A, still uncertain.',previous_view:'Initial question.',observation:'Only a local record.',open_question:'Need a counterexample.',use_for_research:false},{id:'belief-b',created_at:stamp(5),replaces_insight_id:'belief-a',current_view:'B retains the limitation.',previous_view:historicalView,observation:'A negative observation.',open_question:'Still need external evidence.',use_for_research:true}];
+const newInput={id:'belief-b',current_user_view:changedBeliefs[1].current_view,previous_view:historicalView,reported_observation:'A negative observation.',open_question:'Still need external evidence.',use_for_research:true};
+const oldDiscussion=result('input-a',stamp(2),{run_id:'run-a',result:{status:'completed',model_calls:3,claims:[{text:'Historical qualified statement.',category:'task',basis:'inference',requirement:'unspecified',evidence_ids:['source-a']}],evidence:[{id:'source-a',title:'Original archive',quote:'<raw>Complete original source.</raw>',evidence_kind:'work_material',public_document_id:'doc-a',start:0,end:42}],gaps:['Unknown remains.'],career_learning_context:{notes:[oldInput]}}});
+const activelyRead=result('input-b',stamp(6),{run_id:'run-b',result:{status:'completed',model_calls:3,claims:[],evidence:[],gaps:[],career_learning_context:{notes:[],read_notes:[newInput]}}});
+const indirect=result('later',stamp(3),{run_id:'run-later',source_step_id:'input-a',result:{status:'completed',model_calls:3,claims:[],evidence:[],gaps:[]}});
+const previewOnly=result('preview-only',stamp(4),{result:{status:'completed',model_calls:2,claims:[],evidence:[],gaps:[],career_learning_context:{notes:[],searches:[{notes:[{id:'belief-a',current_view_preview:'A preview only'}]}]}}});
+const impactData={...data,insights:changedBeliefs,results:[activelyRead,indirect,oldDiscussion,previewOnly]};
+const impactBefore=JSON.stringify(impactData);
+const affected=ctx.window.journeyTest.learningImpactRecords('belief-b',impactData);
+assert.deepEqual(Array.from(affected,item=>item.row.step_id),['input-b','later','input-a']);
+assert.equal(affected.find(item=>item.row.step_id==='later').inputs.length,0);
+assert.equal(affected.find(item=>item.row.step_id==='input-b').inputs[0].channel,'主动阅读全文');
+const changes=ctx.window.journeyTest.learningChanges(oldDiscussion.result,impactData);
+assert.equal(changes.length,1);assert.equal(changes[0].reasons.length,2);
+assert.equal(ctx.window.journeyTest.learningChanges(activelyRead.result,impactData).length,0);
+const alreadyShelved={...oldDiscussion.result,career_learning_context:{notes:[{...oldInput,current_user_view:changedBeliefs[0].current_view,use_for_research:false}]}};
+assert.equal(ctx.window.journeyTest.learningChanges(alreadyShelved,impactData).length,0);
+const impactMarkup=ctx.window.journeyTest.learningImpact('belief-a',impactData);
+assert.ok(impactMarkup.includes('沿相关讨论继续或对照')&&impactMarkup.includes('原答复仍是当时结果'));
+assert.ok(!impactMarkup.includes('data-learning-impact="preview-only"'));
+const impactExport=ctx.window.journeyTest.learningImpactPackage('belief-b',impactData);
+assert.ok(impactExport.includes('TAIL CONDITION: production remains unknown.'));
+assert.ok(impactExport.includes('Historical qualified statement.')&&impactExport.includes('&lt;raw&gt;Complete original source.'));
+assert.ok(!impactExport.includes('<raw>')&&!impactExport.includes('data-career-ask-result'));
+assert.equal(JSON.stringify(impactData),impactBefore);
+console.log('Understanding review: changed inputs, actual full-note reads, referenced followups, unchanged snapshots and complete safe export passed.');
+
+}
