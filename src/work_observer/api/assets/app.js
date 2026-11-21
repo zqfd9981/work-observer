@@ -3112,7 +3112,29 @@ function showArchivedImage(id) {
   openDialog("source-dialog");
 }
 
+function updateDemoGuide(){
+  const bar=$("[data-demo-tourbar]");if(!bar)return;
+  const links=$$(".career-demo-banner [data-demo-step]"),index=links.findIndex(link=>link.getAttribute("href")===location.hash),selected=links[index];
+  if(selected&&bar.dataset.demoActiveStep!==String(index))$(".career-demo-points",bar).open=false;
+  bar.dataset.demoActiveStep=String(index);
+  links.forEach((link,position)=>{if(position===index)link.setAttribute("aria-current","step");else link.removeAttribute("aria-current");});
+  $("[data-demo-guide-label]",bar).textContent=selected?`${index+1} / ${links.length} · ${selected.textContent.replace(/^[①-⑥]\s*/,"")} · 看要点`:"三分钟导览 · 看要点";
+  $("[data-demo-position]",bar).textContent=selected?`第 ${index+1} / ${links.length} 步 · 查看预置记录`:"六步看一条调查怎样推进";
+  $("[data-demo-question]",bar).textContent=selected?.dataset.demoQuestion||"从工作差异到认识修正";
+  $("[data-demo-note]",bar).textContent=selected?.dataset.demoNote||"点击开始，依次看工作、反例、自测、修正、项目表达和迁移。导航只打开已有记录，不开始新的研究。";
+  $('[data-demo-direction="-1"]',bar).disabled=index<=0;
+  $('[data-demo-direction="1"]',bar).textContent=index<0?"开始导览 ↗":index===links.length-1?"再看第一步 ↗":"下一步 →";
+}
+document.addEventListener("click",event=>{
+  const link=event.target.closest("[data-demo-step]");if(link){const jump=link.closest("details");if(jump)jump.open=false;return;}
+  const button=event.target.closest("[data-demo-direction]");if(!button)return;
+  const bar=button.closest("[data-demo-tourbar]"),links=$$(".career-demo-banner [data-demo-step]"),index=Number(bar.dataset.demoActiveStep??-1),direction=Number(button.dataset.demoDirection);
+  const target=index<0?0:direction>0?(index+1)%links.length:index-1;
+  if(links[target])location.hash=links[target].getAttribute("href");
+});
+
 async function route() {
+  updateDemoGuide();
   const page = location.hash.slice(1).split("/")[0] || "career";
   state.page = titles[page] ? page : "research";
   $$(".page").forEach(element=>{element.hidden = element.id !== "page-" + state.page;});

@@ -38,6 +38,11 @@ def test_demo_walkthrough_ignores_user_configuration_and_keeps_provider_calls_at
         html = client.get("/").text
         assert 'name="wo-demo"' in html and "预置脚本演示" in html
         assert "不代表真实模型研究效果" in html and "synthetic-do-not-load" not in html
+        assert html.count('data-demo-step="') == 6
+        assert 'data-demo-tourbar aria-label="演示导览"' in html
+        assert 'data-demo-direction="-1"' in html and 'data-demo-direction="1"' in html
+        assert "共用工具并不等于承担相同工作" in html
+        assert "较新不自动代表更正确" in html
         auth = {"X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', html)[1]}
         main = app.links["main"]
         data = client.get(f"/api/career/{main}").json()

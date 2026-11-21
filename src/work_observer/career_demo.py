@@ -521,24 +521,70 @@ class DemoSurface:
                 notice = (
                     '<section class="career-demo-banner"><strong>虚构资料 · 预置脚本演示</strong>'
                     "<p>资料、经历和回答均为虚构示例，不代表真实模型研究效果。"
-                    "此入口使用临时数据，不读取你的服务密钥；可通过导出保留准备包。</p><nav>"
+                    "此入口使用临时数据，不读取你的服务密钥；可通过导出保留准备包。</p>"
+                    '<details class="career-demo-jump"><summary>三分钟导览 · 跳到某一步</summary>'
+                    '<nav aria-label="演示步骤">'
                 )
-                for title, target in [
-                    ("① 看懂工作", f"career/{links['main']}/discussion/{links['map']}"),
-                    ("② 原文、反例与实验", f"career/{links['main']}/journey/{links['question']}"),
-                    ("③ 检查自己的理解", f"career/{links['main']}/discussion/{links['answer']}"),
+                for index, (title, target, question, note) in enumerate([
+                    (
+                        "① 看懂工作", f"career/{links['main']}/discussion/{links['map']}",
+                        "同样写Agent，实际在交付什么？",
+                        "对照应用接入与执行平台的任务、交付物和原文。留意Python必备、商科背景加分，"
+                        "共用工具并不等于承担相同工作。",
+                    ),
+                    (
+                        "② 原文、反例与实验", f"career/{links['main']}/journey/{links['question']}",
+                        "一条解释怎样被反例挑战？",
+                        "沿时间线看最初猜想、补充原文、最小实验和观察记录。正常响应也出现两次写入，"
+                        "只归因于重试的解释不足；并发仍未控制。",
+                    ),
+                    (
+                        "③ 检查自己的理解", f"career/{links['main']}/discussion/{links['answer']}",
+                        "会复述，还是能解释条件与边界？",
+                        "打开自测回答与对应反馈，区分挑战一种解释和已经找到原因。"
+                        "再看追问如何改变条件；概念解释不证明做过生产项目。",
+                    ),
                     (
                         "④ 认识修正后回看研究",
                         f"career/{links['main']}/understanding/{links['insight']}",
+                        "认识改变后，哪些旧研究需要回看？",
+                        "对照原先的理解与反例后的修正，回看带入过相关认识的研究。"
+                        "历史答复仍然保留，较新不自动代表更正确。",
                     ),
-                    ("⑤ 讲清行动与边界", f"career/{links['main']}/pitch/{links['pitch']}"),
+                    (
+                        "⑤ 讲清行动与边界", f"career/{links['main']}/pitch/{links['pitch']}",
+                        "怎样把探索讲成有依据的项目经历？",
+                        "讲清亲自做的对照、观察和仍未验证的部分。保留并发未控制、没有生产上线和"
+                        "没有业务收益数据的边界，不把推断写成成果。",
+                    ),
                     (
                         "⑥ 迁移到新岗位",
                         f"career/{links['next_goal']}/question/{links['next_question']}",
+                        "旧经验可以直接迁移到新岗位吗？",
+                        "把同一条认识带到平台岗位，原结论只是待验证起点。"
+                        "重新核对任务、交付物与运行责任，不自动当作岗位事实或个人胜任证明。",
                     ),
-                ]:
-                    notice += f'<a href="#{html.escape(target)}">{html.escape(title)}</a>'
-                notice += "</nav></section>"
+                ]):
+                    notice += (
+                        f'<a href="#{html.escape(target)}" data-demo-step="{index}" '
+                        f'data-demo-question="{html.escape(question, quote=True)}" '
+                        f'data-demo-note="{html.escape(note, quote=True)}">{html.escape(title)}</a>'
+                    )
+                notice += (
+                    '</nav></details></section><aside class="career-demo-tourbar" '
+                    'data-demo-tourbar aria-label="演示导览">'
+                    '<details class="career-demo-points" open><summary data-demo-guide-label '
+                    'aria-live="polite">三分钟导览 · 看要点</summary>'
+                    '<div class="career-demo-point-content">'
+                    '<p class="form-note" data-demo-position>'
+                    '六步看一条调查怎样推进</p><h3 data-demo-question>从工作差异到认识修正</h3>'
+                    '<p data-demo-note>点击开始，依次看工作、反例、自测、修正、项目表达和迁移。'
+                    '导航只打开已有记录，不开始新的研究。</p></div></details>'
+                    '<div class="result-actions"><button type="button" class="secondary small" '
+                    'data-demo-direction="-1" disabled>上一步</button>'
+                    '<button type="button" class="primary small" data-demo-direction="1">'
+                    '开始导览 ↗</button></div></aside>'
+                )
                 body = message.get("body", b"").replace(
                     b'<meta name="wo-token"',
                     b'<meta name="wo-demo" content="true"><meta name="wo-token"',
