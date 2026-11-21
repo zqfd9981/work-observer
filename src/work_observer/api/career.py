@@ -13,14 +13,16 @@ class CareerGoalInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=150)
     goal: str = Field(min_length=1, max_length=1000)
-    background: str = Field(min_length=1, max_length=1500)
+    background: str = Field(default="", max_length=1500)
     constraints: str = Field(default="", max_length=500)
-    job_ids: list[str] = Field(min_length=1, max_length=6)
+    job_ids: list[str] = Field(default_factory=list, max_length=6)
 
 
 class CareerInput(CareerGoalInput):
     resume_title: str = Field(default="个人简历", min_length=1, max_length=150)
     resume_text: str = Field(default="", max_length=20_000)
+    material_title: str = Field(default="起始工作资料", max_length=150)
+    material_text: str = Field(default="", max_length=20_000)
 
 
 class CareerSearchQuery(BaseModel):

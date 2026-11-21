@@ -160,3 +160,5 @@
 .career-question-origin{margin:14px 0}.career-question-origin>summary{cursor:pointer;font-weight:600}
 
 .career-autonomy{padding:14px 18px;margin:0 0 18px;background:#edf4e8;border-radius:9px}.career-autonomy p{white-space:pre-wrap;overflow-wrap:anywhere}.career-autonomy details{margin:10px 0}
+
+.career-material-start{padding:22px}.career-material-start .result-actions{flex-wrap:wrap}.career-material-start p{overflow-wrap:anywhere}

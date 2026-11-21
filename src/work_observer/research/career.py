@@ -94,6 +94,23 @@ QUESTIONS = {
     ),
 }
 
+MATERIAL_QUESTIONS = {
+    "role": (
+        "帮助用户理解已保存工作资料描述的业务问题、实际任务、交付物、工具和责任边界。"
+        "先读取归档正文，用最多8条有引用的判断串起工作如何产生结果。"
+        "当前没有目标JD，不能把产品功能、技术规范或用户笔记改成某个岗位的必备/加分条件，"
+        "requirement使用unspecified；未说明的职责与交付物保留未知。"
+        "保留来源性质，不把用户粘贴的材料当作独立核实；不评价个人是否胜任，不生成行动计划。"
+    ),
+    "map": (
+        "把已保存工作资料画成可探索的工作地图。先读取归档正文，解释业务问题、任务与交付物，"
+        "再连接有依据的能力、工具与责任关系，最多8条判断、4条工作关系。"
+        "当前没有目标JD；工作联系是资料描述或待验证解释，不是招聘资格，requirement使用unspecified。"
+        "关系写清理由和迁移限制，不能把工具功能推成个人职责；没有依据就保留未知。"
+        "材料是用户提供的记录，来源与实际执行尚需核实；不评价个人胜任，不生成行动计划。"
+    ),
+}
+
 
 def personal_documents(career):
     return {
@@ -164,6 +181,8 @@ class CareerService:
         job_ids,
         resume_title="个人简历",
         resume_text="",
+        material_title="起始工作资料",
+        material_text="",
     ):
         for identity in job_ids:
             self.repository.job(identity)
@@ -201,6 +220,11 @@ class CareerService:
                 "runs": [],
             }
             self.projects._write(project)
+        if material_text.strip():
+            self.add_material(
+                project["id"], title=material_title.strip() or "起始工作资料", text=material_text,
+                source_name="用户提供的起始工作资料，来源与内容尚需核实。",
+            )
         if resume_text.strip():
             return self.set_resume(project["id"], title=resume_title, text=resume_text)
         return self.get(project["id"])
@@ -233,14 +257,20 @@ class CareerService:
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等本轮研究结束后再调整目标，当前输入仍保留。")
             memory = MemoryService(self.repository)
-            profile = application_background(memory.list(), identity)
+            notes = memory.list()
+            profile = application_background(notes, identity)
+            profile_id = (profile or {}).get("memory_id") or next(
+                (row["id"] for row in notes
+                 if row["id"] == project["career"].get("background_memory_id")
+                 and row["status"] == "active"), None
+            )
             content = PREFIX + json.dumps(
                 {"background": background, "goal": goal, "constraints": constraints},
                 ensure_ascii=False,
             )
             note = (
-                memory.revise(profile["memory_id"], content)
-                if profile
+                memory.revise(profile_id, content)
+                if profile_id
                 else memory.create(
                     "preference",
                     content,
@@ -1142,8 +1172,6 @@ class CareerService:
             raise ValueError("请选择一种研究方式。")
         with self.store.lock, self.store.db:
             project = self._project(identity)
-            if not project["job_ids"]:
-                raise ValueError("请先在研究工作台为这个目标选择岗位原文。")
             if any(
                 step["state"] in {"running", "queued", "interrupted"} for step in project["steps"]
             ):
@@ -1472,7 +1500,9 @@ class CareerService:
                 source_step_id = interview["step_id"]
                 answer_record = {"interview_question": questions[question_index], "answer": answer}
             else:
-                question = QUESTIONS[kind]
+                question = (MATERIAL_QUESTIONS.get(kind) if not project["job_ids"] else None) or (
+                    QUESTIONS[kind]
+                )
                 reply = None
             focused_document_id = None
             interview_kinds = {"interview", "answer", "followup"}
@@ -1592,6 +1622,12 @@ class CareerService:
                     "旧研究和旧引用只是回查线索，请读取本轮可用原文再作判断；"
                     "若原资料不在本轮范围，保留未知，不把较新的一次当作正确答案。"
                 )
+            if not project["job_ids"]:
+                question += (
+                    "当前未选目标JD，只研究本轮可读资料与用户记录。模板中的岗位对照尚无招聘依据，"
+                    "不能从业务/技术说明补造具体招聘资格或个人职责，也不能推定用户经历与能力。"
+                    "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
+                )
             used = self.projects.usage(project)
             allow_public = bool(allow_public and not offline)
             if allow_public:
@@ -1655,6 +1691,8 @@ class CareerService:
                 project, kind, preferred, repository=self.repository,
                 query="\n".join(value for value in topic if value) or project["goal"],
             )
+            if not project["job_ids"] and not documents:
+                raise ValueError("请先导入一份可用于本次研究的工作资料，或选择目标岗位JD。")
             project = self.projects.add(
                 identity,
                 question,
@@ -1722,6 +1760,7 @@ class CareerService:
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
                     "autonomous_rounds": 3 if autonomous else 0,
+                    "materials_only": not bool(project["job_ids"]),
                     "requirement_key": requirement_key if kind == "evidence" else "",
                     "requirement_text": selected_requirement["text"]
                     if selected_requirement
