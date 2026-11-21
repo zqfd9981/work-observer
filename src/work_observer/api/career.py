@@ -71,6 +71,20 @@ class AttachMaterialInput(BaseModel):
     document_id: str = Field(pattern="^[a-f0-9]{32}$")
 
 
+class JobObservationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    description: str = Field(min_length=1, max_length=100_000)
+    city: str = Field(default="", max_length=300)
+    salary: str = Field(default="", max_length=300)
+    education: str = Field(default="", max_length=300)
+    experience: str = Field(default="", max_length=300)
+    job_url: str = Field(default="", max_length=2000)
+    source_published_at: str = Field(default="", max_length=80)
+    source_published_raw: str = Field(default="", max_length=300)
+    note: str = Field(default="", max_length=1000)
+    data_kind: Literal["user_provided", "synthetic"] = "user_provided"
+
+
 class InsightInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     previous_view: str = Field(min_length=1, max_length=1500)
@@ -231,7 +245,8 @@ class TaskUpdate(BaseModel):
     design_change: str = Field(default="", max_length=1500)
 
 
-def career_routes(*, repository, store, settings, response, read_json, busy, tasks):
+def career_routes(*, repository, store, settings, response, read_json, busy, tasks,
+                  credentials, import_lock):
     def service():
         return CareerService(store(), repository(), settings.raw_directory)
 
@@ -253,6 +268,22 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
     async def create(request):
         data = CareerInput.model_validate(await read_json(request))
         return change(lambda: service().create(**data.model_dump()), 201)
+
+    async def job_observation(request):
+        from work_observer.storage.archive import RawArchive
+
+        data = JobObservationInput.model_validate(await read_json(request))
+        if busy():
+            return response({"message": "请等正在进行的研究结束后再补入新JD，输入仍保留。"}, 409)
+
+        def save():
+            with import_lock:
+                return service().observe_job(
+                    request.path_params["id"], request.path_params["job_id"],
+                    data.model_dump(), RawArchive(settings.raw_directory, credentials),
+                )
+
+        return await run_in_threadpool(lambda: change(save, 201))
 
     async def get(request):
         return change(lambda: detail(request.path_params["id"]))
@@ -449,6 +480,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
         Route("/api/career/{id}/focus", focus, methods=["PATCH"]),
+        Route("/api/career/{id}/jobs/{job_id}/observations", job_observation, methods=["POST"]),
         Route("/api/career/{id}/search", search),
         Route("/api/career/{id}/reuse", reuse, methods=["POST"]),
         Route("/api/career/{id}/materials", add_material, methods=["POST"]),

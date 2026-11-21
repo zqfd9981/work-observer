@@ -834,6 +834,8 @@ def create_app(
             repository=lambda: repository,
             store=lambda: store,
             settings=settings,
+            credentials=credentials,
+            import_lock=import_lock,
             response=response,
             read_json=read_json,
             busy=busy,

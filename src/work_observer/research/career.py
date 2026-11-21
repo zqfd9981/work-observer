@@ -821,6 +821,32 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def observe_job(self, identity, job_id, data, archive):
+        from pydantic import ValidationError
+
+        from work_observer.connectors.manual import ManualJD, import_jd
+        from work_observer.storage.models import Job
+
+        with self.store.lock:
+            project = self._project(identity)
+            if job_id not in project["job_ids"]:
+                raise ValueError("请从当前目标中选择要继续观察的岗位。")
+            with Session(self.repository.engine) as session:
+                job = session.get(Job, job_id)
+                if not job or job.source != "manual":
+                    raise ValueError("这里只补充人工维护岗位的新原文，平台原文请保留原有来源。")
+                try:
+                    jd = ManualJD(
+                        title=job.title, company=job.company_name_raw,
+                        external_id=job.source_job_id,
+                        **{key: value for key, value in data.items() if value},
+                    )
+                except ValidationError as error:
+                    message = error.errors()[0]["msg"].removeprefix("Value error, ")
+                    raise ValueError(message) from error
+            import_jd(self.repository, archive, jd)
+        return self.get(identity)
+
     def add_material(self, identity, *, title, text, source_name=""):
         with self.store.lock, self.store.db:
             project = self._project(identity)

@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={jobObservationEditor,careerWorkMap,taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},jd_observations:draft.jd_observations,job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -422,4 +422,19 @@ assert.ok(mapMarkup.includes('加分')&&mapMarkup.includes('原文明示'));
 assert.ok(mapMarkup.includes('Business background is preferred, with the final condition.'));
 assert.ok(mapMarkup.includes('Not a mandatory recruitment condition.')&&mapMarkup.includes('data-graph-node-choice'));
 console.log('Career relation evidence: preferred qualification, original statement type and complete final condition remain visible inside graph explanations.');
+}
+
+{
+const observedJob={id:'observe-job',source:'manual',current:{title:'Manual role <check>',company_name_raw:'Team',description_text:'OLD BODY MUST NOT BE PREFILLED',salary_raw:'20-25K',source_published_at:'2026-11-18T09:00:00+08:00'},provenance:{description_text:{data_kind:'synthetic'}}};
+ctx.window.journeyTest.setDraft(data,{});
+const emptyObservation=ctx.window.journeyTest.jobObservationEditor(observedJob,data);
+assert.ok(emptyObservation.includes('Manual role &lt;check&gt;')&&!emptyObservation.includes('20-25K'));
+assert.ok(!emptyObservation.includes('OLD BODY MUST NOT BE PREFILLED')&&!emptyObservation.includes('2026-11-18T09:00:00+08:00'));
+assert.ok(emptyObservation.includes('value="synthetic" selected')&&!emptyObservation.includes('name="external_id"'));
+ctx.window.journeyTest.setDraft(data,{jd_observations:{'observe-job':{open:true,values:{description:'New body <keep final condition>',source_published_at:'',note:'A later supplied observation.'}}}});
+const observedDraft=ctx.window.journeyTest.jobObservationEditor(observedJob,data);
+assert.ok(observedDraft.includes('New body &lt;keep final condition&gt;')&&observedDraft.includes('A later supplied observation.'));
+assert.ok(ctx.window.journeyTest.jobObservationEditor(observedJob,{...data,running:true}).includes('<fieldset disabled>'));
+assert.equal(ctx.window.journeyTest.jobObservationEditor({...observedJob,source:'platform'},data),'');
+console.log('JD observation entry: separate new body, original job identity, unknown publication date, retained per-job draft and manual source boundary passed.');
 }
