@@ -1347,7 +1347,7 @@ class CareerService:
             user_question = question.strip() if kind == "ask" else ""
             selected_requirement = None
             continued_requirement = None
-            if kind == "evidence":
+            if kind == "evidence" or kind == "plan" and requirement_key:
                 selected_requirement = next(
                     (
                         row
@@ -1358,8 +1358,22 @@ class CareerService:
                 )
                 if not selected_requirement:
                     raise ValueError("请先选择当前分析中的一项岗位要求。")
-                if any(not row["available"] for row in selected_requirement["proof"]["records"]):
+                if kind == "evidence" and any(
+                    not row["available"] for row in selected_requirement["proof"]["records"]
+                ):
                     raise ValueError("有一份材料已移出目标，请先调整这项要求的证据。")
+                if selected_job_ids is None:
+                    source_job_ids = list(dict.fromkeys(
+                        row["job_id"] for row in selected_requirement["evidence"]
+                        if row.get("job_id") in project["job_ids"]
+                    ))
+            if task_id and kind in {"reflect", "challenge", "ask", "plan"}:
+                continued_requirement = task.get("target_requirement")
+                if continued_requirement and selected_job_ids is None:
+                    source_job_ids = list(dict.fromkeys(
+                        row["job_id"] for row in continued_requirement["evidence"]
+                        if row.get("job_id") in project["job_ids"]
+                    ))
             if insight_id:
                 insight = next(
                     (
@@ -1536,7 +1550,9 @@ class CareerService:
                     previous_step = next(
                         row for row in project["steps"] if row["id"] == previous["step_id"]
                     )
-                    continued_requirement = previous_step.get("career_requirement")
+                    continued_requirement = (
+                        previous_step.get("career_requirement") or continued_requirement
+                    )
                     answer_document_id = previous.get("answer_document_id")
                     answer_record = previous if previous.get("answer") else None
                     previous_text = (
@@ -1799,6 +1815,17 @@ class CareerService:
                     "对照两次设计、design_change与实际观察，有两份作品原文时都应读取。"
                     "说明哪些条件改变或未说明，不能仅因后一结果不同就证明因果或能力提升。"
                 )
+            if kind == "plan" and selected_requirement:
+                question += (
+                    "本次只围绕career_evidence.selected_requirement中的这一项工作或要求，"
+                    "设计一个最小工作样本实验；不要扩成整个岗位学习清单。"
+                    "先回读对应JD，再回读本轮可用的所选经历或作品正文，区分已观察、计划与未知。"
+                    "用户记录的missing和relevance是待核对的个人判断，不能当作能力诊断。"
+                    "保留必备、加分或未说明性质，不把加分条件说成求职门槛。"
+                    "结合明确背景与投入限制，写具体输入、产物、完成检查和可能推翻预期的结果；"
+                    "缺少个人背景时，说明设计依赖的前提，不编造用户已有能力。"
+                    "application_plan最多一个动作，练习不等于已经胜任或达到企业验收标准。"
+                )
             if continued_requirement:
                 question += (
                     "本次沿着一项岗位要求的证据对照继续讨论，原先选定的材料在"
@@ -1880,7 +1907,8 @@ class CareerService:
                     if item.get("question_id") == question_id
                 ][-3:])
             requirement = selected_requirement or continued_requirement or {}
-            preferred.extend(row.get("document_id") for row in requirement.get("records", []))
+            preferred.extend(row.get("document_id")
+                             for row in requirement.get("proof", requirement).get("records", []))
             topic.append(requirement.get("text"))
             related_steps = {source_step_id, *comparison_step_ids}
             if question_id:
@@ -1986,7 +2014,7 @@ class CareerService:
                     "autonomous_rounds": 3 if autonomous else 0,
                     "materials_only": not bool(project["job_ids"]),
                     "understanding_check": understanding_check,
-                    "requirement_key": requirement_key if kind == "evidence" else "",
+                    "requirement_key": requirement_key if selected_requirement else "",
                     "requirement_text": selected_requirement["text"]
                     if selected_requirement
                     else "",
@@ -2115,6 +2143,9 @@ class CareerService:
                         "origin": "research",
                         "question_id": source.get("question_id"),
                         "previous_task_id": source.get("task_id"),
+                        **({"source_step_id": step_id,
+                            "target_requirement": step["career_requirement"]}
+                           if step.get("career_requirement") else {}),
                         "design_change": "",
                         **action,
                         "state": "planned",
@@ -2142,6 +2173,9 @@ class CareerService:
                 data = {
                     **data,
                     "question_id": data.get("question_id") or previous.get("question_id"),
+                    **({"source_step_id": previous.get("source_step_id"),
+                        "target_requirement": previous["target_requirement"]}
+                       if previous.get("target_requirement") else {}),
                 }
             task_id = uuid4().hex
             tasks.append(

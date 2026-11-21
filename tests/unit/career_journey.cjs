@@ -3,7 +3,7 @@ const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/st
 const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
-const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
+const source=fs.readFileSync(process.argv[3],'utf8').replace(/\}\)\(\);\s*$/,'window.journeyTest={taskRequirement,taskRequirementInquiry,requirementExperiments,jobChanges,jobChangeInquiry,jobComparison,comparisonFindings,selectedJobFocus,researchScope,learningInputs,learningChanges,learningChangeNotice,learningImpactRecords,learningImpact,learningImpactPackage,questionPassages,passageOrigin,passageReference,questionHypotheses,challengePanel,investigationPitchDraft,pitchQuestionLink,pitchLengthNotice,pitchCards,researchFocus,interview,interviewSources,interviewFocusLabel,questionInsightDraft,insightLengthNotice,insightSource,questionAnswer,conclusionDraft,researchLabel,requirements,autonomousState,mapQuestionDraft,questionOrigin,mapPair,mapComparison,comparisonWorkMap,questionJourneyRecords,questionJourney,questionJourneyPackage,sourceReading,readingStatus,libraryOriginal,learningRecall,learningFamily,understandingJourney,discussionFocus,libraryInquiry,inquiryPanel,setDraft:(data,draft)=>{career.id=data.id;career.data=data;career.tab="requirements";career.drafts.set(data.id,{inquiries:{requirements:draft},job_changes:draft.job_changes,compare_jobs:draft.compare_jobs,compare_step_id:draft.compare_step_id,compare_open:draft.compare_open,learning_journey:draft.learning_journey,map_comparison:draft.map_comparison,question_answers:draft.question_answers,next_source_step_id:draft.next_source_step_id})}};})();');
 vm.runInContext(source,ctx);
 const stamp=n=>`2026-11-21T00:00:0${n}Z`;
 const question={id:'q',question:'Does retry prove recovery?',created_at:stamp(1),state:'open',conclusion:'',next_evidence:'Need a counterexample.'};
@@ -390,4 +390,27 @@ const insufficient=ctx.window.journeyTest.jobChanges(changeData);
 assert.ok(insufficient.includes('Need another source.')&&!insufficient.includes('data-career-save-job-change'));
 assert.equal(ctx.window.journeyTest.jobChanges({...data,jobs:[]}), '');
 console.log('Source change inquiry: two raw sources, exact historical cutoffs, alternative explanations, escaped differences and insufficient history passed.');
+}
+
+{
+const targetRequirement={key:'role-run:0',text:'Preferred qualification with final condition.',category:'ability',requirement:'preferred',missing:'Only one local observation; production unknown.',evidence:[{id:'target-ev',title:'Original target JD',quote:'<raw>Preferred condition; keep the exception.</raw>',job_id:'target-job'}]};
+const targetedTask={...task,id:'target-task',source_step_id:'target-plan',target_requirement:targetRequirement};
+const targetedData={...data,jobs:[{id:'target-job',current:{title:'Target'}}],tasks:[targetedTask,{...task,id:'foreign-task',title:'Other requirement task',target_requirement:{...targetRequirement,key:'other-run:0'}}],results:[result('target-plan',stamp(2))]};
+const targetBefore=JSON.stringify(targetedData);
+const renderedTarget=ctx.window.journeyTest.taskRequirement(targetedTask,targetedData);
+assert.ok(renderedTarget.includes('Preferred qualification with final condition.')&&renderedTarget.includes('production unknown.'));
+assert.ok(renderedTarget.includes('&lt;raw&gt;')&&!renderedTarget.includes('<raw>'));
+assert.ok(renderedTarget.includes('data-career-task-requirement="target-task"'));
+assert.ok(renderedTarget.includes('/discussion/target-plan'));
+const exportedTarget=ctx.window.journeyTest.taskRequirement(targetedTask,targetedData,true);
+assert.ok(exportedTarget.includes('keep the exception.')&&!exportedTarget.includes('data-career-task-requirement'));
+assert.ok(!ctx.window.journeyTest.taskRequirement({...targetedTask,outcome:''},targetedData).includes('data-career-task-requirement'));
+const candidates=ctx.window.journeyTest.requirementExperiments(targetRequirement,targetedData);
+assert.ok(candidates.includes('/task/target-task')&&!candidates.includes('Other requirement task'));
+const revisit=ctx.window.journeyTest.taskRequirementInquiry(targetedTask,targetedData);
+assert.equal(revisit.task_id,'target-task');
+assert.deepEqual(Array.from(revisit.selected_job_ids),['target-job']);
+assert.equal(ctx.window.journeyTest.taskRequirement(task,targetedData),'');
+assert.equal(JSON.stringify(targetedData),targetBefore);
+console.log('Requirement experiment: original qualification and full raw source, planned versus observed work, exact task return and read-only export passed.');
 }
