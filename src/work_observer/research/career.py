@@ -386,6 +386,7 @@ class CareerService:
                     "recorded_at": row.get("updated_at") or row.get("created_at"),
                 }
             )
+            return records[-1]
 
         for owner in projects:
             career = owner["career"]
@@ -508,7 +509,7 @@ class CareerService:
                         "answer": "面试回答与反馈",
                     }.get(row["kind"], "研究讨论")
                 )
-                add(
+                matched = add(
                     owner,
                     "discussion",
                     row,
@@ -517,6 +518,25 @@ class CareerService:
                     section,
                     step_id=row["step_id"],
                 )
+                if matched is not None and result.get("status") == "completed":
+                    evidence = {item["id"]: item for item in result.get("evidence", [])}
+                    claims = []
+                    for index, claim in enumerate(result.get("claims", [])):
+                        if not all(term in match_text(claim["text"]) for term in terms):
+                            continue
+                        claims.append({
+                            "index": index,
+                            **{key: claim.get(key) for key in (
+                                "text", "category", "basis", "requirement",
+                            )},
+                            "source_titles": list(dict.fromkeys(
+                                evidence[key]["title"] for key in claim.get("evidence_ids", [])
+                                if key in evidence
+                            )),
+                        })
+                    matched["claim_matches"] = claims[:3]
+                    matched["claim_match_count"] = len(claims)
+
         records.sort(
             key=lambda row: (row["recorded_at"] or "", row["project_id"], row["kind"], row["id"]),
             reverse=True,
