@@ -21,6 +21,9 @@ def test_library_pages_records_jobs_and_long_originals_without_model_calls(tmp_p
         auth = {
             "X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]
         }
+        empty = client.get("/api/career/search", params={"q": "共同检索词"})
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["records"] == [] and empty.json()["originals"]["evidence"] == []
         jobs = [
             client.post(
                 "/api/import",
@@ -34,6 +37,11 @@ def test_library_pages_records_jobs_and_long_originals_without_model_calls(tmp_p
             ).json()["job_id"]
             for index in range(31)
         ]
+        # Raw material remains searchable before the user creates any goal.
+        without_goal = client.get("/api/career/search", params={"q": "共同检索词"}).json()
+        assert without_goal["scope"] == "all"
+        assert without_goal["originals"]["matching_jobs"] == 31
+        assert without_goal["records"] == []
         identity = client.post(
             "/api/career",
             headers=auth,
@@ -72,12 +80,14 @@ def test_library_pages_records_jobs_and_long_originals_without_model_calls(tmp_p
             base + "/materials", headers=auth, json={"title": "合成长资料", "text": text}
         ).json()["materials"][0]
 
-        def pages(section, **filters):
+        before = client.get(base).json()
+
+        def pages(section, *, path=None, **filters):
             result, collected, offset = None, [], 0
             field = "sources_offset" if section == "sources" else "records_offset"
             while True:
                 response = client.get(
-                    base + "/search",
+                    path or base + "/search",
                     params={"q": "共同检索词", field: offset, **filters},
                 )
                 assert response.status_code == 200, response.text
@@ -98,7 +108,12 @@ def test_library_pages_records_jobs_and_long_originals_without_model_calls(tmp_p
         insights, filtered = pages("records", record_kind="insight")
         assert len(insights) == 30 and filtered["record_count"] == 30
         assert all(row["kind"] == "insight" for row in insights)
-        originals, last = pages("sources", scope="all")
+        global_insights, _ = pages(
+            "records", path="/api/career/search", record_kind="insight",
+        )
+        assert {row["id"] for row in global_insights} == {row["id"] for row in insights}
+        assert all(row["project_id"] == identity for row in global_insights)
+        originals, last = pages("sources", path="/api/career/search")
         assert {row["job_id"] for row in originals if row.get("job_id")} == set(jobs)
         chunks = [row for row in originals if row.get("public_document_id") == material["id"]]
         assert len(chunks) > 20
@@ -113,7 +128,11 @@ def test_library_pages_records_jobs_and_long_originals_without_model_calls(tmp_p
             base + "/search", params={"q": "共同检索词", "records_offset": -1}
         )
         assert invalid.status_code == 422
-        assert client.get(base).json()["usage"]["calls"] == 0
+        for params in ({"q": "共同检索词", "scope": "goal"}, {"q": ""},
+                       {"q": "共同检索词", "sources_offset": -1}):
+            assert client.get("/api/career/search", params=params).status_code == 422
+        assert client.get(base).json() == before
+        assert before["usage"]["calls"] == 0
     repository = Repository(database)
     try:
         bounded = UnifiedRetrieval(repository).search(

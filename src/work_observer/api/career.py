@@ -37,6 +37,10 @@ class CareerSearchQuery(BaseModel):
     sources_offset: int = Field(default=0, ge=0)
 
 
+class CareerGlobalSearchQuery(CareerSearchQuery):
+    scope: Literal["all"] = "all"
+
+
 class CareerReviewQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     q: str = Field(default="", max_length=200)
@@ -348,10 +352,10 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         return change(lambda: service().focus_question(request.path_params["id"], data.question_id))
 
     async def search(request):
-        query = CareerSearchQuery.model_validate(dict(request.query_params))
-        result = await run_in_threadpool(
-            service().search, request.path_params["id"], **query.model_dump()
-        )
+        identity = request.path_params.get("id")
+        query_type = CareerSearchQuery if identity else CareerGlobalSearchQuery
+        query = query_type.model_validate(dict(request.query_params))
+        result = await run_in_threadpool(service().search, identity, **query.model_dump())
         return response(result)
 
     async def update_goal(request):
@@ -553,6 +557,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
     return [
         Route("/api/career", listing),
         Route("/api/career/review", review),
+        Route("/api/career/search", search),
         Route("/api/career", create, methods=["POST"]),
         Route("/api/career/{id}", get),
         Route("/api/career/{id}/focus", focus, methods=["PATCH"]),

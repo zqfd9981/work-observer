@@ -375,9 +375,12 @@ class CareerService:
         return self.get(identity)
 
     def search(
-        self, identity, *, q, scope="goal", record_kind="all", records_offset=0, sources_offset=0
+        self, identity=None, *, q, scope="goal", record_kind="all",
+        records_offset=0, sources_offset=0,
     ):
-        project = self._project(identity)
+        project = self._project(identity) if identity else None
+        if scope == "goal" and project is None:
+            raise ValueError("请先选择要检索的目标，或检索全部已保存内容。")
         terms = q.split()[:10]
         originals = UnifiedRetrieval(self.repository).search(
             terms,
