@@ -627,6 +627,87 @@ class CareerService:
             "records_truncated": next_records < len(records),
         }
 
+    def work_relations(self, *, q="", goal_id=None, node_kind="all", predicate="all",
+                       state="all", offset=0):
+        """Browse saved report-local relations; keep their original scopes and provenance."""
+        owners = [row for row in self.projects.list(all_records=True)
+                  if row["state"] == "active" and row.get("career")]
+        if goal_id and not any(row["id"] == goal_id for row in owners):
+            raise ValueError("请选择已有的调查目标，或查看全部目标。")
+        terms = [match_text(term) for term in q.split()[:10]]
+        records = []
+        for owner in owners:
+            if goal_id and owner["id"] != goal_id:
+                continue
+            steps = {row["id"]: row for row in owner["steps"]}
+            for study in owner["career"]["runs"]:
+                step = steps.get(study["step_id"], {})
+                if not step.get("run_id") or step["state"] == "abandoned":
+                    continue
+                run = self.store.get(step["run_id"])
+                result = run.get("result") or {}
+                work_map = result.get("work_map") or {}
+                if result.get("status") != "completed" or run["state"] == "invalidated":
+                    continue
+                claims = result.get("claims", [])
+                evidence = {row["id"]: row for row in result.get("evidence", [])}
+                current = None
+                for index, relation in enumerate(work_map.get("work_relations", [])):
+                    if node_kind != "all" and node_kind not in {
+                        relation["source_kind"], relation["target_kind"],
+                    }:
+                        continue
+                    if predicate != "all" and predicate != relation["predicate"]:
+                        continue
+                    text = "\n".join([owner["title"], study.get("user_question") or "",
+                                      *[relation[key] for key in (
+                                          "source_text", "target_text", "rationale",
+                                          "transfer_limit",
+                                      )]])
+                    if not all(term in match_text(text) for term in terms):
+                        continue
+                    if current is None:
+                        review = next((item for item in QualityReviewService(
+                            self.store, self.repository,
+                        ).list_run(step["run_id"]) if not item["stale_result"]), None)
+                        if review and review["status"] == "rejected":
+                            break
+                        audit = audit_result(result, self.repository)
+                        # Same source/background status used by the goal workspace.
+                        current = step["scope_version"] == owner["scope_version"] and not any(
+                            audit[key] for key in (
+                                "changed_sources", "stale_dependencies", "stale_memory",
+                                "stale_knowledge",
+                            )
+                        )
+                    if state != "all" and current != (state == "current"):
+                        continue
+                    linked = [{"index": n, **claims[n]} for n in relation["claim_indices"]
+                              if 0 <= n < len(claims)]
+                    refs = set(key for claim in linked for key in claim["evidence_ids"])
+                    records.append({
+                        "key": f"{owner['id']}:{study['step_id']}:{index}",
+                        "project_id": owner["id"], "project_title": owner["title"],
+                        "step_id": study["step_id"], "relation_index": index,
+                        "question_id": study.get("question_id"),
+                        "question": study.get("user_question") or "工作地图研究",
+                        "recorded_at": study["created_at"], "current": current,
+                        "scope_note": work_map.get("scope_note", ""),
+                        "scope": result.get("scope", {}),
+                        "relation": relation, "claims": linked,
+                        "evidence": [row for key, row in evidence.items() if key in refs],
+                        "unknowns": work_map.get("unknowns", []),
+                    })
+        records.sort(key=lambda row: (row["recorded_at"], row["key"]), reverse=True)
+        page = records[offset:offset + 12]
+        return {
+            "goals": [{"id": row["id"], "title": row["title"]} for row in owners],
+            "relations": page, "total_count": len(records), "offset": offset,
+            "next_offset": offset + len(page) if offset + len(page) < len(records) else None,
+            "notice": "已保存研究中的关系解释，不是独立知识或岗位事实。保留每次研究的范围、"
+            "判断性质、引用和限制；不同记录不自动合并，新旧顺序不证明对错或行业变化。",
+        }
+
     def get(self, identity):
         project = self._project(identity)
         career = project["career"]

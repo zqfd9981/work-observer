@@ -1,5 +1,5 @@
 <section id="page-career" class="page" hidden aria-labelledby="career-title">
-  <div class="page-head"><div><div class="eyebrow">UNDERSTAND THE WORK. BUILD THE EVIDENCE.</div><h1 id="career-title">让下一步，有据可依<span class="heading-dot">.</span></h1><p>看清目标岗位，验证能力迁移，把真实经历变成能讲清的证据。</p></div><div class="result-actions"><a class="secondary button-link" href="#career/search">查找已有内容 ↗</a><a class="secondary button-link" href="#career/review">我的认知回顾 ↗</a><button class="primary" id="career-new">＋ 新建求职目标</button></div></div>
+  <div class="page-head"><div><div class="eyebrow">UNDERSTAND THE WORK. BUILD THE EVIDENCE.</div><h1 id="career-title">让下一步，有据可依<span class="heading-dot">.</span></h1><p>看清目标岗位，验证能力迁移，把真实经历变成能讲清的证据。</p></div><div class="result-actions"><a class="secondary button-link" href="#career/search">查找已有内容 ↗</a><a class="secondary button-link" id="career-work-link" href="#career/work" hidden>工作关系库 ↗</a><a class="secondary button-link" href="#career/review">我的认知回顾 ↗</a><button class="primary" id="career-new">＋ 新建求职目标</button></div></div>
   <div id="career-search" hidden></div>
   <div id="career-home" hidden></div>
   <details id="career-goal-switcher" class="career-goal-switcher" open><summary>我的求职目标</summary><div id="career-goals" class="career-goals"></div></details>
@@ -15,6 +15,7 @@
       <button class="primary full" id="career-create-submit">保存并进入研究 ↗</button><p class="form-note">问题会保存为后续研究焦点。个人背景和其他资料可以后补；保存不会调用模型，进入后由你开始研究。</p>
     </form>
   </div>
+  <div id="career-work-relations" hidden></div>
   <div id="career-review" hidden></div>
   <div id="career-detail" hidden></div>
   <dialog id="career-capture-dialog" class="drawer" aria-labelledby="career-capture-title"><div class="dialog-top"><span id="career-capture-title">把原文带入调查</span><button class="icon-button" data-close="career-capture-dialog" aria-label="取消整理摘录">×</button></div><div id="career-capture-content"></div></dialog>

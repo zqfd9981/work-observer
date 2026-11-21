@@ -53,6 +53,18 @@ class CareerReviewQuery(BaseModel):
     offset: int = Field(default=0, ge=0)
 
 
+class CareerRelationsQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    q: str = Field(default="", max_length=200)
+    goal_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    node_kind: Literal[
+        "all", "business", "task", "deliverable", "responsibility", "ability", "tool"
+    ] = "all"
+    predicate: Literal["all", "supports", "requires", "produces", "contradicts"] = "all"
+    state: Literal["all", "current", "historical"] = "all"
+    offset: int = Field(default=0, ge=0)
+
+
 class StoryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=150)
@@ -382,6 +394,10 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         result = await run_in_threadpool(service().search, identity, **query.model_dump())
         return response(result)
 
+    async def work_relations(request):
+        query = CareerRelationsQuery.model_validate(dict(request.query_params))
+        return response(await run_in_threadpool(service().work_relations, **query.model_dump()))
+
     async def capture_passage(request):
         data = CapturePassageInput.model_validate(await read_json(request))
         return change(lambda: service().capture_passage(**data.model_dump()), 201)
@@ -599,6 +615,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
     return [
         Route("/api/career", listing),
         Route("/api/career/review", review),
+        Route("/api/career/work-relations", work_relations),
         Route("/api/career/search", search),
         Route("/api/career/capture-passage", capture_passage, methods=["POST"]),
         Route("/api/career", create, methods=["POST"]),
