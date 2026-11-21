@@ -45,6 +45,7 @@ class StoryInput(BaseModel):
     result: str = Field(min_length=1, max_length=1500)
     limits: str = Field(default="", max_length=1000)
     requirement_key: str = Field(default="", max_length=100)
+    source_task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class ResumeInput(BaseModel):

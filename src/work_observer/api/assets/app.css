@@ -237,3 +237,5 @@
 .career-comparison-record,.career-comparison-inputs{margin-top:18px}
 
 .career-kanban-single{grid-template-columns:minmax(0,1fr)}.career-kanban-single>.career-lane-empty{display:none}
+
+.career-task-story-source{background:var(--surface-muted,#eef4ed);padding:16px;border-radius:10px;margin-bottom:22px}.career-task-story-source h3{margin-top:0}.career-task-story-choice{display:flex!important;align-items:flex-start;gap:10px;margin:12px 0}.career-task-story-choice input{width:auto;flex:none;margin-top:6px}.career-task-story-choice span{min-width:0;overflow-wrap:anywhere}.career-task-story-choice small{display:block;margin-top:4px}.career-task-story-source details{margin-top:16px}

@@ -1812,6 +1812,7 @@ class ProjectService:
                     "id": selected_story["id"],
                     "title": selected_story["title"],
                     "document_id": selected_story["document_id"],
+                    "source_task_id": selected_story.get("source_task_id"),
                     "notice": "用户选中的经历，需读取原文，不把不同项目混为同一个项目。",
                 }
                 if selected_story

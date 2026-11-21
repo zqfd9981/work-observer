@@ -973,9 +973,23 @@ class CareerService:
                 raise ValueError("每个目标最多保存12份经历，请精简后再补充。")
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等当前研究结束后再补充经历，输入仍保留。")
+            source_task = next(
+                (row for row in project["career"]["tasks"]
+                 if row["id"] == data.get("source_task_id")), None
+            )
+            if data.get("source_task_id") and (
+                not source_task or (
+                    not source_task.get("outcome", "").strip()
+                    and not (previous and previous.get("source_task_id") == data["source_task_id"])
+                )
+            ):
+                raise ValueError("请选择本目标中已记录实际观察的练习，再整理经历。")
             text = "\n".join(
                 [
                     "用户自述经历，尚未独立核实。",
+                    *(["由个人练习整理，不代表企业工作经历或生产效果。",
+                       "来源练习：" + source_task["title"]]
+                      if source_task else []),
                     "项目/工作：" + data["title"],
                     "目标和场景：" + data["situation"],
                     "我亲自负责：" + data["action"],
@@ -1193,6 +1207,7 @@ class CareerService:
             }
             if kind == "story":
                 copied["requirement_key"] = ""
+                copied.pop("source_task_id", None)
             else:
                 copied.update(origin="reused", source_key="user:" + copied["id"], evidence_ids=[])
                 copied["question_id"] = None
