@@ -1510,6 +1510,14 @@ class ProjectService:
                     observations = []
                 elif selected_task:
                     stories = []
+                elif step.get("career_requirement"):
+                    chosen = step["career_requirement"].get("records", [])
+                    stories = [row for row in stories if any(
+                        item["kind"] == "story" and item["id"] == row["id"] for item in chosen
+                    )]
+                    observations = [row for row in observations if any(
+                        item["kind"] == "task" and item["id"] == row["id"] for item in chosen
+                    )]
                 elif comparing_answers:
                     stories, observations = [], []
             notes = career.get("insights", [])
@@ -1879,6 +1887,7 @@ class ProjectService:
                     "answer_document_id": entry.get("answer_document_id"),
                     "recorded_at": entry["created_at"],
                     "understanding_check": bool(entry.get("understanding_check")),
+                    "requirement_then": deepcopy(old_step.get("career_requirement")),
                     "same_job_scope": old_step["scope_version"] == record["scope_version"],
                     "input_scope_then": {
                         "job_ids": [row["id"] for row in old_scope.get("jobs", [])]
@@ -1985,6 +1994,10 @@ class ProjectService:
                         "notice": "用户自己的讲述稿，不是新增事实来源；事实仍需回查经历原文。",
                     }
                     for row in career.get("pitches", [])[-2:]
+                    if not step.get("career_requirement") or row.get("story_id") in {
+                        item["id"] for item in step["career_requirement"].get("records", [])
+                        if item["kind"] == "story"
+                    }
                 ],
                 "public_research_policy": (
                     "可按问题需要补查企业官方业务说明和技术资料，优先从所选JD与已有归档出发。"

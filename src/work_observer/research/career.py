@@ -2152,6 +2152,7 @@ class CareerService:
             retrieval_review, retrieval_job_ids, retrieval_document_ids = None, None, None
             feedback_origin, feedback_documents = None, None
             retrieval_case = None
+            requirement_interview_documents = None
             answer_pair_documents = None
             comparison_followup_ids = []
             synthesis_sources = []
@@ -2266,7 +2267,7 @@ class CareerService:
             user_question = question.strip() if kind in {"ask", "map"} else ""
             selected_requirement = None
             continued_requirement = None
-            if kind == "evidence" or kind == "plan" and requirement_key:
+            if kind == "evidence" or kind in {"plan", "interview"} and requirement_key:
                 selected_requirement = next(
                     (
                         row
@@ -2281,10 +2282,24 @@ class CareerService:
                     not row["available"] for row in selected_requirement["proof"]["records"]
                 ):
                     raise ValueError("有一份材料已移出目标，请先调整这项要求的证据。")
+                if kind == "interview" and not selected_job_ids:
+                    selected_job_ids = None
                 if selected_job_ids is None:
                     source_job_ids = list(dict.fromkeys(
                         row["job_id"] for row in selected_requirement["evidence"]
                         if row.get("job_id") in project["job_ids"]
+                    ))
+                    if kind == "interview":
+                        assessment_job_ids = source_job_ids[:]
+                if kind == "interview" and not task_id and not story_id:
+                    requirement_interview_documents = list(dict.fromkeys(
+                        key for key in [
+                            *(row.get("public_document_id")
+                              for row in selected_requirement["evidence"]),
+                            *(row.get("document_id") for row in selected_requirement["proof"][
+                                "records"
+                            ] if row.get("available")),
+                        ] if key in project["public_document_ids"]
                     ))
             if task_id and kind in {"reflect", "challenge", "ask", "plan"}:
                 continued_requirement = task.get("target_requirement")
@@ -2333,6 +2348,20 @@ class CareerService:
                 )
                 if previous_assessment:
                     interview_task_origin = deepcopy(previous_assessment.get("interview_origin"))
+                    original_step = next(row for row in project["steps"]
+                                         if row["id"] == previous_assessment["step_id"])
+                    if not selected_requirement and continued_requirement is None:
+                        continued_requirement = deepcopy(original_step.get("career_requirement"))
+                    if continued_requirement and not previous_assessment.get("task_id") and not (
+                        previous_assessment.get("story_id")
+                    ):
+                        prior_scope = previous_assessment["result"].get("scope") or {}
+                        answer_id = previous_assessment.get("answer_document_id")
+                        allowed = set(project["public_document_ids"]) | {answer_id}
+                        requirement_interview_documents = list(dict.fromkeys(
+                            key for key in [*prior_scope.get("archived_public_ids", []), answer_id]
+                            if key and key in allowed
+                        ))
                     old_pair = (previous_assessment["result"].get("career_learning_context")
                                 or {}).get("answer_comparison", [])
                     if kind in {"answer", "followup"} and len(old_pair) == 2:
@@ -2346,8 +2375,6 @@ class CareerService:
                             ) if key in allowed
                         ))
                     if inherit_focus and selected_job_ids is None:
-                        original_step = next(row for row in project["steps"]
-                                             if row["id"] == previous_assessment["step_id"])
                         effective = (previous_assessment["result"].get("investigation") or {}).get(
                             "effective_scope",
                         )
@@ -2420,9 +2447,14 @@ class CareerService:
                     and row["interview_question"] == pair[0].get("interview_question")
                     and bool(row.get("understanding_check"))
                     == bool(pair[0].get("understanding_check"))
+                    and (row.get("requirement_key") or "")
+                    == (pair[0].get("requirement_key") or "")
                     and all(row.get(key) == pair[0].get(key) for key in answer_focus)
                     for row in pair
                 )
+                if (len(pair) == 2 and all(row["kind"] == "answer" for row in pair)
+                        and not answer_pair):
+                    raise ValueError("请选择同一道题、同一项岗位工作和材料下的两次回答。")
                 if answer_pair:
                     requested = dict(zip(
                         answer_focus, (question_id, task_id, story_id, insight_id), strict=True,
@@ -2431,7 +2463,10 @@ class CareerService:
                            for key in answer_focus):
                         raise ValueError("请沿用这两次回答对应的认识、调查与经历，再开始对照。")
                     understanding_check = bool(pair[0].get("understanding_check"))
-                    if inherit_focus:
+                    requirement_source = next(row for row in project["steps"]
+                                              if row["id"] == pair[0]["step_id"])
+                    continued_requirement = deepcopy(requirement_source.get("career_requirement"))
+                    if inherit_focus or continued_requirement:
                         pair_steps = [next(row for row in project["steps"]
                                            if row["id"] == answer["step_id"]) for answer in pair]
                         if not selected_job_ids:
@@ -2790,6 +2825,14 @@ class CareerService:
                     "selected_answer_comparison保留原来的两次解释、各自观察和未知，"
                     "须先读本轮selected_answer，再按可读原文核对当前回答是否回应了该追问。"
                     "不要重做整套对照，也不因这次回答更肯定就补出未执行的验证或正确性。"
+                )
+            if kind == "interview" and selected_requirement:
+                question += (
+                    "\n本次只围绕selected_requirement中的这一项工作与原文出题，保留职责与资格强度。"
+                    "先检查如何解释任务、输入输出、取舍与核对方法；没有个人经历也应给出可练问题，"
+                    "允许用户明确未做过、只谈验证计划或保留未知，不要求虚构项目和指标。"
+                    "用户材料以records中明确选入且本轮可读的内容为准，计划不算已执行；"
+                    "未选入或缺少材料不表示用户不会，也不把工作区其他项目拼成用户的经历。"
                 )
             if practice_task_id:
                 practice = next((row for row in project["career"]["tasks"]
@@ -3384,6 +3427,9 @@ class CareerService:
                 project, kind, preferred, repository=self.repository,
                 query="\n".join(value for value in topic if value) or project["goal"],
             )
+            if requirement_interview_documents is not None:
+                documents = requirement_interview_documents
+                omitted = len(set(project["public_document_ids"]) - set(documents))
             if retrieval_document_ids is not None:
                 documents = retrieval_document_ids
                 omitted = len(set(project["public_document_ids"]) - set(documents))
@@ -3421,6 +3467,10 @@ class CareerService:
                 project["steps"][-1]["career_practice_task_id"] = practice_task_id
             if retrieval_document_ids is not None:
                 project["steps"][-1]["career_source_document_ids"] = retrieval_document_ids[:]
+            elif requirement_interview_documents is not None:
+                project["steps"][-1]["career_source_document_ids"] = (
+                    requirement_interview_documents[:]
+                )
             if feedback_documents is not None:
                 project["steps"][-1]["career_source_document_ids"] = feedback_documents[:]
             if answer_pair_documents is not None:
@@ -3497,10 +3547,12 @@ class CareerService:
                     "materials_only": not bool(project["job_ids"]),
                     "understanding_check": understanding_check,
                     "inquiry_answer": inquiry_answer,
-                    "requirement_key": requirement_key if selected_requirement else "",
-                    "requirement_text": selected_requirement["text"]
-                    if selected_requirement
-                    else "",
+                    "requirement_key": (selected_requirement or continued_requirement or {}).get(
+                        "key", "",
+                    ),
+                    "requirement_text": (selected_requirement or continued_requirement or {}).get(
+                        "text", "",
+                    ),
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if has_task else None,
                     "experiment_ids": experiment_ids,
@@ -3539,7 +3591,7 @@ class CareerService:
                 project["steps"][-1]["career_requirement"] = {
                     **{
                         key: selected_requirement[key]
-                        for key in ("key", "text", "category", "requirement", "evidence")
+                        for key in ("key", "text", "category", "requirement", "basis", "evidence")
                     },
                     **selected_requirement["proof"],
                     "notice": "用户选定的材料与判断，关联不代表胜任，须回读原文核对。",

@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={requirementSuiteDraft,retrievalSuiteReplayDraft,retrievalCaseInquiryDraft,retrievalCaseRecall,retrievalSuiteComparison,retrievalSuiteNext,retrievalSuiteCase,retrievalSuitePanel,retrievalSuiteResult,setSuite:suite=>{career.drafts.get(career.id).retrieval_suite=suite;},answerComparisonConditions,answerComparisonRecall,practiceAnswerSource,feedbackPracticeAnswer,practiceAnswerRecall,feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={requirementInterviewHistory,chooseInterviewFocus,interviewFocusParts,interviewFocusLabel,interviewSelection,interviewSourceFocus,interviewFocusPanel,requirementRecall,answerComparisonDraft,requirementSuiteDraft,retrievalSuiteReplayDraft,retrievalCaseInquiryDraft,retrievalCaseRecall,retrievalSuiteComparison,retrievalSuiteNext,retrievalSuiteCase,retrievalSuitePanel,retrievalSuiteResult,setSuite:suite=>{career.drafts.get(career.id).retrieval_suite=suite;},answerComparisonConditions,answerComparisonRecall,practiceAnswerSource,feedbackPracticeAnswer,practiceAnswerRecall,feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -206,3 +206,29 @@ const targetedReplay=api.retrievalSuiteReplayDraft({...noteReplayRecord,previous
 assert.equal(targetedReplay.requirement_key,evaluationRequirement.key);assert.equal(targetedReplay.target_requirement.missing,'没有语义效果观察');
 const targetedSingleReplay=api.retrievalReplayDraft({...noteReplayRecord,input:values,previous:{...noteReplayRecord.previous,target_requirement:directedSuite.suite.target_requirement}});
 assert.equal(targetedSingleReplay.requirement_key,evaluationRequirement.key);assert.equal(targetedSingleReplay.target_requirement.requirement,'unspecified');
+
+// A requirement identity contains a colon. Keep the entire identity across selection and replay.
+const requirementFocusData={id:'requirement-focus',requirements:[{key:'run:3',text:'建设检索评估集'}],stories:[],tasks:[],insights:[],results:[{step_id:'req-question',kind:'interview',state:'completed',current:true,requirement_key:'run:3',result:{status:'completed',gaps:['怎样验证？'],career_learning_context:{requirement:{key:'run:3',text:'当时的职责',category:'task',requirement:'unspecified',basis:'direct',evidence:[],records:[]}}}},{step_id:'other-question',kind:'interview',state:'completed',current:true,requirement_key:'other:4',result:{status:'completed',gaps:['怎样验证？']}}]};
+api.setup(requirementFocusData);
+assert.deepEqual(Array.from(api.interviewFocusParts('requirement:run:3')),['requirement','run:3']);
+const requirementSelection=api.interviewSelection(requirementFocusData,{interview_focus:'requirement:run:3'});
+assert.equal(requirementSelection.sources.length,1);assert.equal(requirementSelection.selected.step_id,'req-question');
+assert.equal(api.interviewSourceFocus(requirementSelection.selected),'requirement:run:3');
+assert.match(api.interviewFocusLabel(requirementSelection.selected,requirementFocusData),/当时的职责/);
+assert.match(api.interviewFocusPanel(requirementFocusData),/value="requirement:run:3"/);
+const requirementRecallHtml=api.requirementRecall(requirementSelection.selected.result,requirementFocusData.id);
+assert.match(requirementRecallHtml,/当时没有选入个人材料/);assert.match(requirementRecallHtml,/本轮选定的岗位工作/);
+const requirementAnswer={kind:'answer',step_id:'attempt-1',state:'completed',requirement_key:'run:3',interview_question:'怎样验证？',result:{status:'completed'}};
+assert.throws(()=>api.answerComparisonDraft([requirementAnswer,{...requirementAnswer,step_id:'attempt-2',requirement_key:'other:4'}]),/同一道题/);
+assert.equal(api.answerComparisonDraft([requirementAnswer,{...requirementAnswer,step_id:'attempt-2'}]).comparison_step_ids.length,2);
+
+api.chooseInterviewFocus('requirement:run:3');
+const requirementPanel=api.interviewFocusPanel(requirementFocusData);
+assert.match(requirementPanel,/value="requirement:run:3" selected/);assert.match(requirementPanel,/还没有经历也可以解释工作理解/);
+const comparisonWithRequirement=api.answerComparisonConditions({requirement_then:requirementSelection.selected.result.career_learning_context.requirement},requirementFocusData.id,true);
+assert.match(comparisonWithRequirement,/当时的职责/);assert.match(comparisonWithRequirement,/当时没有选入个人材料/);
+
+const requirementHistory=api.requirementInterviewHistory(requirementFocusData.requirements[0],requirementFocusData);
+assert.match(requirementHistory,/#career\/requirement-focus\/replay\/req-question\/0/);assert.doesNotMatch(requirementHistory,/other-question/);assert.match(requirementHistory,/已保存 0 次回答/);
+const requirementHistoryExport=api.requirementInterviewHistory(requirementFocusData.requirements[0],requirementFocusData,true);
+assert.match(requirementHistoryExport,/怎样验证？/);assert.doesNotMatch(requirementHistoryExport,/href=/);

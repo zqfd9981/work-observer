@@ -1808,6 +1808,7 @@ async def _research(
             "selected_note": personal["selected_learning_note"],
             "retrieval_review": deepcopy(personal.get("retrieval_review")),
             "retrieval_case": deepcopy(personal.get("selected_retrieval_case")),
+            "requirement": deepcopy(personal.get("selected_requirement")),
             "feedback_origin": deepcopy(personal.get("feedback_origin")),
             "practice_experiment": deepcopy(personal.get("selected_practice_experiment")),
             "selected_notes": personal.get("selected_learning_notes", []),
