@@ -1243,18 +1243,29 @@ class CareerService:
             import_jd(self.repository, archive, jd)
         return self.get(identity)
 
-    def add_material(self, identity, *, title, text, source_name=""):
+    def add_material(self, identity, *, title, text, source_name="", question_id=None):
         with self.store.lock, self.store.db:
             project = self._project(identity)
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等本轮研究结束后再补充资料，输入仍保留。")
+            question = None
+            if question_id:
+                question = next((row for row in project["career"].get("questions", [])
+                                 if row["id"] == question_id), None)
+                if question is None:
+                    raise ValueError("未找到这条调查问题，请重新选择资料用途。")
+                if len(question.get("material_ids", [])) >= 6:
+                    raise ValueError("本调查已有6份重点资料，请先调整选择，或仅保存到目标资料库。")
             documents = list(project.get("public_document_ids") or [])
             document = PublicDocumentService(
                 self.repository, self.raw_directory / "public"
             ).archive_text(title, text, source_name)["document"]
             project["public_document_ids"] = [*documents, document["id"]]
+            if question is not None:
+                question["material_ids"] = [*question.get("material_ids", []), document["id"]]
+                question["updated_at"] = now()
             self.projects._write(project)
-        return self.get(identity)
+        return {**self.get(identity), "added_material_id": document["id"]}
 
     def _material_catalog(self, identities):
         materials = archive_catalog(self.repository, identities, limit=None)

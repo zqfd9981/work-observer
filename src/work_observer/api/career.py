@@ -129,6 +129,10 @@ class CareerMaterialInput(BaseModel):
     source_name: str = Field(default="", max_length=500)
 
 
+class CareerMaterialCreateInput(CareerMaterialInput):
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+
 class AttachMaterialInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     document_id: str = Field(pattern="^[a-f0-9]{32}$")
@@ -597,7 +601,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
     async def add_material(request):
         if busy():
             return response({"message": "请等本轮研究结束后再补充资料，输入仍保留。"}, 409)
-        data = CareerMaterialInput.model_validate(await read_json(request))
+        data = CareerMaterialCreateInput.model_validate(await read_json(request))
         return change(
             lambda: service().add_material(request.path_params["id"], **data.model_dump()), 201
         )
