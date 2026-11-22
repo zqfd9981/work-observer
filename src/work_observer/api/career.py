@@ -291,6 +291,7 @@ class CareerResearchInput(BaseModel):
     claim_review_index: int | None = Field(default=None, strict=True, ge=0)
     feedback_gap_index: int | None = Field(default=None, strict=True, ge=0)
     practice_task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    retrieval_case_name: str | None = Field(default=None, min_length=1, max_length=80)
     experiment_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
         default=None, max_length=4
     )

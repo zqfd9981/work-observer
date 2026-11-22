@@ -6,7 +6,8 @@ import sqlite3
 from copy import deepcopy
 
 from starlette.testclient import TestClient
-from test_adaptive_investigation import settled, workspace
+from test_adaptive_investigation import ScriptedPlanner, brief, settled, workspace
+from test_adaptive_investigation import task as investigation_task
 
 from work_observer.research.agent import ModelClient
 
@@ -14,6 +15,9 @@ from work_observer.research.agent import ModelClient
 class SuiteDiscussionModel(ModelClient):
     def __init__(self):
         self.contexts, self.last_usage = [], {}
+        self.planner = ScriptedPlanner(brief([investigation_task(
+            terms=["上下文"], retry=["端云同步"], question="只核对记忆职责样例的标签与返回。",
+        )]))
 
     async def turn(self, history):
         context = json.loads(history[1]["content"])
@@ -29,9 +33,28 @@ class SuiteDiscussionModel(ModelClient):
         if getattr(self, "parent_artifact", None):
             documents.add(self.parent_artifact)
             assert review["previous_suite_comparison"] == self.expected_comparison
+        if getattr(self, "expected_case_name", None):
+            selected = personal["selected_retrieval_case"]
+            assert selected["name"] == self.expected_case_name
+            assert len(selected["runs"]) == 2
+            assert selected["input"]["expected_job_ids"] == self.jobs[:1]
+            assert selected["runs"][0]["unexpected_source_keys"] == ["job:" + self.jobs[1]]
         if personal.get("selected_story"):
             documents.add(personal["selected_story"]["document_id"])
         assert set(context["fixed_scope"]["archived_public_ids"]) == documents
+        if any(tool["name"] == "plan_investigation" for tool in self.tools):
+            self.planner.tools = self.tools
+            self.planner.plan["tasks"][0]["source_job_ids"] = self.jobs[:]
+            calls, raw = await self.planner.turn(history)
+            if calls[0]["name"] == "finish_research":
+                args = json.loads(calls[0]["arguments"])
+                outputs = [json.loads(row["output"]) for row in history
+                           if row.get("type") == "function_call_output"]
+                evidence = next(row["evidence"] for row in outputs if row.get("engine"))
+                for claim, source in zip(args["claims"], evidence, strict=True):
+                    claim["text"] = source["quote"][:600]
+                calls[0]["arguments"] = json.dumps(args)
+            return calls, raw
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
         if not outputs:
@@ -190,6 +213,37 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
         assert discussed["result"]["career_learning_context"]["retrieval_review"][
             "previous_suite_comparison"
         ] == comparison
+        for invalid in ("不存在的样例", ""):
+            rejected = client.post(base + "/prepare", headers=auth, json={
+                "kind": "ask", "task_id": changed_task["id"], "retrieval_case_name": invalid,
+                "question": "只追问这一条。",
+            })
+            assert rejected.status_code == 422, rejected.text
+        model.expected_case_name = "记忆职责"
+        step = post(base + "/prepare", {
+            "kind": "ask", "task_id": changed_task["id"],
+            "retrieval_case_name": model.expected_case_name,
+            "question_id": goal["focus_question_id"], "selected_job_ids": jobs[:2],
+            "inherit_focus": False, "material_ids": [],
+            "adaptive": True,
+            "question": "只核对这条样例：改变预期标签，为什么不能证明查询修复？",
+        })
+        post("/api/projects/" + goal["id"] + "/run", {"step_id": step["step_id"]})
+        focused = settled(client, base)["results"][0]
+        assert focused["result"]["status"] == "completed", focused["result"]
+        selected = focused["result"]["career_learning_context"]["retrieval_case"]
+        assert selected["name"] == model.expected_case_name
+        assert focused["retrieval_case_name"] == model.expected_case_name
+        continued = post(base + "/prepare", {
+            "kind": "ask", "source_step_id": focused["step_id"],
+            "adaptive": True,
+            "question": "如果保持原来的预期标签，应补哪项实际观察？",
+        })
+        post("/api/projects/" + goal["id"] + "/run", {"step_id": continued["step_id"]})
+        discussed = settled(client, base)["results"][0]
+        assert discussed["result"]["status"] == "completed", discussed["result"]
+        assert discussed["result"]["career_learning_context"]["retrieval_case"] == selected
+        model.expected_case_name = None
         revised_story = post(base + "/stories", {
             "title": "合成评估复验经历", "source_task_id": changed_task["id"],
             "situation": "检查失败样例后重新运行。", "action": "修改查询和标签，并保留移除样例。",

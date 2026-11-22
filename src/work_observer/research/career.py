@@ -2092,6 +2092,7 @@ class CareerService:
         claim_review_index=None,
         feedback_gap_index=None,
         practice_task_id=None,
+        retrieval_case_name=None,
         experiment_ids=None,
         question="",
         section="requirements",
@@ -2129,7 +2130,11 @@ class CareerService:
             raise ValueError("请从一次完整回答的反馈选择待验证的问题，再设计练习。")
         if practice_task_id and kind != "answer":
             raise ValueError("请在重答原题时带入这项练习观察。")
-        material_focus_supplied = material_id is not None or material_ids is not None
+        if retrieval_case_name and kind != "ask":
+            raise ValueError("请从已保存评估集的具体样例准备追问。")
+        material_focus_supplied = (
+            material_id is not None or material_ids is not None or retrieval_case_name is not None
+        )
         material_ids = list(material_ids or [])
         if material_ids and (kind not in {"ask", "map", "plan"} or material_id):
             raise ValueError("所选资料可用于提问、工作地图或验证设计，请取消单份重点资料。")
@@ -2146,6 +2151,7 @@ class CareerService:
             assessment_job_ids, interview_task_origin = None, None
             retrieval_review, retrieval_job_ids, retrieval_document_ids = None, None, None
             feedback_origin, feedback_documents = None, None
+            retrieval_case = None
             answer_pair_documents = None
             comparison_followup_ids = []
             synthesis_sources = []
@@ -2175,6 +2181,11 @@ class CareerService:
                     if insight_ids is None:
                         insight_ids = list(source.get("insight_ids") or [])
                     source_job_ids = source.get("selected_job_ids", [])
+                    if (retrieval_case_name is None
+                            and (not task_id or task_id == source.get("task_id"))):
+                        retrieval_case_name = source.get("retrieval_case_name")
+                        if retrieval_case_name:
+                            material_focus_supplied = True
                     question_ids = {row["id"] for row in project["career"].get("questions", [])}
                     task_ids = {row["id"] for row in project["career"]["tasks"]}
                     story_ids = {row["id"] for row in project["career"]["stories"]}
@@ -3171,7 +3182,18 @@ class CareerService:
                             available=False,
                             unavailable_reason="原运行记录不在当前目标，不能以后来记录替代。",
                         )
-                    if inherit_focus:
+                    if retrieval_case_name:
+                        from work_observer.research.retrieval_suite import select_case
+
+                        retrieval_case = select_case(retrieval_review, retrieval_case_name)
+                        question += (
+                            "本轮只围绕selected_retrieval_case这条明确选中的样例追问。"
+                            "读取它的两组查询、使用者预期、实际命中与失败定位，再核对原文；"
+                            "区分表达不匹配、片段上限、额外来源和标签仍需核实的情况。"
+                            "按用户本轮问题给出有引用的有限解释及最有价值的下一项证据，"
+                            "不重复整组评估，也不以旧记录证明已经修复或学会。"
+                        )
+                    if inherit_focus or retrieval_case_name:
                         explicit_scope = selected_job_ids if selected_job_ids is not None else (
                             assessment_job_ids
                         )
@@ -3214,6 +3236,8 @@ class CareerService:
                         "原文缺失或已移出范围时明确无法核对，不改用工作区其他来源替代，"
                         "也不从局部词面结果推断语义效果、企业要求或个人胜任。"
                     )
+            if retrieval_case_name and (not task_id or retrieval_case is None):
+                raise ValueError("请选定本目标中已保存的评估集和具体样例，再准备追问。")
             if selected_job_ids is None and assessment_job_ids is not None:
                 selected_job_ids = assessment_job_ids
             if selected_job_ids is None:
@@ -3383,6 +3407,8 @@ class CareerService:
                 project["steps"][-1]["job_ids"] = selected_job_ids[:]
             if retrieval_review is not None:
                 project["steps"][-1]["career_retrieval_review"] = retrieval_review
+            if retrieval_case is not None:
+                project["steps"][-1]["career_retrieval_case"] = retrieval_case
             if feedback_origin:
                 project["steps"][-1]["career_feedback_origin"] = feedback_origin
             if practice_task_id:
@@ -3456,6 +3482,7 @@ class CareerService:
                     "question_id": question_id,
                     **({"feedback_origin": feedback_origin} if feedback_origin else {}),
                     **({"practice_task_id": practice_task_id} if practice_task_id else {}),
+                    **({"retrieval_case_name": retrieval_case["name"]} if retrieval_case else {}),
                     "comparison_step_ids": comparison_step_ids,
                     "passage_ids": passage_ids,
                     "synthesis_sources": synthesis_sources,

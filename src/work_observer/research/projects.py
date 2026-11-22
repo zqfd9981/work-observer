@@ -1947,6 +1947,7 @@ class ProjectService:
                 "selected_answer_comparison": selected_answers,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
                 "retrieval_review": deepcopy(step.get("career_retrieval_review")),
+                "selected_retrieval_case": deepcopy(step.get("career_retrieval_case")),
                 "selected_learning_notes": [learning_note(row)
                                             for key in step.get("career_insight_ids", [])
                                             for row in notes if row["id"] == key],

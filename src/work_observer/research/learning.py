@@ -731,6 +731,8 @@ class LearningNotebook:
         } for row in notes_then if row}.values())
         if learning.get("retrieval_review"):
             record["retrieval_review_then"] = deepcopy(learning["retrieval_review"])
+        if learning.get("retrieval_case"):
+            record["retrieval_case_then"] = deepcopy(learning["retrieval_case"])
         if learning.get("feedback_origin"):
             record["feedback_origin"] = deepcopy(learning["feedback_origin"])
         if learning.get("practice_experiment"):

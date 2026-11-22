@@ -1,5 +1,6 @@
 """A small learner-labelled set of local lexical retrieval comparisons."""
 
+from copy import deepcopy
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -138,3 +139,17 @@ def compare_suites(previous, current):
         "新增、移除样例没有另一侧结果，不能填零或合并为改善率。标签、范围、原文、"
         "别名或片段上限变化都可能影响数字，不能只凭指标变化断言修复、语义效果或岗位能力。",
     }
+
+
+def select_case(review, name):
+    cases = review.get("input", {}).get("cases", [])
+    index = next((i for i, row in enumerate(cases)
+                  if row["name"].casefold() == name.strip().casefold()), None)
+    if index is None or len(review.get("runs", [])) < index * 2 + 2:
+        raise ValueError("这份已保存的评估集中没有完整的所选样例，请重新选择。")
+    return deepcopy({
+        "name": cases[index]["name"], "input": cases[index],
+        "runs": review["runs"][index * 2:index * 2 + 2],
+        "notice": "这是用户明确选中的一条已运行样例；标签仍是使用者预期。"
+        "先读取运行产物，再回查选定原文，限定本次追问，不替换为整组泛论。",
+    })
