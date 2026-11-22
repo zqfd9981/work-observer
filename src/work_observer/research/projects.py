@@ -2037,6 +2037,28 @@ class ProjectService:
                         "地图迁移限制及未知；个人回答仍为自述，application_plan仍是当时的建议。"
                         "旧引用仅供定位，须从本轮读取获得新引用，不能把旧判断或建议当作已验证结果。",
                     }
+                    review_index = current_entry.get("claim_review_index")
+                    if review_index is not None:
+                        claim = source_result["claims"][review_index]
+                        continued["selected_claim_to_recheck"] = {
+                            "project_id": record["id"], "source_step_id": source_id,
+                            "claim_index": review_index,
+                            "source_cutoff": source_result.get("created_at"),
+                            "claim": {key: claim.get(key) for key in (
+                                "text", "category", "basis", "requirement",
+                            )},
+                            "source_references_to_reread": [
+                                {key: source.get(key) for key in (
+                                    "title", "evidence_kind", "job_id", "public_document_id",
+                                    "document_id", "snapshot_id", "historical_cutoffs",
+                                    "start", "end",
+                                )} for source in source_result.get("evidence", [])
+                                if source["id"] in claim.get("evidence_ids", [])
+                            ],
+                            "notice": "用户明确点选的这条旧判断；claim.text是旧Agent原句，"
+                            "不是JD原文，也不是本轮新证据。围绕它核对支持、反例、限定和未知，"
+                            "引用须来自本轮原文读取，不把其他旧判断替代为这次目标。",
+                        }
                 context["career_evidence"]["continued_discussion"] = continued
             if step.get("career_synthesis"):
                 from work_observer.research.inquiry_synthesis import synthesis_inquiries

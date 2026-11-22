@@ -644,6 +644,8 @@ class LearningNotebook:
         if calculations := calculation_records(result):
             record["local_calculations"] = calculations
             record["local_calculation_notice"] = CALCULATION_NOTICE
+        if focus := result.get("career_learning_context", {}).get("claim_to_review"):
+            record["claim_to_review"] = deepcopy(focus)
         current_notes = [deepcopy(row) for row in self.project_reader().get("career", {}).get(
             "insights", [],
         ) if row.get("source_step_id") == step_id and row.get("source_relation_index") is not None
@@ -813,6 +815,8 @@ def learning_record(row, record, store):
         result = (run or {}).get("result") or {}
         if (run or {}).get("state") == "invalidated":
             result = {}
+        if focus := result.get("career_learning_context", {}).get("claim_to_review"):
+            note["source_claim_review"] = deepcopy(focus)
         claims = result.get("claims", [])
         selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
             claims if (links or row.get("source_step_id")) and index is None else []

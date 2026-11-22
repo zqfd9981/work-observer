@@ -1952,6 +1952,7 @@ class CareerService:
         question_index=0,
         task_id=None,
         source_step_id=None,
+        claim_review_index=None,
         experiment_ids=None,
         question="",
         section="requirements",
@@ -1980,6 +1981,8 @@ class CareerService:
             comparison_step_ids, synthesis_question_ids, passage_ids, experiment_ids,
         ))):
             raise ValueError("直接回答请只选择一个调查问题；其他练习可另行开始。")
+        if claim_review_index is not None and (kind != "ask" or not source_step_id):
+            raise ValueError("请先选定一份旧研究和具体判断，再发起这项查证。")
         material_focus_supplied = material_id is not None or material_ids is not None
         material_ids = list(material_ids or [])
         if material_ids and (kind not in {"ask", "map", "plan"} or material_id):
@@ -2005,6 +2008,10 @@ class CareerService:
                 source = next((row for row in sources if row["step_id"] == source_step_id), None)
                 if not source:
                     raise ValueError("请选择一份已完整保存且可继续使用的研究，或直接提问。")
+                if claim_review_index is not None and claim_review_index >= len(
+                    source["result"].get("claims", []),
+                ):
+                    raise ValueError("所选研究中没有这条判断，请重新选择。")
                 if synthesis_question_ids is None and not any((
                     question_id, task_id, story_id, insight_id, insight_ids,
                     counter_insight_id, comparison_step_ids,
@@ -3023,6 +3030,8 @@ class CareerService:
                     "created_at": now(),
                 }
             )
+            if claim_review_index is not None:
+                project["career"]["runs"][-1]["claim_review_index"] = claim_review_index
             if has_task:
                 project["steps"][-1]["career_task_id"] = task_id
             if experiment_ids:

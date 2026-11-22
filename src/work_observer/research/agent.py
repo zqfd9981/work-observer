@@ -1544,6 +1544,10 @@ async def _research(
         "config_sha256": config_hash(strategy_config),
         "aliases": strategy_config["aliases"],
     }
+    if claim_focus := ((conversation_context or {}).get("career_evidence", {}).get(
+        "continued_discussion"
+    ) or {}).get("selected_claim_to_recheck"):
+        result["career_learning_context"] = {"claim_to_review": deepcopy(claim_focus)}
     if scope["truncated"]:
         result["gaps"].append(
             "候选超过 20 个，仅研究本页；SQL 总数包含全部符合范围的记录。请收窄条件。"
@@ -1773,6 +1777,7 @@ async def _research(
     if learning := (conversation_context or {}).get("career_evidence", {}).get("learning_recall"):
         personal = conversation_context["career_evidence"]
         result["career_learning_context"] = {
+            **result.get("career_learning_context", {}),
             **learning,
             "notes": personal["learning_notes"],
             "selected_note": personal["selected_learning_note"],
