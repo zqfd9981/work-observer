@@ -1504,6 +1504,8 @@ class ProjectService:
             )
             if (
                 step.get("career_action") in {"interview", "answer", "followup"}
+                or (step.get("career_action") in {"plan", "reflect"}
+                    and step.get("career_requirement"))
                 or comparing_answers
             ):
                 if selected_story:

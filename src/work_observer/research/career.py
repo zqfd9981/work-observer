@@ -204,6 +204,18 @@ def _has_experiment_observations(task):
     )
 
 
+def _answer_feedback_origin(project, answer, gap_index=None):
+    return {
+        "step_id": answer["step_id"], "question": answer["interview_question"],
+        "project_id": project["id"], "project_title": project["title"],
+        "answer_document_id": answer.get("answer_document_id"),
+        "gap_index": gap_index,
+        "gap": answer["result"].get("gaps", [])[gap_index] if gap_index is not None else None,
+        "story_id": answer.get("story_id"),
+        "notice": "旧反馈与未知是验证起点，不是已证实的事实；须回读回答和工作原文。",
+    }
+
+
 class CareerService:
     def __init__(self, store, repository, raw_directory):
         self.projects = ProjectService(store)
@@ -2578,15 +2590,7 @@ class CareerService:
                 gaps = previous["result"].get("gaps", [])
                 if feedback_gap_index is not None and feedback_gap_index >= len(gaps):
                     raise ValueError("这份反馈中没有所选的未知项，请重新选择。")
-                feedback_origin = {
-                    "step_id": previous["step_id"], "question": previous["interview_question"],
-                    "project_id": identity, "project_title": project["title"],
-                    "answer_document_id": previous.get("answer_document_id"),
-                    "gap_index": feedback_gap_index,
-                    "gap": gaps[feedback_gap_index] if feedback_gap_index is not None else None,
-                    "story_id": previous.get("story_id"),
-                    "notice": "旧反馈与未知是验证起点，不是已证实的事实；须回读回答和工作原文。",
-                }
+                feedback_origin = _answer_feedback_origin(project, previous, feedback_gap_index)
                 question = (
                     QUESTIONS["plan"] + "\n本次只围绕这次模拟面试回答的证据缺口，设计一个最小练习。"
                     "不要把表达不清直接当作能力不会，先区分需要重新表达与确实缺少实际观察。"
@@ -3139,7 +3143,11 @@ class CareerService:
                                    if row["id"] == scope_step_id), {})
                 scope_run = self.store.get(scope_step["run_id"]) if scope_step.get("run_id") else {}
                 scope = ((scope_run or {}).get("result") or {}).get("scope") or {}
-                if selected_job_ids is None and assessment_job_ids is None:
+                local_retrieval_feedback = feedback_task.get("local_experiment") in {
+                    "retrieval", "retrieval_suite",
+                }
+                if (selected_job_ids is None and assessment_job_ids is None
+                        and not local_retrieval_feedback):
                     assessment_job_ids = [key for key in scope_step.get("job_ids", [])
                                           if key in project["job_ids"]]
                 source_documents = scope.get("archived_public_ids", scope_step.get(
@@ -3154,7 +3162,8 @@ class CareerService:
                     if feedback_task.get("feedback_origin") else None,
                     *material_ids, material_id, focused_document_id,
                 ] if key and key in allowed_documents))
-                retrieval_review = deepcopy(scope_step.get("career_retrieval_review"))
+                if not local_retrieval_feedback:
+                    retrieval_review = deepcopy(scope_step.get("career_retrieval_review"))
             if feedback_origin and not (kind == "plan" and source_step_id):
                 if feedback_origin.get("project_id", identity) != identity:
                     question += (
@@ -3287,6 +3296,10 @@ class CareerService:
                     )
             if retrieval_case_name and (not task_id or retrieval_case is None):
                 raise ValueError("请选定本目标中已保存的评估集和具体样例，再准备追问。")
+            if retrieval_document_ids is not None and feedback_documents is not None:
+                feedback_documents = list(dict.fromkeys([
+                    *retrieval_document_ids, *feedback_documents,
+                ]))
             if selected_job_ids is None and assessment_job_ids is not None:
                 selected_job_ids = assessment_job_ids
             if selected_job_ids is None:
@@ -4086,9 +4099,14 @@ class CareerService:
             if key and key != (target or {}).get("key"):
                 raise ValueError("继续检索时请保留原来选定的岗位要求，另一项工作可另开练习。")
             return target
+        if source_step_id:
+            step = next(row for row in self._project(identity)["steps"]
+                        if row["id"] == source_step_id)
+            target = deepcopy(step.get("career_requirement"))
+            if key and key != (target or {}).get("key"):
+                raise ValueError("请沿用原回答选定的岗位工作，另一项要求可另开练习。")
+            return target
         if key:
-            if source_step_id:
-                raise ValueError("请选择从岗位要求或从原回答开始一项新练习。")
             return self._experiment_requirement(identity, key)
         return None
 
@@ -4132,6 +4150,11 @@ class CareerService:
                                and row["state"] != "abandoned"), None)
                 if not source or data.get("previous_task_id"):
                     raise ValueError("请选择当前目标中的一份完整研究，或从已有实验继续验证。")
+                source_step = next(row for row in project["steps"] if row["id"] == source_id)
+                if source_step.get("career_requirement"):
+                    data = {**data, "target_requirement": deepcopy(
+                        source_step["career_requirement"],
+                    )}
                 if template_id := data.get("source_experiment_id"):
                     templates = source["result"].get("career_learning_context", {}).get(
                         "read_other_goals", [],
@@ -4158,6 +4181,8 @@ class CareerService:
                     data = {**data, "purpose": "understanding_check"}
                 elif source["kind"] != "answer":
                     raise ValueError("请从一次完整回答或本轮取回的旧实验设计准备验证。")
+                else:
+                    data = {**data, "feedback_origin": _answer_feedback_origin(project, source)}
                 if data.get("question_id") != source.get("question_id"):
                     raise ValueError("请保留原研究对应的调查问题，再保存验证计划。")
                 if source.get("understanding_check"):
@@ -4174,6 +4199,8 @@ class CareerService:
                 data = {
                     **data,
                     "question_id": data.get("question_id") or previous.get("question_id"),
+                    **({"feedback_origin": deepcopy(previous["feedback_origin"])}
+                       if previous.get("feedback_origin") else {}),
                     **({"source_step_id": previous.get("source_step_id"),
                         "target_requirement": previous["target_requirement"]}
                        if previous.get("target_requirement") else {}),

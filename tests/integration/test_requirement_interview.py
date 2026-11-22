@@ -21,9 +21,13 @@ class RequirementInterviewModel(ModelClient):
         personal = context["project_context"]["career_evidence"]
         role = context["project_context"]["career_action"] == "role"
         if not role:
-            assert {row["id"] for row in scope["jobs"]} == {self.selected_job}
+            assert {row["id"] for row in scope["jobs"]} == set(
+                getattr(self, "expected_jobs", [self.selected_job]),
+            )
             assert [row["document_id"] for row in personal["stories"]] == self.story_documents
-            assert not personal["experiments"]
+            assert [row["id"] for row in personal["experiments"]] == (
+                [personal["selected_experiment_id"]] if personal["experiments"] else []
+            )
             assert personal["selected_requirement"]["requirement"] == "unspecified"
             assert personal["selected_requirement"]["records"] == self.records
             assert self.unrelated_document not in scope["archived_public_ids"]
@@ -43,10 +47,19 @@ class RequirementInterviewModel(ModelClient):
                             "text": evidence["quote"], "evidence_ids": [evidence["citation_key"]]}],
                 "gaps": ["你会如何解释这项工作的输入、输出与验证方法？"],
             }
+            if context["project_context"]["career_action"] == "plan":
+                args["application_plan"] = {
+                    "background_memory_id": context["application_background"]["memory_id"],
+                    "actions": [{"title": "核对两种查询的失败样例",
+                                 "task_or_ability": "区分查询缺词与原文无关",
+                                 "deliverable": "两组返回记录", "completion_check": "回读每份原文",
+                                 "evidence_ids": [evidence["citation_key"]], "assumptions": []}],
+                    "open_questions": ["尚未执行。"],
+                }
             schema = next(tool for tool in self.tools if tool["name"] == name)["parameters"]
             for key, value in (("application_plan", None), ("revisions", [])):
                 if key in schema["properties"]:
-                    args[key] = value
+                    args.setdefault(key, value)
         call = {"type": "function_call", "name": name, "arguments": json.dumps(args),
                 "call_id": str(len(history))}
         return [call], call
@@ -117,6 +130,71 @@ def test_requirement_questions_answers_followups_and_comparisons_keep_exact_work
         assert first["answer_document_id"] in followup["result"]["scope"]["archived_public_ids"]
         pair = compared["result"]["career_learning_context"]["answer_comparison"]
         assert [row["requirement_then"] for row in pair] == [frozen, frozen]
+
+        # Both a self-designed check and a generated gap plan keep the original work.
+        post(base + "/requirement-evidence", {
+            "requirement_key": key, "records": [], "missing": "后来补写，不替换原题的缺口。",
+        })
+        manual = post(base + "/experiments", {
+            "source_step_id": first["step_id"], "title": "我自己设计的原回答验证",
+            "task_or_ability": "检查评估集输入输出", "deliverable": "局部样本记录",
+            "completion_check": "逐条回读原文，保留未执行的组。",
+        })["tasks"][-1]
+        assert manual["target_requirement"] == frozen and manual["state"] == "planned"
+        assert manual["feedback_origin"]["step_id"] == first["step_id"]
+        assert manual["feedback_origin"]["question"] == first["interview_question"]
+        assert manual["feedback_origin"]["gap"] is None
+        blocked = client.post(base + "/prepare", headers=auth, json={
+            "kind": "answer", "source_step_id": initial["step_id"], "answer": "尚未执行。",
+            "practice_task_id": manual["id"],
+        })
+        assert blocked.status_code == 422 and "实际观察" in blocked.text
+        planned_gap = run({"kind": "plan", "source_step_id": first["step_id"],
+                           "feedback_gap_index": 0})
+        generated = post(base + "/tasks", {"step_id": planned_gap["step_id"]})["tasks"][-1]
+        assert generated["target_requirement"] == frozen
+        assert generated["feedback_origin"]["gap"] == first["result"]["gaps"][0]
+        updated = client.patch(base + "/tasks/" + manual["id"], headers=auth, json={
+            "state": "done", "outcome": "只检查了一个样本，另一组仍未执行。",
+            "artifact_title": "合成局部核对记录", "artifact_text": "用户记录：仅完成一组。",
+        })
+        assert updated.status_code == 200, updated.text
+        practiced = run({"kind": "answer", "source_step_id": initial["step_id"],
+                         "practice_task_id": manual["id"],
+                         "answer": "一个样本不能代表完整评估，未执行的组仍然未知。"})
+        practice = practiced["result"]["career_learning_context"]["practice_experiment"]
+        assert practice["reported_observation"] == "只检查了一个样本，另一组仍未执行。"
+        assert practiced["result"]["career_learning_context"]["requirement"] == frozen
+
+        local = {"source_step_id": first["step_id"], "job_ids": jobs[:2],
+                 "baseline": {"terms": ["查无表达"]}, "candidate": {"terms": ["评估集"]},
+                 "expected_job_ids": jobs[:1], "save": True}
+        calls = len(model.contexts)
+        single = post(base + "/experiments/retrieval", local)
+        suite = post(base + "/experiments/retrieval-suite", {
+            "source_step_id": first["step_id"], "job_ids": jobs[:2], "save": True,
+            "cases": [{"name": "职责核对", "baseline": local["baseline"],
+                       "candidate": local["candidate"], "expected_job_ids": jobs[:1]},
+                      {"name": "构造负例", "baseline": local["baseline"],
+                       "candidate": {"terms": ["完全无关表达"]}, "expectation": "none"}],
+        })
+        for saved in (single, suite):
+            task = saved["career"]["tasks"][-1]
+            assert saved["experiment"]["target_requirement"] == frozen
+            assert task["target_requirement"] == frozen
+            assert task["feedback_origin"]["step_id"] == first["step_id"]
+        rerun = post(base + "/experiments/retrieval", {
+            **local, "source_step_id": None, "previous_task_id": single["task_id"],
+        })
+        assert rerun["career"]["tasks"][-1]["feedback_origin"] == manual["feedback_origin"]
+        assert len(model.contexts) == calls
+        model.expected_jobs = jobs[:2]
+        reflected = run({"kind": "reflect", "task_id": suite["task_id"]})
+        assert reflected["result"]["career_learning_context"]["requirement"] == frozen
+        assert suite["career"]["tasks"][-1]["artifact_document_id"] in (
+            reflected["result"]["scope"]["archived_public_ids"]
+        )
+        del model.expected_jobs
 
         # A second work point can ask the same words; that does not make the answers a pair.
         model.selected_job = jobs[1]

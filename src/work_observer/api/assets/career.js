@@ -853,7 +853,7 @@
   }
   function answerExperimentSource(task,data,exporting=false){
     const row=data.results?.find(item=>item.step_id===(task.feedback_origin?.step_id||task.source_step_id)&&item.kind==="answer");if(!row)return "";
-    return `<details class="career-answer-experiment-source" ${exporting?"open":""}><summary>这项验证来自哪次解释与反馈</summary><p class="form-note">${e(when(row.created_at))} · 回答是个人理解，反馈仍需原文核对。</p><h4>当时的原题</h4><p>${e(row.interview_question)}</p><h4>我的完整原回答</h4><p>${e(row.answer)}</p><h4>当时仍待验证的部分</h4>${(row.result?.gaps||[]).map(text=>`<p>${e(text)}</p>`).join("")||'<p class="form-note">未单独记录未知，可回看原反馈。</p>'}${!exporting?`<a class="text-button" href="#career/${e(data.id)}/discussion/${e(row.step_id)}">核对完整反馈、判断与引用 ↗</a>`:""}</details>`;
+    return requirementRecall(row.result,data.id,exporting,data)+`<details class="career-answer-experiment-source" ${exporting?"open":""}><summary>这项验证来自哪次解释与反馈</summary><p class="form-note">${e(when(row.created_at))} · 回答是个人理解，反馈仍需原文核对。</p><h4>当时的原题</h4><p>${e(row.interview_question)}</p><h4>我的完整原回答</h4><p>${e(row.answer)}</p><h4>当时仍待验证的部分</h4>${(row.result?.gaps||[]).map(text=>`<p>${e(text)}</p>`).join("")||'<p class="form-note">未单独记录未知，可回看原反馈。</p>'}${!exporting?`<a class="text-button" href="#career/${e(data.id)}/discussion/${e(row.step_id)}">核对完整反馈、判断与引用 ↗</a>`:""}</details>`;
   }
   function feedbackOrigin(origin,data,exporting=false){
     if(!origin)return "";
