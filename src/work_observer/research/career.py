@@ -77,6 +77,8 @@ QUESTIONS = {
         "先说明练习原先要检验什么、用户实际观察到什么，再判断哪些解释得到支持、哪些被挑战、"
         "若附有作品或运行记录，先用artifact_document中的document_id读取归档正文，"
         "对照记录讨论，不能把用户的总结当作已经运行过的独立评测。"
+        "outcome未填写但comparison_rows已有observed时，逐组对照已记录的条件、输入与观察。"
+        "未填写observed的条件仍未观察，不把局部记录推广为全部实验结论。"
         "哪些还无法判断。任务状态done只表示用户记录结果，不代表成功或具备岗位能力。"
         "实际观察是用户自述，不能当作招聘原文或独立评测；区分没有证据与证实不会。"
         "回查相关岗位原文，最多建议一个最小的后续验证，可通过application_plan给出。"
@@ -186,6 +188,12 @@ def interview_source(row):
             ((row.get("result") or {}).get("career_learning_context") or {})
             .get("answer_comparison", [])
         ) == 2
+    )
+
+
+def _has_experiment_observations(task):
+    return bool(task.get("outcome", "").strip()) or any(
+        row.get("observed", "").strip() for row in task.get("comparison_rows", [])
     )
 
 
@@ -1352,7 +1360,7 @@ class CareerService:
             )
             if data.get("source_task_id") and (
                 not source_task or (
-                    not source_task.get("outcome", "").strip()
+                    not _has_experiment_observations(source_task)
                     and not (previous and previous.get("source_task_id") == data["source_task_id"])
                 )
             ):
@@ -2165,7 +2173,7 @@ class CareerService:
                 )
                 if not task:
                     raise ValueError("未找到这项实验，请重新选择。")
-                if kind != "ask" and not task["outcome"].strip():
+                if kind != "ask" and not _has_experiment_observations(task):
                     raise ValueError("请先为这项练习记录实际观察，再开始反思。")
                 if kind == "reflect" or inherit_focus and kind in {"ask", "plan", "challenge"}:
                     question_id = question_id or task.get("question_id")
@@ -2653,8 +2661,11 @@ class CareerService:
                     task = next(
                         (row for row in project["career"]["tasks"] if row["id"] == task_id), None
                     )
-                    if not task or not task["outcome"].strip():
+                    if not task or not _has_experiment_observations(task):
                         raise ValueError("请先为这个工作样本记录实际观察，再围绕它面试。")
+                    if not task.get("outcome", "").strip():
+                        question += ("所选样本尚未整理整体观察；按comparison_rows逐组提问，"
+                                     "未记录observed的条件保留未知，不将局部观察当作全部完成。")
                     focused_document_id = task.get("artifact_document_id")
                     if (
                         focused_document_id
@@ -3417,7 +3428,7 @@ class CareerService:
             tasks = project["career"]["tasks"]
             if previous_id := data.get("previous_task_id"):
                 previous = next((row for row in tasks if row["id"] == previous_id), None)
-                if not previous or not previous.get("outcome", "").strip():
+                if not previous or not _has_experiment_observations(previous):
                     raise ValueError("请先记录上次实验的实际观察，再设计后续验证。")
                 data = {
                     **data,
