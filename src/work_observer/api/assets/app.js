@@ -776,7 +776,7 @@ document.addEventListener("submit",async event=>{
 });
 
 function mapInvestigationButton(result,section,index,label) {
-  if(result.career_step_id)return `<button type="button" class="text-button" data-career-map-inquiry="${e(section)}" data-career-map-index="${index}" data-career-map-step="${e(result.career_step_id)}">加入调查清单：${e(label)} ↗</button>${section==="relation"?`<button type="button" class="text-button" data-career-relation-practice="${e(result.career_step_id)}:${index}">练习解释这条关系 ↗</button>${!demoMode?`<button type="button" class="text-button" data-career-relation-insight="${e(result.career_step_id)}:${index}">记录我对这条关系的理解 ↗</button><button type="button" class="text-button" data-career-relation-experiment="${e(result.career_step_id)}:${index}">设计实验检验这条关系 ↗</button>`:""}`:""}`;
+  if(result.career_step_id)return section==="relation"?`<button type="button" class="secondary small" data-career-relation-case="${e(result.career_step_id)}:${index}">打开这条关系的研究过程 ↗</button>`:`<button type="button" class="text-button" data-career-map-inquiry="${e(section)}" data-career-map-index="${index}" data-career-map-step="${e(result.career_step_id)}">加入调查清单：${e(label)} ↗</button>`;
   if(!result.project_id||!result.run_id)return "";
   return `<button type="button" class="text-button" data-map-investigation="${e(section)}" data-map-index="${index}" data-map-run="${e(result.run_id)}" data-map-project="${e(result.project_id)}">${e(label)} ↗</button>`;
 }
