@@ -304,6 +304,7 @@ LEARNING_TOOLS = [
         "read_research_history",
         "按step_id读取完整旧判断、要求性质、地图限定、未知、来源定位和当时本地计算。"
         "local_calculations是旧运行的完整输入与输出，不是本轮重新执行。"
+        "current_relation_notes是回读时选用的用户认识，不是原地图当时的结论或已核实事实。"
         "旧JD定位含as_of与snapshot_id，用read_historical_job回读相应时点，不能以当前JD替代。"
         "旧分析不提供可引用证据；需要本轮读取原文，不能恢复已移出或其他目标的资料。",
         {"step_id": {"type": "string"}},

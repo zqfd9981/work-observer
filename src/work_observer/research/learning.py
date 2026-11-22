@@ -22,6 +22,27 @@ def calculation_records(result):
     return {key: deepcopy(context[key]) for key in CALCULATION_FIELDS if context.get(key)}
 
 
+def work_relation_record(owner, study, result, index, current):
+    relation = result["work_map"]["work_relations"][index]
+    claims = result.get("claims", [])
+    linked = [{"index": n, **claims[n]} for n in relation["claim_indices"]
+              if 0 <= n < len(claims)]
+    refs = {key for claim in linked for key in claim["evidence_ids"]}
+    return deepcopy({
+        "key": f"{owner['id']}:{study['step_id']}:{index}",
+        "project_id": owner["id"], "project_title": owner["title"],
+        "step_id": study["step_id"], "relation_index": index,
+        "question_id": study.get("question_id"),
+        "question": study.get("user_question") or "工作地图研究",
+        "recorded_at": study["created_at"], "current": current,
+        "research_cutoff": result["created_at"],
+        "scope_note": result["work_map"].get("scope_note", ""),
+        "scope": result.get("scope", {}), "relation": relation, "claims": linked,
+        "evidence": [row for row in result.get("evidence", []) if row["id"] in refs],
+        "unknowns": result["work_map"].get("unknowns", []),
+    })
+
+
 def experiment_answer_origin(career, task):
     source = next((row for row in career.get("runs", [])
                    if row["step_id"] == task.get("source_step_id")
@@ -597,6 +618,12 @@ class LearningNotebook:
         if calculations := calculation_records(result):
             record["local_calculations"] = calculations
             record["local_calculation_notice"] = CALCULATION_NOTICE
+        current_notes = [deepcopy(row) for row in self.project_reader().get("career", {}).get(
+            "insights", [],
+        ) if row.get("source_step_id") == step_id and row.get("source_relation_index") is not None
+                        and row.get("use_for_research", True)]
+        if current_notes:
+            record["current_relation_notes"] = current_notes
         return {
             "research": record,
             "notice": "完整旧分析，只供重新核对；原范围、判断性质和末尾限定仍需保留。"
@@ -760,6 +787,22 @@ def learning_record(row, record, store):
         selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
             claims if (links or row.get("source_step_id")) and index is None else []
         )
+        if (relation_index := row.get("source_relation_index")) is not None:
+            selected = []
+            relations = (result.get("work_map") or {}).get("work_relations", [])
+            entry = next((item for item in record.get("career", {}).get("runs", [])
+                          if item["step_id"] == row.get("source_step_id")), None)
+            if entry and 0 <= relation_index < len(relations):
+                note["source_relation_index"] = relation_index
+                note["source_relation"] = work_relation_record(
+                    record, entry, result, relation_index, False,
+                )
+                note["source_relation_notice"] = (
+                    "来源地图中明确选定的原关系，保留当时的连接理由、迁移限制与引用。"
+                    "这是历史Agent解释，用户的新认识也不是已核实事实，仍需回读原文与验证。"
+                )
+                selected = [claims[n] for n in relations[relation_index]["claim_indices"]
+                            if 0 <= n < len(claims)]
         if calculations := calculation_records(result):
             note["source_calculations"] = calculations
             note["source_calculation_notice"] = CALCULATION_NOTICE
@@ -813,7 +856,9 @@ def learning_record(row, record, store):
                 note["source_discussion"] = {
                     "claims_to_recheck": details,
                     "unknowns_then": result.get("gaps", []),
-                    "notice": "个人认识参考的整次讨论，不是对某一条判断的逐字采用。",
+                    "notice": "个人认识参考的原关系及其支撑判断，不表示采用旧解释。"
+                    if relation_index is not None
+                    else "个人认识参考的整次讨论，不是对某一条判断的逐字采用。",
                 }
             references = {key for claim in selected for key in claim["evidence_ids"]}
             note["source_locators"] += [

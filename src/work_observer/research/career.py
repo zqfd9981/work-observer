@@ -19,7 +19,11 @@ from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.archived_sources import catalog as archive_catalog
-from work_observer.research.learning import calculation_records, learning_record
+from work_observer.research.learning import (
+    calculation_records,
+    learning_record,
+    work_relation_record,
+)
 from work_observer.research.projects import ProjectService, step_continuation
 from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.unified import UnifiedRetrieval
@@ -732,24 +736,13 @@ class CareerService:
 
     @staticmethod
     def _relation_record(owner, study, result, index, current):
-        relation = result["work_map"]["work_relations"][index]
-        claims = result.get("claims", [])
-        linked = [{"index": n, **claims[n]} for n in relation["claim_indices"]
-                  if 0 <= n < len(claims)]
-        refs = {key for claim in linked for key in claim["evidence_ids"]}
-        return deepcopy({
-            "key": f"{owner['id']}:{study['step_id']}:{index}",
-            "project_id": owner["id"], "project_title": owner["title"],
-            "step_id": study["step_id"], "relation_index": index,
-            "question_id": study.get("question_id"),
-            "question": study.get("user_question") or "工作地图研究",
-            "recorded_at": study["created_at"], "current": current,
-            "research_cutoff": result["created_at"],
-            "scope_note": result["work_map"].get("scope_note", ""),
-            "scope": result.get("scope", {}), "relation": relation, "claims": linked,
-            "evidence": [row for row in result.get("evidence", []) if row["id"] in refs],
-            "unknowns": result["work_map"].get("unknowns", []),
-        })
+        row = work_relation_record(owner, study, result, index, current)
+        personal_notes = [deepcopy(note) for note in owner.get("career", owner).get("insights", [])
+                          if note.get("source_step_id") == study["step_id"]
+                          and note.get("source_relation_index") == index]
+        if personal_notes:
+            row["personal_notes"] = personal_notes
+        return row
 
     def relation_inquiry(self, *, relations, question, title="", include_sources=True):
         keys = {(row["project_id"], row["step_id"], row["relation_index"]) for row in relations}
@@ -1563,7 +1556,11 @@ class CareerService:
                 row["step_id"] == data["source_step_id"] for row in project["career"]["runs"]
             ):
                 raise ValueError("未找到这次讨论，请重新选择来源。")
-            if (claim_index := data.get("source_claim_index")) is not None:
+            claim_index = data.get("source_claim_index")
+            relation_index = data.get("source_relation_index")
+            if claim_index is not None and relation_index is not None:
+                raise ValueError("请选择一条判断或一条工作关系作为认识起点，不同时关联两者。")
+            if claim_index is not None or relation_index is not None:
                 source_step = next(
                     (
                         row for row in project["steps"]
@@ -1577,11 +1574,12 @@ class CareerService:
                     else None
                 )
                 result = (run or {}).get("result") or {}
-                if (
-                    result.get("status") != "completed"
-                    or not 0 <= claim_index < len(result.get("claims", []))
-                ):
-                    raise ValueError("请选择这次完整分析中的一条判断，或不关联具体判断。")
+                items = (result.get("work_map") or {}).get("work_relations", []) if (
+                    relation_index is not None
+                ) else result.get("claims", [])
+                chosen_index = relation_index if relation_index is not None else claim_index
+                if result.get("status") != "completed" or not 0 <= chosen_index < len(items):
+                    raise ValueError("请选择这次完整分析中的一条判断或工作关系，再记录认识。")
             replacement = next(
                 (row for row in notes if row["id"] == data.get("replaces_insight_id")), None
             )
