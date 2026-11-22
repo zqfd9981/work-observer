@@ -378,6 +378,7 @@ class RetryExperimentInput(RetryCasesInput):
 class RetrievalExperimentInput(RetrievalComparisonInput):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    previous_task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     hypothesis: str = Field(default="", max_length=1500)
     save: bool = False
 
@@ -681,6 +682,11 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             201 if data.save else 200,
         )
 
+    async def retrieval_record(request):
+        return change(lambda: service().retrieval_experiment_record(
+            request.path_params["id"], request.path_params["task_id"],
+        ))
+
     async def retry_experiment(request):
         data = RetryExperimentInput.model_validate(await read_json(request))
         return change(
@@ -756,6 +762,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retry", retry_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retrieval", retrieval_experiment, methods=["POST"]),
+        Route("/api/career/{id}/tasks/{task_id}/retrieval-inputs", retrieval_record),
         Route("/api/career/{id}/experiments/cohorts", cohort_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/thresholds", threshold_experiment, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),

@@ -3354,14 +3354,49 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def _retrieval_record(self, project, task_id):
+        from work_observer.research.retrieval_experiment import read_record
+
+        task = next((row for row in project["career"]["tasks"] if row["id"] == task_id), None)
+        document_id = (task or {}).get("artifact_document_id")
+        if not document_id or document_id not in project["public_document_ids"]:
+            raise ValueError("这项练习的检索运行记录未在当前目标中，请选择可读取的记录。")
+        document = PublicDocumentService(self.repository, self.raw_directory / "public").document(
+            document_id,
+        )
+        if document["integrity"] != "verified":
+            raise ValueError("这份运行记录暂不可完整读取，原输入未改变。")
+        return task, read_record(document["text"])
+
+    def retrieval_experiment_record(self, identity, task_id):
+        project = self._project(identity)
+        task, record = self._retrieval_record(project, task_id)
+        return {"input": record["input"], "previous": {
+            "task_id": task_id, "title": task["title"], "as_of": record.get("as_of"),
+            "hypothesis": task.get("hypothesis", ""), "sources": record["sources"],
+            "comparison_rows": record["comparison_rows"],
+            "question_id": task.get("question_id"), "source_step_id": task.get("source_step_id"),
+        }}
+
     def retrieval_experiment(
         self, identity, *, question_id=None, source_step_id=None, hypothesis="",
-        save=False, **inputs,
+        previous_task_id=None, save=False, **inputs,
     ):
-        from work_observer.research.retrieval_experiment import run_retrieval_comparison
+        from work_observer.research.retrieval_experiment import (
+            comparison_changes,
+            record_text,
+            run_retrieval_comparison,
+        )
 
         project = self._project(identity)
-        if source_step_id:
+        previous, previous_record = None, None
+        if previous_task_id:
+            previous, previous_record = self._retrieval_record(project, previous_task_id)
+            if (source_step_id and source_step_id != previous.get("source_step_id")
+                    or question_id and question_id != previous.get("question_id")):
+                raise ValueError("请保留上次检索练习的原回答与调查关联，或另开一次独立对照。")
+            question_id = previous.get("question_id")
+        if source_step_id and previous is None:
             source = next((row for row in self.get(identity)["results"]
                            if row["step_id"] == source_step_id and row["kind"] == "answer"
                            and (row.get("result") or {}).get("status") == "completed"
@@ -3378,25 +3413,39 @@ class CareerService:
                 or set(inputs.get("document_ids", [])) - set(project["public_document_ids"])):
             raise ValueError("本次对照只使用当前目标中明确选中的原文，不能混入其他目标资料。")
         result = run_retrieval_comparison(self.repository, inputs)
+        changes = comparison_changes(previous_record, result) if previous_record else []
+        if previous:
+            result["previous_comparison"] = {
+                "task_id": previous["id"], "title": previous["title"],
+                "as_of": previous_record.get("as_of"), "changed_conditions": changes,
+                "comparison_rows": previous_record["comparison_rows"],
+                "notice": "分别保留两次实际运行；查询、标签、范围、原文或配置改变都可能影响结果，"
+                "不能只凭指标变化断言改写更好或已具备岗位能力。",
+            }
+            result["artifact_text"] = record_text(result)
         if not save:
             return {"experiment": result}
         if any(step["state"] == "running" for step in project["steps"]):
             raise ValueError("研究期间可以预览本地检索，结束后再保存记录。")
+        change_note = ("本次改变：" + "、".join(changes) if changes
+                       else "沿用输入重新运行，结果仍需核对。") if previous else ""
         saved = self.add_experiment(identity, {
             "title": "本地检索对照：查询表达与主题", "question_id": question_id,
             "task_or_ability": "比较查询改写与主题限定如何影响原文召回，核对漏回与额外来源。",
             "deliverable": "两组查询、使用者预期标签、实际返回片段和原文定位。",
             "completion_check": "固定资料、别名与top-k，逐条核对预期标签、命中、漏回与额外返回。",
-            "hypothesis": hypothesis, "previous_task_id": None, "design_change": "",
-            **({"source_step_id": source_step_id} if source_step_id else {}),
+            "hypothesis": hypothesis, "previous_task_id": previous_task_id,
+            "design_change": change_note,
+            **({"source_step_id": source_step_id} if source_step_id and not previous else {}),
             "purpose": "understanding_check",
+            "local_experiment": "retrieval",
         })
         task_id = saved["tasks"][-1]["id"]
         saved = self.update_task(
             identity, task_id, state="done", outcome=result["outcome"], artifact="",
             artifact_title="本地检索对照 · 查询、预期与实际原文",
             artifact_text=result["artifact_text"], comparison_conditions=result["conditions"],
-            comparison_rows=result["comparison_rows"],
+            comparison_rows=result["comparison_rows"], design_change=change_note,
         )
         return {"experiment": result, "career": saved, "task_id": task_id}
 

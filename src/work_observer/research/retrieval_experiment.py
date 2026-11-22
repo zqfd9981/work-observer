@@ -56,6 +56,72 @@ NOTICE = (
     "不是答案准确率、全库评测或岗位需求占比；标签不完整时不能解释为整体质量。"
     "未返回可能是未命中、top-k限制、正文缺失或完整性排除，不能直接判定资料不相关。"
 )
+RECORD_HEADER = "本地检索表达对照 · 本机实际运行记录\n\n"
+
+
+def record_text(result):
+    return RECORD_HEADER + json.dumps(
+        {key: value for key, value in result.items() if key != "artifact_text"},
+        ensure_ascii=False, separators=(",", ":"),
+    )
+
+
+def read_record(text):
+    _, marker, body = text.partition(RECORD_HEADER)
+    if not marker:
+        raise ValueError("这份材料没有完整的本地检索对照输入，请从检索练习的运行记录继续。")
+    try:
+        record = json.loads(body)
+        record["input"] = RetrievalComparisonInput.model_validate(record["input"]).model_dump()
+        if (not isinstance(record.get("sources"), list)
+                or not isinstance(record.get("aliases"), dict)
+                or not isinstance(record.get("runs"), list)
+                or any(not isinstance(row, dict) or not isinstance(row.get("key"), str)
+                       for row in record["sources"])):
+            raise ValueError("missing source context")
+        rows = record.get("comparison_rows")
+        if (not isinstance(rows, list) or len(rows) != 2
+                or any(not isinstance(row, dict) or any(not isinstance(row.get(key), str)
+                                                       for key in ("condition", "observed"))
+                       for row in rows)):
+            raise ValueError("missing recorded observations")
+        return record
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ValueError("这份检索记录的输入不完整，原练习仍保留；可另开一次对照。") from exc
+
+
+def comparison_changes(previous, current):
+    changes = []
+    for key, label in (("baseline", "原查询"), ("candidate", "改写查询"), ("top_k", "片段上限")):
+        if previous["input"][key] != current["input"][key]:
+            changes.append(label)
+    for fields, label in ((("job_ids", "document_ids"), "对照资料"),
+                          (("expected_job_ids", "expected_document_ids"), "预期相关标签")):
+        if any(set(previous["input"][key]) != set(current["input"][key]) for key in fields):
+            changes.append(label)
+    if previous["input"]["expectation"] != current["input"]["expectation"]:
+        changes.append("应命中或不应命中的预期")
+    if previous["aliases"] != current["aliases"]:
+        changes.append("别名配置")
+
+    def versions(record):
+        return {row["key"]: (row.get("snapshot_id"), row.get("content_sha256"))
+                for row in record["sources"]
+                if isinstance(row, dict) and isinstance(row.get("key"), str)}
+
+    before, after = versions(previous), versions(current)
+    if before.keys() != after.keys() and "对照资料" not in changes:
+        changes.append("原文可读取情况")
+    if any(before[key] != after[key] for key in before.keys() & after.keys()):
+        changes.append("原文内容")
+
+    def excluded(record):
+        return {key for run in record.get("runs", []) if isinstance(run, dict)
+                for key in (run.get("excluded_integrity_ids") or []) if isinstance(key, str)}
+
+    if excluded(previous) != excluded(current):
+        changes.append("原文完整性排除")
+    return changes
 
 
 def source_key(item):
@@ -129,7 +195,5 @@ def run_retrieval_comparison(repository, raw):
     result = {"input": data.model_dump(), "as_of": cutoff, "aliases": aliases, "sources": sources,
               "runs": runs, "conditions": conditions, "notice": NOTICE,
               "outcome": outcome, "comparison_rows": rows}
-    result["artifact_text"] = "本地检索表达对照 · 本机实际运行记录\n\n" + json.dumps(
-        result, ensure_ascii=False, separators=(",", ":"),
-    )
+    result["artifact_text"] = record_text(result)
     return result

@@ -61,6 +61,16 @@ def test_interview_feedback_can_lead_to_query_execution_note_and_next_validation
         experiment = next(row for row in saved["career"]["tasks"] if row["id"] == saved["task_id"])
         assert experiment["source_step_id"] == feedback["step_id"]
         assert experiment["purpose"] == "understanding_check"
+        carried = client.get(base + "/tasks/" + experiment["id"] + "/retrieval-inputs")
+        assert carried.json()["previous"]["source_step_id"] == feedback["step_id"]
+        continued = client.post(base + "/experiments/retrieval", headers=auth, json={
+            **inputs, "previous_task_id": experiment["id"],
+        })
+        assert continued.status_code == 201, continued.text
+        continued_task = next(row for row in continued.json()["career"]["tasks"]
+                              if row["id"] == continued.json()["task_id"])
+        assert continued_task["source_step_id"] == feedback["step_id"]
+        assert continued_task["previous_task_id"] == experiment["id"]
         note = client.post(base + "/insights", headers=auth, json={
             "task_id": experiment["id"], "source_step_id": feedback["step_id"],
             "previous_view": answer, "observation": "我用两组查询核对了本地返回。",
@@ -108,7 +118,7 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
         )[1]}
         jobs = [client.post("/api/import", headers=auth, json={
             "title": "合成检索样本" + str(i), "company": "合成公司" + str(i),
-            "description": text, "data_kind": "synthetic",
+            "description": text, "data_kind": "synthetic", "external_id": f"retrieval-original-{i}",
         }).json()["job_id"] for i, text in enumerate(texts)]
         document_text = "合成工作说明：端云同步记忆要保留上下文条件。"
         goal = client.post("/api/career", headers=auth, json={
@@ -173,3 +183,79 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
         encoded = data["experiment"]["artifact_text"].split("\n\n", 1)[1]
         assert json.loads(encoded)["input"]["expected_job_ids"] == [jobs[1]]
         assert not client.get(base).json()["insights"]  # No automatic adoption of conclusions.
+        parent_id = task["id"]
+        before_task = client.get("/api/projects/" + identity).json()["career"]["tasks"][0]
+        loaded = client.get(base + "/tasks/" + parent_id + "/retrieval-inputs")
+        assert loaded.status_code == 200, loaded.text
+        assert loaded.json()["input"]["candidate"] == inputs["candidate"]
+        assert loaded.json()["previous"]["task_id"] == parent_id
+        assert len(client.get(base).json()["tasks"]) == 1
+        unchanged = client.post(
+            endpoint, headers=auth, json={**inputs, "previous_task_id": parent_id},
+        )
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json()["experiment"]["previous_comparison"]["changed_conditions"] == []
+        child = client.post(endpoint, headers=auth, json={
+            **inputs, "previous_task_id": parent_id, "top_k": 1, "save": True,
+        })
+        assert child.status_code == 201, child.text
+        child_result = child.json()["experiment"]
+        assert child_result["previous_comparison"]["changed_conditions"] == ["片段上限"]
+        assert child_result["runs"][1]["metrics"]["source_recall"] == 0.5
+        child_task = next(row for row in child.json()["career"]["tasks"]
+                          if row["id"] == child.json()["task_id"])
+        assert child_task["previous_task_id"] == parent_id
+        assert "片段上限" in child_task["design_change"]
+        assert child_task["question_id"] == qid and child_task["state"] == "done"
+        parent_after = client.get("/api/projects/" + identity).json()["career"]["tasks"][0]
+        assert parent_after == before_task
+        assert client.get("/api/public-documents/" + task["artifact_document_id"]).json()[
+            "text"
+        ] == original
+        edited_rows = [{**row, "observed": "用户后来补记的解释，不是原始运行输出。"}
+                       for row in task["comparison_rows"]]
+        edited = client.patch(base + "/tasks/" + parent_id, headers=auth, json={
+            "state": "done", "outcome": task["outcome"], "comparison_rows": edited_rows,
+        })
+        assert edited.status_code == 200, edited.text
+        archived_rows = client.get(base + "/tasks/" + parent_id + "/retrieval-inputs").json()[
+            "previous"
+        ]["comparison_rows"]
+        assert archived_rows == data["experiment"]["comparison_rows"]
+
+        relabel = client.post(endpoint, headers=auth, json={
+            **inputs, "previous_task_id": parent_id, "expected_job_ids": [],
+        }).json()["experiment"]
+        assert relabel["previous_comparison"]["changed_conditions"] == ["预期相关标签"]
+        assert relabel["runs"][1]["metrics"]["source_precision"] == 0.5
+        updated = client.post("/api/import", headers=auth, json={
+            "title": "合成检索样本1", "company": "合成公司1", "external_id": "retrieval-original-1",
+            "description": texts[1] + "新增业务条件：同步策略待验证。", "data_kind": "synthetic",
+        })
+        assert updated.json()["job_id"] == jobs[1]
+        newer_source = client.post(endpoint, headers=auth, json={
+            **inputs, "previous_task_id": parent_id,
+        }).json()["experiment"]
+        assert newer_source["previous_comparison"]["changed_conditions"] == ["原文内容"]
+        document_id = inputs["document_ids"][0]
+        assert client.delete(base + "/materials/" + document_id, headers=auth).status_code == 200
+        missing = client.get(base + "/tasks/" + parent_id + "/retrieval-inputs")
+        assert missing.status_code == 200
+        assert missing.json()["input"]["document_ids"] == [document_id]  # No implicit relabelling.
+        assert client.post(endpoint, headers=auth, json={
+            **inputs, "previous_task_id": parent_id,
+        }).status_code == 422  # Reading an old experiment never restores removed originals.
+        narrowed = client.post(endpoint, headers=auth, json={
+            **inputs, "previous_task_id": parent_id,
+            "document_ids": [], "expected_document_ids": [],
+        })
+        assert narrowed.status_code == 200, narrowed.text
+        assert {"对照资料", "预期相关标签"} <= set(narrowed.json()["experiment"][
+            "previous_comparison"
+        ]["changed_conditions"])
+        assert client.get(base).json()["usage"]["calls"] == 0
+        other = client.post("/api/career", headers=auth, json={
+            "title": "合成另一个目标", "goal": "不混入其他目标的实验记录",
+        }).json()["id"]
+        foreign = client.get(f"/api/career/{other}/tasks/{parent_id}/retrieval-inputs")
+        assert foreign.status_code == 422
