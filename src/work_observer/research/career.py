@@ -3160,6 +3160,9 @@ class CareerService:
                             "不能只取最前两组或只看累计指标。累计按样例×来源计数，"
                             "同一来源在不同样例可重复计入，不是答案准确率或独立标注结论。"
                             "原文不完整时，未返回不能算负例验证成功；指出最值得继续核对的失败。"
+                            "若有previous_suite_comparison，按同名样例回查两次返回与标签："
+                            "新增或移除样例没有另一侧结果，标签或范围变化不能冒充查询修复。"
+                            "须回读当前与前次产物，不把历史线索当作本轮新执行的结果。"
                         )
                     if retrieval_review.get("artifact_document_id") not in project[
                         "public_document_ids"
@@ -3190,6 +3193,9 @@ class CareerService:
                         retrieval_document_ids = list(dict.fromkeys(key for key in [
                             *retrieval_review["input"]["document_ids"],
                             retrieval_review.get("artifact_document_id"),
+                            (retrieval_review.get("previous_suite_comparison") or {}).get(
+                                "artifact_document_id",
+                            ),
                             previous_task.get("artifact_document_id"),
                             answer_source.get("answer_document_id"),
                             *material_ids, material_id, focused_document_id, answer_document_id,
@@ -3779,9 +3785,10 @@ class CareerService:
     def retrieval_suite(self, identity, *, question_id=None, source_step_id=None,
                         previous_task_id=None, hypothesis="", save=False, **inputs):
         from work_observer.research.retrieval_experiment import record_text
-        from work_observer.research.retrieval_suite import run_retrieval_suite
+        from work_observer.research.retrieval_suite import compare_suites, run_retrieval_suite
 
         project = self._project(identity)
+        previous, record = None, None
         if previous_task_id:
             previous, record = self._retrieval_record(project, previous_task_id)
             if record.get("record_kind") != "retrieval_suite":
@@ -3809,6 +3816,23 @@ class CareerService:
             raise ValueError("研究期间可以预览评估，结束后再保存记录。")
         result = run_retrieval_suite(self.repository, inputs)
         result["hypothesis"] = hypothesis
+        change_note = ""
+        if previous:
+            comparison = compare_suites(record, result)
+            comparison.update(
+                task_id=previous_task_id, title=previous["title"], project_id=identity,
+                artifact_document_id=previous.get("artifact_document_id"),
+            )
+            result["previous_comparison"] = comparison
+            changes = comparison["shared_changed_conditions"][:]
+            changes.extend(row["name"] + "：" + (
+                "、".join(row["changed_conditions"]) if row["state"] == "matched"
+                else "新增样例" if row["state"] == "added" else "移除样例"
+            ) for row in comparison["cases"]
+                if row["state"] != "matched" or row["changed_conditions"])
+            change_note = "本次记录中的变化：" + "；".join(changes) if changes else (
+                "同名样例沿用查询、标签及共同条件重新运行，结果仍须核对。"
+            )
         result["artifact_text"] = record_text(result)
         if not save:
             return {"experiment": result}
@@ -3820,6 +3844,8 @@ class CareerService:
             "completion_check": "逐条回读失败样例的原文；不以累计指标替代样例核对。",
             "previous_task_id": previous_task_id, "purpose": "understanding_check",
             "local_experiment": "retrieval_suite",
+            "design_change": change_note,
+            **({"retrieval_suite_comparison": result["previous_comparison"]} if previous else {}),
             **({"source_step_id": source_step_id}
                if source_step_id and not previous_task_id else {}),
         })
@@ -3829,6 +3855,7 @@ class CareerService:
             artifact_title="本地检索评估集 · 输入、标签、返回与失败样例",
             artifact_text=result["artifact_text"], comparison_conditions=result["conditions"],
             comparison_rows=result["comparison_rows"],
+            design_change=change_note,
         )
         return {"experiment": result, "career": saved, "task_id": task_id}
 

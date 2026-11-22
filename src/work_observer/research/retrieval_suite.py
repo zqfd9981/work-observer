@@ -9,6 +9,8 @@ from work_observer.research.retrieval_experiment import (
     NOTICE,
     RetrievalComparisonInput,
     RetrievalQuery,
+    compare_returns,
+    comparison_changes,
     record_text,
     run_retrieval_comparison,
 )
@@ -96,3 +98,43 @@ def run_retrieval_suite(repository, raw):
     }
     result["artifact_text"] = record_text(result)
     return result
+
+
+def compare_suites(previous, current):
+    """Pair named cases; additions and removals do not receive imaginary prior results."""
+    def records(suite):
+        shared = {key: suite["input"][key] for key in ("job_ids", "document_ids", "top_k")}
+        return {case["name"].casefold(): {
+            "name": case["name"], "as_of": suite["as_of"], "sources": suite["sources"],
+            "aliases": suite["aliases"],
+            "input": {**shared, **{key: value for key, value in case.items() if key != "name"}},
+            "runs": suite["runs"][index * 2:index * 2 + 2],
+        } for index, case in enumerate(suite["input"]["cases"])}
+
+    def summary(record):
+        if record is None:
+            return None
+        return {"input": record["input"], "runs": [{key: run[key] for key in (
+            "name", "query", "metrics", "returned_source_keys", "missing_expected_source_keys",
+            "unexpected_source_keys",
+        )} for run in record["runs"]]}
+
+    before, after = records(previous), records(current)
+    cases = []
+    for key in dict.fromkeys([*after, *before]):
+        old, new = before.get(key), after.get(key)
+        cases.append({
+            "name": (new or old)["name"],
+            "state": "matched" if old and new else "added" if new else "removed",
+            "before": summary(old), "after": summary(new),
+            "changed_conditions": comparison_changes(old, new) if old and new else [],
+            "return_comparison": compare_returns(old, new) if old and new else [],
+        })
+    return {
+        "kind": "retrieval_suite", "as_of": previous["as_of"],
+        "shared_changed_conditions": comparison_changes(previous, current, query_and_labels=False),
+        "cases": cases,
+        "notice": "按同名样例对照两次实际记录，顺序变化不改变配对；改名视为移除旧样例与新增。"
+        "新增、移除样例没有另一侧结果，不能填零或合并为改善率。标签、范围、原文、"
+        "别名或片段上限变化都可能影响数字，不能只凭指标变化断言修复、语义效果或岗位能力。",
+    }

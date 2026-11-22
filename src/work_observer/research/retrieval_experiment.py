@@ -1,6 +1,7 @@
 """Run local lexical comparisons and recover their learner-labelled records."""
 
 import json
+from copy import deepcopy
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -129,6 +130,8 @@ def review_context(repository, project, task):
                 "unavailable_reason": str(exc), "runs": [], "sources": []}
     context.update(available=True, input=record["input"], as_of=record.get("as_of"),
                    sources=record["sources"], runs=[])
+    if (record.get("previous_comparison") or {}).get("kind") == "retrieval_suite":
+        context["previous_suite_comparison"] = deepcopy(record["previous_comparison"])
     if isinstance(record.get("review_origin"), dict):
         context["review_origin"] = {key: record["review_origin"].get(key) for key in (
             "step_id", "kind", "question_id", "insight_id", "answer_document_id",
@@ -157,16 +160,20 @@ def review_context(repository, project, task):
     return context
 
 
-def comparison_changes(previous, current):
+def comparison_changes(previous, current, *, query_and_labels=True):
     changes = []
     for key, label in (("baseline", "原查询"), ("candidate", "改写查询"), ("top_k", "片段上限")):
+        if not query_and_labels and key != "top_k":
+            continue
         if previous["input"][key] != current["input"][key]:
             changes.append(label)
     for fields, label in ((("job_ids", "document_ids"), "对照资料"),
                           (("expected_job_ids", "expected_document_ids"), "预期相关标签")):
+        if not query_and_labels and label == "预期相关标签":
+            continue
         if any(set(previous["input"][key]) != set(current["input"][key]) for key in fields):
             changes.append(label)
-    if previous["input"]["expectation"] != current["input"]["expectation"]:
+    if query_and_labels and previous["input"]["expectation"] != current["input"]["expectation"]:
         changes.append("应命中或不应命中的预期")
     if previous["aliases"] != current["aliases"]:
         changes.append("别名配置")

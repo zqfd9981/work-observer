@@ -22,16 +22,22 @@ class SuiteDiscussionModel(ModelClient):
         review = personal["retrieval_review"]
         assert review["available"] and len(review["input"]["cases"]) == 3
         assert len(review["runs"]) == 6
-        assert review["runs"][-1]["unexpected_source_keys"] == ["job:" + self.jobs[0]]
+        expected_extra = getattr(self, "expected_extra", self.jobs[0])
+        assert review["runs"][-1]["unexpected_source_keys"] == ["job:" + expected_extra]
         assert {row["id"] for row in context["fixed_scope"]["jobs"]} == set(self.jobs)
         documents = {self.artifact}
+        if getattr(self, "parent_artifact", None):
+            documents.add(self.parent_artifact)
+            assert review["previous_suite_comparison"] == self.expected_comparison
         if personal.get("selected_story"):
             documents.add(personal["selected_story"]["document_id"])
         assert set(context["fixed_scope"]["archived_public_ids"]) == documents
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
         if not outputs:
-            name, args = "read_archived_document", {"document_id": self.artifact, "start": 0}
+            name, args = "read_archived_documents", {
+                "reads": [{"document_id": key, "start": 0} for key in sorted(documents)],
+            }
         elif len(outputs) == 1:
             name, args = "read_job", {"job_id": self.jobs[0], "start": 0}
         else:
@@ -143,6 +149,57 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
         })
         assert rerun["career"]["tasks"][-1]["previous_task_id"] == task["id"]
         assert rerun["career"]["tasks"][:-1] == before
+        unchanged = rerun["experiment"]["previous_comparison"]
+        assert not unchanged["shared_changed_conditions"]
+        assert all(row["state"] == "matched" and not row["changed_conditions"]
+                   for row in unchanged["cases"])
+        revised = deepcopy(values)
+        revised["top_k"] = 1
+        revised["cases"][0]["baseline"] = {"terms": ["评估集"]}
+        revised["cases"][1]["expected_job_ids"] = jobs[:1]
+        revised["cases"] = [revised["cases"][1], revised["cases"][0],
+                            case("新增：端云负例", "端云同步", "端云同步")]
+        changed = post(base + "/experiments/retrieval-suite", {
+            **revised, "save": True, "previous_task_id": task["id"],
+        })
+        comparison = changed["experiment"]["previous_comparison"]
+        assert comparison["shared_changed_conditions"] == ["片段上限"]
+        cases = {row["name"]: row for row in comparison["cases"]}
+        assert cases["新增：端云负例"]["before"] is None
+        assert cases["不应命中的问题"]["after"] is None
+        assert {row["state"] for row in cases.values()} == {"matched", "added", "removed"}
+        assert "原查询" in cases["评估职责"]["changed_conditions"]
+        assert "预期相关标签" in cases["记忆职责"]["changed_conditions"]
+        returns = cases["评估职责"]["return_comparison"][0]["sources"]
+        source = next(row for row in returns if row["source_key"] == "job:" + jobs[0])
+        assert not source["before"]["returned"] and source["after"]["returned"]
+        labels = cases["记忆职责"]["return_comparison"][0]["sources"]
+        source = next(row for row in labels if row["source_key"] == "job:" + jobs[1])
+        assert source["before"]["returned"] and source["after"]["returned"]
+        assert source["before"]["expected"] and not source["after"]["expected"]
+        changed_task = changed["career"]["tasks"][-1]
+        assert changed_task["retrieval_suite_comparison"] == comparison
+        assert "预期相关标签" in changed_task["design_change"]
+        assert changed["career"]["tasks"][:-2] == before
+        model.artifact, model.parent_artifact = changed_task["artifact_document_id"], model.artifact
+        model.expected_comparison, model.expected_extra = comparison, jobs[1]
+        step = post(base + "/prepare", {"kind": "reflect", "task_id": changed_task["id"]})
+        post("/api/projects/" + goal["id"] + "/run", {"step_id": step["step_id"]})
+        discussed = settled(client, base)["results"][0]
+        assert discussed["result"]["status"] == "completed", discussed["result"]
+        assert discussed["result"]["career_learning_context"]["retrieval_review"][
+            "previous_suite_comparison"
+        ] == comparison
+        revised_story = post(base + "/stories", {
+            "title": "合成评估复验经历", "source_task_id": changed_task["id"],
+            "situation": "检查失败样例后重新运行。", "action": "修改查询和标签，并保留移除样例。",
+            "result": "有一条原先漏回的来源重新返回；另一条只改变了预期标签。",
+            "limits": "仍是小样本词面检索，不能从改标签证明修复。",
+        })["stories"][-1]
+        step = post(base + "/prepare", {"kind": "interview", "story_id": revised_story["id"]})
+        post("/api/projects/" + goal["id"] + "/run", {"step_id": step["step_id"]})
+        discussed = settled(client, base)["results"][0]
+        assert discussed["result"]["status"] == "completed", discussed["result"]
         document_id = goal["materials"][0]["id"]
         with sqlite3.connect(tmp_path / "adaptive.db") as connection:
             connection.execute("UPDATE public_documents SET text=? WHERE id=?",
