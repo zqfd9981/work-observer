@@ -1468,6 +1468,8 @@ class ProjectService:
         if career := record.get("career"):
             if step.get("career_action"):
                 context["career_action"] = step["career_action"]
+                context["adaptive_investigation"] = bool(step.get("career_adaptive"))
+                context["adaptive_question"] = step.get("career_adaptive_question", "")
                 # Coaching starts from current sources and the user's own records.
                 # It does not require a formal revision of earlier research sentences.
                 context["previous_findings"] = []
@@ -1912,7 +1914,10 @@ class ProjectService:
                         ],
                     })
 
+            from work_observer.research.career import personal_documents
+
             context["career_evidence"] = {
+                "personal_document_ids": sorted(personal_documents(career)),
                 "understanding_check": bool(step.get("career_understanding_check")),
                 "autonomous_inquiry": {"rounds_remaining": step["career_auto_rounds"]}
                 if step.get("career_auto_rounds") else None,
@@ -2121,8 +2126,6 @@ class ProjectService:
                     } if selected_inquiry else None,
                     "notice": "本轮只理解岗位工作。个人简历、经历、练习和认识不作为岗位要求依据。",
                 }
-                from work_observer.research.career import personal_documents
-
                 private = personal_documents(career)
             else:
                 private = set()

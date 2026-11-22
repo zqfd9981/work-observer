@@ -118,6 +118,10 @@ class Answer(BaseModel):
     gaps: list[str] = Field(max_length=12)
 
 
+class InvestigationAnswer(Answer):
+    claims: list[Claim] = Field(max_length=24)
+
+
 def tool(name, description, properties, required):
     return {
         "type": "function",
@@ -1159,6 +1163,7 @@ async def _research(
     learning_enabled = learning_notebook is not None and "learning_recall" in (
         conversation_context or {}
     ).get("career_evidence", {})
+    adaptive = bool((conversation_context or {}).get("adaptive_investigation")) and not offline
     from work_observer.research.reading import source_reading_progress
 
     prior_reading = learning_notebook.reading_evidence(
@@ -1617,6 +1622,10 @@ async def _research(
         else set()
     )
     system = SYSTEM
+    if adaptive:
+        from work_observer.research import orchestration
+
+        system += orchestration.POLICY
     if budget_policy:
         # The frozen workflow below replaces these mandatory preparation steps.
         # Keep SYSTEM itself intact so existing method hashes remain reproducible.
@@ -1774,6 +1783,9 @@ async def _research(
                         else {}
                     ),
                     "project_context": conversation_context,
+                    **({"original_question": (conversation_context or {}).get(
+                        "adaptive_question", question,
+                    )} if adaptive else {}),
                     "public_search_allowed": allow_public,
                     **({"review_feedback": review_feedback} if review_feedback else {}),
                 },
@@ -2000,6 +2012,16 @@ async def _research(
 
     try:
         persist()
+        def reject_investigation_tool(call, entry, message):
+            entry["validation"] = "investigation_needs_adjustment"
+            history.append({
+                "type": "function_call_output", "call_id": call["call_id"],
+                "output": json.dumps({"accepted": False, "error": message,
+                                      "instruction": "保留用户目标，修正本次提交后再继续。"},
+                                     ensure_ascii=False),
+            })
+            persist()
+
         async with asyncio.timeout(max(0, timeout - elapsed)):
             model = model or ModelClient(settings)
             if isinstance(model, ModelClient):
@@ -2041,6 +2063,9 @@ async def _research(
                     model.tools = applications.tools(model.tools)
                 if allow_proposals and historical_read_enabled:
                     model.tools = historical_reads.proposals(model.tools)
+                if adaptive:
+                    model.tools = orchestration.execution_tools(model.tools)
+            execution_tools = getattr(model, "tools", [])
             for _ in range(max_calls - result["model_calls"]):
                 if recall() != result["memory_used"]:
                     raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
@@ -2082,6 +2107,16 @@ async def _research(
                         "remaining_model_calls": max_calls - result["model_calls"],
                     }
                     history[1]["content"] = json.dumps(context, ensure_ascii=False)
+                if adaptive:
+                    # Only the intent tool is exposed before planning. Resume uses the
+                    # accepted brief in the existing persisted result/history.
+                    if not result.get("investigation"):
+                        model.tools = [orchestration.planning_tool()]
+                    else:
+                        model.tools = [definition for definition in execution_tools
+                                       if definition["name"] != "plan_investigation"
+                                       or len(result.get("investigation_history", [])) < 1
+                                       and max_calls - result["model_calls"] > 1]
                 result["model_calls"] += 1
                 persist(pending=True)
                 outputs, call = await model.turn(history)
@@ -2098,7 +2133,49 @@ async def _research(
                 arguments = json.loads(call.get("arguments", "{}"))
                 entry = {"tool": name}
                 result["trace"].append(entry)
-                if name == "query_jobs" and arguments == {}:
+                if adaptive and not result.get("investigation") and name != "plan_investigation":
+                    raise ProbeError("INVESTIGATION_PLAN_REQUIRED")
+                if name == "plan_investigation" and adaptive:
+                    if len(result.get("investigation_history", [])) >= 1:
+                        raise ProbeError("INVESTIGATION_REPLAN_LIMIT")
+                    original_question = (conversation_context or {}).get(
+                        "adaptive_question", question,
+                    )
+                    try:
+                        data = orchestration.investigate(
+                            repository, arguments, original_question=original_question,
+                            scope=scope, project_id=project_id, as_of=result["created_at"],
+                            aliases=result["strategy"]["aliases"],
+                            personal_document_ids=(conversation_context or {}).get(
+                                "career_evidence", {},
+                            ).get("personal_document_ids", []),
+                            previous=result.get("investigation"),
+                        )
+                    except ValueError:
+                        reject_investigation_tool(
+                            call, entry,
+                            "请按工具结构提交有效查询；补查保留原tasks的问题、意图与顺序。",
+                        )
+                        continue
+                    if result.get("investigation"):
+                        result.setdefault("investigation_history", []).append(
+                            result["investigation"],
+                        )
+                    result["investigation"] = {key: value for key, value in data.items()
+                                               if key != "evidence"}
+                    result["plan"].update(
+                        objective=data["objective"], origin="model_intent",
+                        steps=[task["question"] for task in data["tasks"]],
+                    )
+                    entry.update(
+                        intents=[task["intent"] for task in data["tasks"]],
+                        questions=[task["question"] for task in data["tasks"]],
+                        retrieval_attempts=[attempt for task in data["tasks"]
+                                            for attempt in task["attempts"]],
+                        missing_context=data["missing_context"],
+                        replanned=bool(result.get("investigation_history")),
+                    )
+                elif name == "query_jobs" and arguments == {}:
                     data = scope
                     if coverage_mode == "question":
                         data = {
@@ -2890,6 +2967,7 @@ async def _research(
                     }
                     data = candidate["evaluation"]
                 elif name == "finish_research":
+                    task_outcomes = arguments.pop("task_outcomes", []) if adaptive else None
                     if recall() != result["memory_used"]:
                         raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                     check_knowledge()
@@ -2922,6 +3000,8 @@ async def _research(
                         from work_observer.research.dialogue import DialogueAnswer
 
                         answer = DialogueAnswer.model_validate(arguments)
+                    elif adaptive:
+                        answer = InvestigationAnswer.model_validate(arguments)
                     else:
                         answer = Answer.model_validate(arguments)
                     for claim in answer.claims:
@@ -2942,6 +3022,17 @@ async def _research(
                             answer, result.get("source_findings", []), evidence
                         )
                     used = {key for claim in answer.claims for key in claim.evidence_ids}
+                    if adaptive:
+                        try:
+                            task_outcomes = orchestration.outcomes(
+                                task_outcomes, result["investigation"], answer.claims, evidence,
+                            )
+                        except ValueError:
+                            reject_investigation_tool(
+                                call, entry, "请逐项提交task_outcomes；关联有效的claim_indices，"
+                                "无足够原文时标为partial或needs_context。完整面试题仅放interview任务。",
+                            )
+                            continue
                     covered = {evidence[key]["job_id"] for key in used if key in evidence}
                     if approach == "source_first":
                         covered.update(
@@ -3138,6 +3229,15 @@ async def _research(
                             if finding_check.get("analysis_notes"):
                                 result["analysis_notes"] = finding_check["analysis_notes"]
                         result["gaps"].extend(answer.gaps)
+                        if adaptive:
+                            result["investigation"]["outcomes"] = task_outcomes
+                            result["interview_questions"] = [
+                                text for outcome in task_outcomes for text in outcome["questions"]
+                            ]
+                            result["gaps"].extend(
+                                "待补背景：" + value
+                                for value in result["investigation"]["missing_context"]
+                            )
                         persist()
                         break
                 else:

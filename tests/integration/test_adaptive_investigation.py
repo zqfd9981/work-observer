@@ -1,0 +1,258 @@
+"""Isolated scripted-model checks; these do not measure real intent/semantic accuracy."""
+
+import asyncio
+import json
+import re
+import time
+
+import pytest
+from starlette.testclient import TestClient
+
+from work_observer.api.web import create_app
+from work_observer.config import Settings
+from work_observer.research.agent import ModelClient
+from work_observer.research.orchestration import investigate
+from work_observer.storage.database import upgrade
+
+
+def task(intent="understand", terms=None, retry=None, question="这个工作具体要做什么？"):
+    return {
+        "intent": intent, "question": question, "completion": "分清原文任务和仍未知的责任。",
+        "queries": [{"terms": terms or ["怎么把服务跑稳"], "reason": "保留口语表达作为初查。"}],
+        "retry_queries": [{"terms": retry or ["接口", "测试"],
+                           "reason": "换成原文可能使用的工作任务表达。"}],
+    }
+
+
+def brief(tasks=None, missing=None):
+    return {"objective": "解释实际工作，再回应用户提出的其他意图。",
+            "tasks": tasks or [task()], "missing_context": missing or []}
+
+
+class ScriptedPlanner(ModelClient):
+    def __init__(self, plan, *, replan=None, pause=False, omit_once=False):
+        self.plan, self.replan, self.pause = plan, replan, pause
+        self.contexts, self.tools_seen = [], []
+        self.last_usage = {}
+        self.omit_once = omit_once
+
+    async def turn(self, history):
+        self.contexts.append(json.loads(history[1]["content"]))
+        self.tools_seen.append({tool["name"] for tool in self.tools})
+        outputs = [json.loads(row["output"]) for row in history
+                   if row.get("type") == "function_call_output"]
+        plans = [row for row in outputs if row.get("engine") == "langgraph"]
+        if not plans:
+            name, arguments = "plan_investigation", self.plan
+        elif self.replan and len(plans) == 1:
+            name, arguments = "plan_investigation", self.replan
+        else:
+            if self.pause:
+                await asyncio.sleep(1)
+            latest = plans[-1]
+            evidence = latest["evidence"]
+            claims = [{"category": "task", "basis": "direct", "requirement": "unspecified",
+                       "text": "负责接口开发与测试。", "evidence_ids": [row["citation_key"]]}
+                      for row in evidence]
+            arguments = {"claims": claims, "gaps": ["资料未说明最终上线决定权。"],
+                         "task_outcomes": [{
+                             "task_index": index,
+                             "status": "partial" if task["retrieval_status"]
+                             != "candidates_need_reading" else "answered",
+                             "answer": "合成脚本回应该项问题，仍须核对实际资料与条件。",
+                             "claim_indices": list(range(len(claims))),
+                             "questions": ["接口开发时，你如何取舍测试范围并保留限制？"]
+                             if task["intent"] == "interview" else [],
+                         } for index, task in enumerate(latest["tasks"])]}
+            finish = next(tool for tool in self.tools if tool["name"] == "finish_research")
+            if "application_plan" in finish["parameters"]["properties"]:
+                arguments["application_plan"] = None
+            name = "finish_research"
+            if self.omit_once:
+                arguments["task_outcomes"] = []
+                self.omit_once = False
+        call = {"type": "function_call", "name": name, "arguments": json.dumps(arguments),
+                "call_id": str(len(history))}
+        return [call], call
+
+
+def workspace(tmp_path, model):
+    path = tmp_path / "adaptive.db"
+    upgrade(path)
+    return create_app(Settings(database_path=path, raw_directory=tmp_path / "raw"),
+                      model=model, reports_dir=tmp_path / "reports")
+
+
+def prepare(client, question):
+    auth = {"X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]}
+    jobs = [client.post("/api/import", headers=auth, json={
+        "title": "合成服务岗位" + str(index), "company": "合成公司" + str(index),
+        "data_kind": "synthetic", "description": "负责接口开发与测试。上线责任未披露。",
+    }).json()["job_id"] for index in range(2)]
+    goal = client.post("/api/career", headers=auth, json={
+        "title": "合成意图编排", "goal": "理解实际工作", "job_ids": jobs,
+    }).json()["id"]
+    base = f"/api/career/{goal}"
+    response = client.post(base + "/prepare", headers=auth, json={
+        "kind": "ask", "question": question, "adaptive": True,
+    })
+    assert response.status_code == 201, response.text
+    return auth, goal, base, response.json()["step_id"], jobs
+
+
+def settled(client, base):
+    for _ in range(500):
+        data = client.get(base).json()
+        if not data["running"]:
+            return data
+        time.sleep(0.01)
+    raise AssertionError("scripted investigation did not settle")
+
+
+@pytest.mark.parametrize("question,tasks", [
+    ("说白了这工作天天忙啥，顺便给个能自己动手验证的小练习", [task(), task("practice")]),
+    ("这俩活儿差在哪？面试我该怎么讲取舍", [task("compare"), task("interview")]),
+    ("我把这个理解成写接口就够了，对不对？", [task("verify")]),
+])
+def test_scripted_multi_intent_rewrite_retry_and_delivery(tmp_path, question, tasks):
+    model = ScriptedPlanner(brief(tasks, ["个人项目中具体承担过什么仍需补充。"] ))
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, jobs = prepare(client, question)
+        response = client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        assert response.status_code == 202, response.text
+        row = settled(client, base)["results"][0]
+        result = row["result"]
+        assert result["status"] == "completed", result
+        investigation = result["investigation"]
+        assert investigation["original_question"] == question
+        assert set(investigation["scope"]["job_ids"]) == set(jobs)
+        assert [row["intent"] for row in investigation["tasks"]] == [t["intent"] for t in tasks]
+        assert len(investigation["outcomes"]) == len(tasks)
+        assert all(row["retried"] for row in investigation["tasks"])
+        assert all(row["candidate_sources"] == 2 for row in investigation["tasks"])
+        assert model.tools_seen[0] == {"plan_investigation"}
+        assert result["model_calls"] == 2  # planning+local recall, then final response
+        assert all(row["job_id"] in jobs for row in result["evidence"])
+        assert any("待补背景" in value for value in result["gaps"])
+        assert "task_outcomes" not in result["claims"][0]
+        if any(task["intent"] == "interview" for task in tasks):
+            assert result["interview_questions"] == ["接口开发时，你如何取舍测试范围并保留限制？"]
+            prepared = client.post(base + "/prepare", headers=auth, json={
+                "kind": "answer", "source_step_id": step, "question_index": 0,
+                "answer": "合成自述：我只有本地练习，未承担企业上线责任。",
+            })
+            assert prepared.status_code == 201, prepared.text
+            next_row = client.get(base).json()["results"][0]
+            assert next_row["interview_question"] == result["interview_questions"][0]
+
+
+def test_no_hits_can_finish_with_explicit_gaps_and_no_invented_claim(tmp_path):
+    model = ScriptedPlanner(brief([task(terms=["未披露的审批权"], retry=["不存在的交付物"])]))
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, _ = prepare(client, "是不是我有最终审批权？")
+        client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        result = settled(client, base)["results"][0]["result"]
+        assert result["status"] == "completed", result
+        assert result["claims"] == []
+        assert result["investigation"]["tasks"][0]["retrieval_status"] == "no_work_evidence"
+        assert result["investigation"]["outcomes"][0]["status"] == "partial"
+
+
+def test_replanning_keeps_original_question_and_history(tmp_path):
+    first = brief([task(terms=["不存在"], retry=["还是不存在"])])
+    model = ScriptedPlanner(first, replan=brief([task(terms=["接口"], retry=["测试"])]))
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, _ = prepare(client, "服务怎么跑稳？")
+        client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        result = settled(client, base)["results"][0]["result"]
+        assert result["status"] == "completed", result
+        assert result["investigation"]["original_question"] == "服务怎么跑稳？"
+        previous = result["investigation_history"][0]
+        assert previous["tasks"][0]["retrieval_status"] == "no_work_evidence"
+        assert result["trace"][1]["replanned"]
+        assert result["model_calls"] == 3
+
+
+def test_graph_never_widens_scope_and_separates_personal_sources(tmp_path):
+    model = ScriptedPlanner(brief())
+    app = workspace(tmp_path, model)
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        _, _, _, _, jobs = prepare(client, "接口怎么做？")
+        # Read only the isolated application repository; never the real workspace data.
+        from work_observer.storage.repository import Repository
+
+        repository = Repository(tmp_path / "adaptive.db")
+        try:
+            data = investigate(
+                repository, brief([task(terms=["接口"], retry=["测试"])]),
+                original_question="只看第一个岗位", scope={"jobs": [{"id": jobs[0]}],
+                                                       "filters": {}, "archived_public_ids": []},
+                project_id=None, as_of="2026-11-23T23:59:59+00:00", aliases={},
+                personal_document_ids=["out-of-scope-personal"],
+            )
+            assert data["evidence"] and {row["job_id"] for row in data["evidence"]} == {jobs[0]}
+            assert not data["tasks"][0]["retried"]
+            assert data["context_characters"] <= 7000
+            assert all(row["channel"] == "work" for row in data["tasks"][0]["attempts"])
+
+            from work_observer.connectors.public_documents import PublicDocumentService
+
+            docs = PublicDocumentService(repository, tmp_path / "scoped-public")
+            personal = docs.archive_text("合成个人自述", "我负责个人审批与测试。", "合成用户材料。")
+            work = docs.archive_text("合成工作说明", "负责业务流程记录。", "合成工作材料。")
+            personal_id, work_id = personal["document"]["id"], work["document"]["id"]
+            isolated = investigate(
+                repository, brief([task("verify", terms=["个人审批"], retry=["个人审批"])]),
+                original_question="这个岗位是否拥有审批权？", scope={
+                    "jobs": [], "filters": {}, "archived_public_ids": [personal_id, work_id],
+                }, project_id=None, as_of=None, aliases={}, personal_document_ids=[personal_id],
+            )
+            assert {row["public_document_id"] for row in isolated["evidence"]} == {personal_id}
+            assert isolated["tasks"][0]["retrieval_status"] == "no_work_evidence"
+            assert [row["channel"] for row in isolated["tasks"][0]["attempts"]] == [
+                "work", "personal",
+            ]  # Repeated retry queries do not run again.
+            past = investigate(
+                repository, brief([task(terms=["接口"])]), original_question="过去的岗位",
+                scope={"jobs": [{"id": jobs[0]}], "filters": {}, "archived_public_ids": []},
+                project_id=None, as_of="2000-01-01T00:00:00+00:00", aliases={},
+            )
+            assert past["evidence"] == []
+        finally:
+            repository.close()
+
+
+def test_pause_resume_keeps_accepted_plan_and_evidence(tmp_path):
+    model = ScriptedPlanner(brief(), pause=True)
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, _ = prepare(client, "服务怎么跑稳？")
+        client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        for _ in range(300):
+            progress = client.get(base).json()["results"][0]
+            if (progress.get("result") or {}).get("investigation"):
+                break
+            time.sleep(0.01)
+        assert progress["result"]["investigation"]
+        assert client.post(f"/api/projects/{goal}/pause", headers=auth, json={}).status_code == 200
+        paused = settled(client, base)["results"][0]
+        assert paused["state"] == "interrupted", paused
+        model.pause = False
+        resumed = client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        assert resumed.status_code == 202, resumed.text
+        result = settled(client, base)["results"][0]["result"]
+        assert result["status"] == "completed", result
+        assert len([entry for entry in result["trace"]
+                    if entry["tool"] == "plan_investigation"]) == 1
+        assert result["investigation"]["scope"] == paused["result"]["investigation"]["scope"]
+
+
+def test_omitted_intents_receive_feedback_and_can_be_corrected(tmp_path):
+    model = ScriptedPlanner(brief([task(), task("practice")]), omit_once=True)
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, _ = prepare(client, "先解释工作，再设计一个验证")
+        client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        result = settled(client, base)["results"][0]["result"]
+        assert result["status"] == "completed", result
+        assert result["trace"][1]["validation"] == "investigation_needs_adjustment"
+        assert len(result["investigation"]["outcomes"]) == 2
+        assert result["model_calls"] == 3

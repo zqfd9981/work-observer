@@ -184,11 +184,12 @@ def research_documents(project, kind, preferred=(), *, repository=None, query=""
 
 
 def interview_source(row):
-    return row["kind"] in {"interview", "teachback", "followup"} or (
-        row["kind"] == "ask" and len(
-            ((row.get("result") or {}).get("career_learning_context") or {})
-            .get("answer_comparison", [])
-        ) == 2
+    if row["kind"] in {"interview", "teachback", "followup"}:
+        return True
+    result = row.get("result") or {}
+    return row["kind"] == "ask" and (
+        bool(result.get("interview_questions"))
+        or len((result.get("career_learning_context") or {}).get("answer_comparison", [])) == 2
     )
 
 
@@ -2079,7 +2080,10 @@ class CareerService:
         selected_job_ids=None,
         inherit_focus=True,
         autonomous=False,
+        adaptive=False,
     ):
+        if adaptive and kind != "ask":
+            raise ValueError("意图理解用于自由提问，其他入口按已选研究方式进行。")
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
         if inquiry_answer and (kind != "answer" or not question_id or any((
@@ -2608,7 +2612,7 @@ class CareerService:
                     raise ValueError("请先选择当前目标下已生成的面试问题。")
                 interview_result = interview["result"]
                 story_id, task_id = interview.get("story_id"), interview.get("task_id")
-                questions = [
+                questions = interview_result.get("interview_questions") or [
                     text for text in interview_result.get("gaps", []) if "？" in text or "?" in text
                 ]
                 if interview_result.get("status") != "completed" or not 0 <= question_index < len(
@@ -3073,6 +3077,9 @@ class CareerService:
             if selected_job_ids:
                 project["steps"][-1]["job_ids"] = selected_job_ids[:]
             project["steps"][-1]["career_omitted_documents"] = omitted
+            if adaptive and not offline:
+                project["steps"][-1]["career_adaptive"] = True
+                project["steps"][-1]["career_adaptive_question"] = user_question
             if answer_record and not answer_document_id:
                 answer_label = "理解自测回答" if understanding_check else "模拟面试回答"
                 document = PublicDocumentService(

@@ -291,6 +291,7 @@ class CareerResearchInput(BaseModel):
     )
     inherit_focus: bool = True
     autonomous: bool = False
+    adaptive: bool = False
     question: str = Field(default="", max_length=1500)
     section: Literal["requirements", "stories", "experiments", "interview"] = "requirements"
     hypothesis_a: str = Field(default="", max_length=700)
