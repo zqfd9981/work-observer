@@ -104,6 +104,8 @@ class LearningNotebook:
                     row.get(key, "")
                     for key in ("previous_view", "observation", "current_view", "open_question")
                 )
+                + "\n" + (row.get("source_passage") or {}).get("title", "")
+                + "\n" + (row.get("source_passage") or {}).get("quote", "")
             )
             hits = [term for term in terms if match_text(term) in text]
             if hits or not terms:
@@ -545,6 +547,8 @@ def learning_record(row, record, store):
         "question_id": row.get("question_id"),
         "source_step_id": row.get("source_step_id"),
         "previous_view": row["previous_view"],
+        "source_passage": deepcopy(row.get("source_passage")),
+        "source_locators": [deepcopy(row["source_passage"])] if row.get("source_passage") else [],
         "reported_observation": row["observation"],
         "current_user_view": row["current_view"],
         "open_question": row["open_question"],
@@ -615,7 +619,7 @@ def learning_record(row, record, store):
                     "notice": "个人认识参考的整次讨论，不是对某一条判断的逐字采用。",
                 }
             references = {key for claim in selected for key in claim["evidence_ids"]}
-            note["source_locators"] = [
+            note["source_locators"] += [
                 {
                     key: evidence[key]
                     for key in (

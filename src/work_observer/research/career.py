@@ -504,7 +504,8 @@ class CareerService:
                     "\n".join(
                         row.get(key, "")
                         for key in ("previous_view", "observation", "current_view", "open_question")
-                    ),
+                    ) + "\n" + (row.get("source_passage") or {}).get("title", "")
+                    + "\n" + (row.get("source_passage") or {}).get("quote", ""),
                     "experiments",
                     step_id=row.get("source_step_id"),
                 )
@@ -1507,6 +1508,15 @@ class CareerService:
         with self.store.lock, self.store.db:
             project = self._project(identity)
             notes = project["career"].setdefault("insights", [])
+            existing = next((row for row in notes if row["id"] == insight_id), None)
+            if passage := data.get("source_passage"):
+                old = (existing or {}).get("source_passage") or {}
+                keys = ("public_document_id", "document_id", "snapshot_id", "start", "end")
+                data = {**data, "source_passage": (
+                    old if old and all(old.get(key) == passage.get(key) for key in keys)
+                    else self._source_passage({key: value for key, value in passage.items()
+                                               if value is not None})
+                )}
             if data.get("question_id") and not any(
                 row["id"] == data["question_id"] for row in project["career"].get("questions", [])
             ):
@@ -2702,6 +2712,8 @@ class CareerService:
             topic = [user_question]
             topic.extend(row["current_view"] + "\n" + row.get("open_question", "")
                          for row in selected_insights)
+            preferred.extend((row.get("source_passage") or {}).get("public_document_id")
+                             for row in selected_insights)
             if synthesis_sources:
                 from work_observer.research.inquiry_synthesis import synthesis_inquiries
 

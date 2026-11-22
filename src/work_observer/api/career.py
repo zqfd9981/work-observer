@@ -134,19 +134,6 @@ class JobObservationInput(BaseModel):
     data_kind: Literal["user_provided", "synthetic"] = "user_provided"
 
 
-class InsightInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    previous_view: str = Field(min_length=1, max_length=1500)
-    observation: str = Field(min_length=1, max_length=2000)
-    current_view: str = Field(min_length=1, max_length=1500)
-    open_question: str = Field(default="", max_length=1000)
-    task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
-    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
-    source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
-    source_claim_index: int | None = Field(default=None, ge=0)
-    replaces_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
-
-
 class InsightUseInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     use_for_research: bool = Field(strict=True)
@@ -173,6 +160,21 @@ class SourcePassageInput(BaseModel):
     snapshot_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     start: int = Field(strict=True, ge=0)
     end: int = Field(strict=True, ge=1)
+
+
+class InsightInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    previous_view: str = Field(min_length=1, max_length=1500)
+    observation: str = Field(min_length=1, max_length=2000)
+    current_view: str = Field(min_length=1, max_length=1500)
+    open_question: str = Field(default="", max_length=1000)
+    task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_claim_index: int | None = Field(default=None, ge=0)
+    replaces_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+
+    source_passage: SourcePassageInput | None = None
 
 
 class QuestionPassageNoteInput(BaseModel):
