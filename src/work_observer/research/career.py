@@ -2146,6 +2146,8 @@ class CareerService:
             assessment_job_ids, interview_task_origin = None, None
             retrieval_review, retrieval_job_ids, retrieval_document_ids = None, None, None
             feedback_origin, feedback_documents = None, None
+            answer_pair_documents = None
+            comparison_followup_ids = []
             synthesis_sources = []
             if kind == "ask" and source_step_id:
                 sources = [
@@ -2320,6 +2322,18 @@ class CareerService:
                 )
                 if previous_assessment:
                     interview_task_origin = deepcopy(previous_assessment.get("interview_origin"))
+                    old_pair = (previous_assessment["result"].get("career_learning_context")
+                                or {}).get("answer_comparison", [])
+                    if kind in {"answer", "followup"} and len(old_pair) == 2:
+                        comparison_followup_ids = [row["step_id"] for row in old_pair]
+                        allowed = set(project["public_document_ids"]) | {
+                            row.get("answer_document_id") for row in old_pair
+                        } | {previous_assessment.get("answer_document_id")}
+                        answer_pair_documents = list(dict.fromkeys(
+                            key for key in (previous_assessment["result"].get("scope") or {}).get(
+                                "archived_public_ids", [],
+                            ) if key in allowed
+                        ))
                     if inherit_focus and selected_job_ids is None:
                         original_step = next(row for row in project["steps"]
                                              if row["id"] == previous_assessment["step_id"])
@@ -2406,6 +2420,33 @@ class CareerService:
                            for key in answer_focus):
                         raise ValueError("请沿用这两次回答对应的认识、调查与经历，再开始对照。")
                     understanding_check = bool(pair[0].get("understanding_check"))
+                    if inherit_focus:
+                        pair_steps = [next(row for row in project["steps"]
+                                           if row["id"] == answer["step_id"]) for answer in pair]
+                        if not selected_job_ids:
+                            selected_job_ids = None
+                            assessment_job_ids = list(dict.fromkeys(
+                                key for step in pair_steps for key in step["job_ids"]
+                                if key in project["job_ids"]
+                            ))
+                        answer_ids = {row.get("answer_document_id") for row in pair}
+                        allowed = set(project["public_document_ids"]) | answer_ids
+                        answer_pair_documents = []
+                        for answer, step in zip(pair, pair_steps, strict=True):
+                            prior = answer["result"]
+                            practice = (prior.get("career_learning_context") or {}).get(
+                                "practice_experiment",
+                            ) or {}
+                            answer_pair_documents.extend([
+                                *((prior.get("scope") or {}).get("archived_public_ids",
+                                  step["public_document_ids"])),
+                                answer.get("answer_document_id"),
+                                (practice.get("artifact_document") or {}).get("document_id"),
+                            ])
+                        answer_pair_documents = list(dict.fromkeys(
+                            key for key in [*answer_pair_documents, *material_ids, material_id]
+                            if key and key in allowed
+                        ))
                 candidates = {
                     row["step_id"]: row
                     for row in self.get(identity)["results"]
@@ -2732,6 +2773,13 @@ class CareerService:
                     "结合selected_inquiry与工作资料，说明什么观察可以支持或挑战原解释。"
                     "用户的解释不是已执行的实验或个人履历；保留未运行和未知的边界，不补造结果。"
                 )
+            if comparison_followup_ids:
+                question += (
+                    "\n本轮继续回答或追问两次解释对照后提出的具体问题；"
+                    "selected_answer_comparison保留原来的两次解释、各自观察和未知，"
+                    "须先读本轮selected_answer，再按可读原文核对当前回答是否回应了该追问。"
+                    "不要重做整套对照，也不因这次回答更肯定就补出未执行的验证或正确性。"
+                )
             if practice_task_id:
                 practice = next((row for row in project["career"]["tasks"]
                                  if row["id"] == practice_task_id), None)
@@ -2999,6 +3047,12 @@ class CareerService:
                     "若career_evidence.selected_answer_comparison非空，用户在对照两次自述回答与反馈。"
                     "逐次读取其中完整题目、原回答、当时反馈与待核原文；先区分表述变化、"
                     "推理条件变化与仍无依据的部分。较新、较长、语气更确定都不表示理解更正确，"
+                    "每侧的practice_experiment_then、feedback_origin_then与input_scope_then"
+                    "保留那次回答带入的实际观察、所选未知和资料范围；缺少时不要补造练习。"
+                    "对照每组expected与observed，空白仍未执行，不以现在编辑的练习代替当时输入。"
+                    "retrieval_review_then只作旧运行线索，须回读本轮可用的原记录与工作原文。"
+                    "具体指出哪项观察支持或挑战哪句解释，哪些差异来自输入条件，"
+                    "再在gaps提出能区分剩余解释的一道完整追问，允许暂时无法判断。"
                     "自述回答和模型反馈不证明实际经历或能力。不要替用户补造进步或生产结果。"
                     "用户本次明确对照的两次研究在career_evidence.selected_inquiry.earlier_discussions，"
                     "未绑定调查问题的两份工作地图则在career_evidence.selected_map_comparison。"
@@ -3292,6 +3346,9 @@ class CareerService:
             if feedback_documents is not None:
                 documents = feedback_documents
                 omitted = len(set(project["public_document_ids"]) - set(documents))
+            if answer_pair_documents is not None:
+                documents = answer_pair_documents
+                omitted = len(set(project["public_document_ids"]) - set(documents))
             if not project["job_ids"] and not documents:
                 raise ValueError("请先导入一份可用于本次研究的工作资料，或选择目标岗位JD。")
             project = self.projects.add(
@@ -3320,6 +3377,8 @@ class CareerService:
                 project["steps"][-1]["career_source_document_ids"] = retrieval_document_ids[:]
             if feedback_documents is not None:
                 project["steps"][-1]["career_source_document_ids"] = feedback_documents[:]
+            if answer_pair_documents is not None:
+                project["steps"][-1]["career_source_document_ids"] = answer_pair_documents[:]
             project["steps"][-1]["career_omitted_documents"] = omitted
             if adaptive and not offline:
                 project["steps"][-1]["career_adaptive"] = True
@@ -3419,6 +3478,8 @@ class CareerService:
                 project["steps"][-1]["career_question_id"] = question_id
             if comparison_step_ids:
                 project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
+            elif comparison_followup_ids:
+                project["steps"][-1]["career_comparison_steps"] = comparison_followup_ids
             if passage_ids:
                 project["steps"][-1]["career_passage_ids"] = passage_ids
             if synthesis_sources:

@@ -1510,6 +1510,8 @@ class ProjectService:
                     observations = []
                 elif selected_task:
                     stories = []
+                elif comparing_answers:
+                    stories, observations = [], []
             notes = career.get("insights", [])
             from work_observer.research.learning import (
                 experiment_answer_origin,
@@ -1868,6 +1870,8 @@ class ProjectService:
                     continue
                 old_step = next(row for row in record["steps"] if row["id"] == step_id)
                 old_result = (self.store.get(old_step["run_id"]) or {}).get("result") or {}
+                old_learning = old_result.get("career_learning_context") or {}
+                old_scope = old_result.get("scope") or {}
                 selected_answers.append({
                     "step_id": step_id,
                     "interview_question": entry.get("interview_question"),
@@ -1876,6 +1880,15 @@ class ProjectService:
                     "recorded_at": entry["created_at"],
                     "understanding_check": bool(entry.get("understanding_check")),
                     "same_job_scope": old_step["scope_version"] == record["scope_version"],
+                    "input_scope_then": {
+                        "job_ids": [row["id"] for row in old_scope.get("jobs", [])]
+                        if "jobs" in old_scope else old_step["job_ids"][:],
+                        "document_ids": old_scope.get("archived_public_ids",
+                                                      old_step["public_document_ids"])[:],
+                    },
+                    "practice_experiment_then": deepcopy(old_learning.get("practice_experiment")),
+                    "feedback_origin_then": deepcopy(old_learning.get("feedback_origin")),
+                    "retrieval_review_then": deepcopy(old_learning.get("retrieval_review")),
                     "claim_details_to_recheck": [
                         {key: claim.get(key) for key in (
                             "text", "category", "basis", "requirement",

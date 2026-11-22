@@ -46,6 +46,19 @@ class FeedbackPracticeModel(ModelClient):
             assert practice["comparison_rows"][0]["observed"] == "仍有漏回，只做了这一组。"
             assert practice["comparison_rows"][1]["observed"] == ""
             documents.add(practice["artifact_document"]["document_id"])
+        pair = personal.get("selected_answer_comparison", [])
+        if pair:
+            assert len(pair) == 2 and pair[0]["practice_experiment_then"] is None
+            original_practice = pair[1]["practice_experiment_then"]
+            assert original_practice["comparison_rows"][0]["observed"] == (
+                "仍有漏回，只做了这一组。"
+            )
+            assert original_practice["comparison_rows"][1]["observed"] == ""
+            assert "后补说明" not in original_practice["reported_observation"]
+            assert pair[1]["feedback_origin_then"]["gap"] == GAP
+            assert not personal["selected_experiment_id"]
+            documents.update(row["answer_document_id"] for row in pair)
+            documents.add(original_practice["artifact_document"]["document_id"])
         assert set(context["fixed_scope"]["archived_public_ids"]) == documents
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
@@ -69,6 +82,8 @@ class FeedbackPracticeModel(ModelClient):
                             "text": jd["quote"], "evidence_ids": [jd["citation_key"]]}],
                 "gaps": [QUESTION] if action == "teachback" else ["另一组尚未执行，解释仍待检验。"],
             }
+            if pair and action == "ask":
+                args["gaps"] = ["如果另一组返回相同的来源，两种解释还如何区分？"]
             if action == "answer":
                 args["gaps"] = [f"前置核对{i}：" + "原始条件、适用边界与实际观察仍需分别确认。" * 8
                                 for i in range(10)] + [GAP]
@@ -215,6 +230,23 @@ def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection
             "state": "done", "outcome": "后补说明：仍只执行了第一组，还未验证另一组。",
         })
         assert amended.status_code == 200, amended.text
+        compared = run(prepare(
+            "ask", question="对照两次解释，指出哪项实际观察改变了什么，哪些条件仍未执行。",
+            question_id=created["focus_question_id"],
+            comparison_step_ids=[answer["step_id"], reanswered["step_id"]],
+        ))
+        assert unrelated not in compared["result"]["scope"]["archived_public_ids"]
+        pair = compared["result"]["career_learning_context"]["answer_comparison"]
+        assert pair[1]["practice_experiment_then"] == snapshot
+        next_answer = run(prepare(
+            "answer", source_step_id=compared["step_id"], question_index=0,
+            answer="即使同样返回，也还需要固定查询和输入条件，另一组还没有生产验证。",
+        ))
+        assert next_answer["result"]["career_learning_context"]["answer_comparison"] == pair
+        assert unrelated not in next_answer["result"]["scope"]["archived_public_ids"]
+        followup = run(prepare("followup", source_step_id=next_answer["step_id"]))
+        assert followup["result"]["career_learning_context"]["answer_comparison"] == pair
+        assert unrelated not in followup["result"]["scope"]["archived_public_ids"]
         project = client.get("/api/projects/" + goal).json()
         store = ResearchStore(tmp_path / "checkpoints.db",
                               namespace=str((tmp_path / "adaptive.db").resolve()))
