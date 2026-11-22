@@ -359,3 +359,5 @@
 .career-source-calculations{padding:16px;border:1px solid var(--line);border-radius:9px;background:var(--green-soft);margin:16px 0}.career-source-calculations>section{padding:14px 0;border-top:1px solid var(--line)}.career-source-calculations p{white-space:pre-wrap;overflow-wrap:anywhere}.career-source-calculations .career-cohort-output,.career-source-calculations .career-threshold-output{background:var(--paper)}
 
 .career-threshold-import{padding:16px;margin:18px 0;background:var(--green-soft);border:1px solid var(--line);border-radius:8px}.career-threshold-import pre{white-space:pre-wrap;overflow-wrap:anywhere;background:white;padding:12px;border-radius:6px}.career-threshold-import p{overflow-wrap:anywhere}.career-threshold-lab td:first-child textarea{min-width:170px;resize:vertical}
+
+.career-threshold-saved{padding:16px;margin:18px 0;border:1px solid var(--line);border-radius:8px;background:var(--green-soft)}.career-threshold-saved p{overflow-wrap:anywhere}.career-threshold-saved select{width:100%;min-width:0}
