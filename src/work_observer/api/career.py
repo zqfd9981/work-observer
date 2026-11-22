@@ -327,6 +327,7 @@ class ExperimentInput(BaseModel):
     previous_task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_experiment_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_claim_index: int | None = Field(default=None, strict=True, ge=0)
     design_change: str = Field(default="", max_length=1500)
     comparison_conditions: str = Field(default="", max_length=1000)
     comparison_rows: list[ExperimentComparisonRow] = Field(default_factory=list, max_length=8)

@@ -23,6 +23,29 @@ def experiment_answer_origin(career, task):
     }
 
 
+def experiment_claim_origin(project, task, store):
+    index = task.get("source_claim_index")
+    if index is None:
+        return None
+    step = next((row for row in project.get("steps", [])
+                 if row["id"] == task.get("source_step_id")), {})
+    run = store.get(step["run_id"]) if step.get("run_id") else {}
+    if not run or run.get("state") == "invalidated":
+        return None
+    result = run.get("result") or {}
+    claims = result.get("claims", [])
+    if index >= len(claims):
+        return None
+    claim = claims[index]
+    return {
+        "step_id": step["id"], "claim_index": index, "claim": deepcopy(claim),
+        "evidence": [deepcopy(row) for row in result.get("evidence", [])
+                     if row["id"] in claim.get("evidence_ids", [])],
+        "notice": "实验所针对的历史Agent判断及当时引用；不是本次实际观察或新证据。"
+                  "验证可支持、挑战或保留未知；需按当前范围回读原文，不自动采用旧判断。",
+    }
+
+
 def experiment_template_origin(project, task, store):
     if not task.get("source_experiment_id"):
         return None
@@ -256,13 +279,15 @@ class LearningNotebook:
             if question_id and row.get("question_id") != question_id:
                 continue
             original_answer = experiment_answer_origin(career, row) or {}
+            original_claim = experiment_claim_origin(project, row, self.store) or {}
             text = match_text("\n".join(row.get(key, "") for key in (
                 "title", "task_or_ability", "deliverable", "completion_check",
                 "hypothesis", "outcome", "design_change", "artifact", "comparison_conditions",
             )) + "\n" + "\n".join(
                 value for case in row.get("comparison_rows", []) for value in case.values()
             ) + "\n" + (original_answer.get("original_question") or "")
-                + "\n" + (original_answer.get("user_answer") or ""))
+                + "\n" + (original_answer.get("user_answer") or "")
+                + "\n" + original_claim.get("claim", {}).get("text", ""))
             hits = [term for term in terms if match_text(term) in text]
             if hits or not terms:
                 ranked.append((len(hits), row.get("updated_at") or row["created_at"],
@@ -396,6 +421,7 @@ class LearningNotebook:
                 "source_step_id": row.get("source_step_id"),
                 "target_requirement": row.get("target_requirement"),
                 "answer_to_verify": experiment_answer_origin(career, row),
+                "claim_to_verify": experiment_claim_origin(project, row, self.store),
                 "template_origin": experiment_template_origin(project, row, self.store),
                 "origin": row.get("origin", "research"),
                 "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
@@ -663,9 +689,12 @@ def learning_record(row, record, store):
                        if item["id"] == row.get("task_id")), None)
     if experiment:
         note["linked_experiment"] = deepcopy(experiment)
-        note["linked_experiment"]["template_origin"] = experiment_template_origin(
-            record, experiment, store,
-        )
+        for key, origin in {
+            "claim_to_verify": experiment_claim_origin(record, experiment, store),
+            "template_origin": experiment_template_origin(record, experiment, store),
+        }.items():
+            if origin:
+                note["linked_experiment"][key] = origin
         note["experiment_notice"] = (
             "读取时当前保存的实验设计与观察，不代表已独立验证；完成状态也不证明能力或因果。"
             "artifact_document_id只供定位，本轮仍需读取可用原文；不自动恢复已移出的材料。"
