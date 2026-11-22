@@ -3131,12 +3131,14 @@ function showArchivedImage(id) {
 
 function updateDemoGuide(){
   const bar=$("[data-demo-tourbar]");if(!bar)return;
-  const links=$$(".career-demo-banner [data-demo-step]"),index=links.findIndex(link=>link.getAttribute("href")===location.hash),selected=links[index];
+  const links=$$(".career-demo-banner [data-demo-step]"),direct=links.findIndex(link=>link.getAttribute("href")===location.hash),remembered=history.state?.demoGuideStep??Number(bar.dataset.demoActiveStep??-1);
+  const index=direct>=0?direct:Number.isInteger(remembered)&&remembered>=0&&remembered<links.length?remembered:-1,selected=links[index];
+  history.replaceState({...history.state,demoGuideStep:index},"");
   if(selected&&bar.dataset.demoActiveStep!==String(index))$(".career-demo-points",bar).open=false;
   bar.dataset.demoActiveStep=String(index);
   links.forEach((link,position)=>{if(position===index)link.setAttribute("aria-current","step");else link.removeAttribute("aria-current");});
   $("[data-demo-guide-label]",bar).textContent=selected?`${index+1} / ${links.length} · ${selected.textContent.replace(/^[①-⑧]\s*/,"")} · 看要点`:"完整闭环导览 · 看要点";
-  $("[data-demo-position]",bar).textContent=selected?`第 ${index+1} / ${links.length} 步 · 查看预置记录`:"八步看一条调查怎样推进";
+  $("[data-demo-position]",bar).textContent=selected?`第 ${index+1} / ${links.length} 步 · ${direct<0?"正在浏览其他记录，导览保留在本步":"查看预置记录"}`:"八步看一条调查怎样推进";
   $("[data-demo-question]",bar).textContent=selected?.dataset.demoQuestion||"从提出问题到有依据地讲清工作";
   $("[data-demo-note]",bar).textContent=selected?.dataset.demoNote||"点击开始，依次看问题、工作、对照、自测、综合、修正、表达和迁移。导航只打开已有记录，不开始新的研究。";
   $('[data-demo-direction="-1"]',bar).disabled=index<=0;
