@@ -186,6 +186,21 @@ def test_run_review_keeps_original_corpus_and_reads_diagnostics_and_historical_j
         answered = run(feedback)
         assert answered["insight_id"] == note["id"] and answered["understanding_check"]
         calls = len(model.contexts)
+        feedback_note = client.post(base + "/insights", headers=auth, json={
+            "source_step_id": answered["step_id"], "question_id": task["question_id"],
+            "previous_view": "没找到就等于不存在。", "observation": "回看了原文和查询条件。",
+            "current_view": "不能从词面漏回推断工作不存在。", "open_question": "返回上限有何影响？",
+        })
+        assert feedback_note.status_code == 201, feedback_note.text
+        feedback_note = feedback_note.json()["insights"][-1]
+        note_quiz = prepare("teachback", task_id=None, insight_id=feedback_note["id"])
+        assert note_quiz["job_ids"] == jobs[:1]
+        note_preview = client.post(base + "/experiments/retrieval", headers=auth, json={
+            **inputs, "save": False, "previous_task_id": task_id,
+            "source_insight_id": feedback_note["id"],
+        })
+        assert note_preview.status_code == 200, note_preview.text
+        assert note_preview.json()["experiment"]["note_origin"]["id"] == feedback_note["id"]
         rerun_inputs = {**inputs, "previous_task_id": task_id,
                         "review_step_id": answered["step_id"], "top_k": 1}
         rerun = client.post(base + "/experiments/retrieval", headers=auth, json=rerun_inputs)
@@ -214,9 +229,9 @@ def test_run_review_keeps_original_corpus_and_reads_diagnostics_and_historical_j
             "experiment"
         ]["review_origin"]
         history_project = client.get("/api/projects/" + goal).json()
-        history_project["career"]["insights"][-1]["current_view"] = (
-            "模拟后来的编辑，不应替换旧认识。"
-        )
+        historical_note = next(row for row in history_project["career"]["insights"]
+                               if row["id"] == note["id"])
+        historical_note["current_view"] = "模拟后来的编辑，不应替换旧认识。"
         history_store = ResearchStore(tmp_path / "checkpoints.db",
                                       namespace=str((tmp_path / "adaptive.db").resolve()))
         try:
@@ -255,7 +270,8 @@ def test_run_review_keeps_original_corpus_and_reads_diagnostics_and_historical_j
                         question="沿着这个未知回查检索记录")
         assert child["job_ids"] == jobs[:1]
         assert set(child["public_document_ids"]) == {document, artifact}
-        assert not client.get(base).json()["insights"][-1]["use_for_research"]
+        assert not next(row for row in client.get(base).json()["insights"]
+                        if row["id"] == note["id"])["use_for_research"]
 
         removed = client.delete(base + "/materials/" + document, headers=auth)
         assert removed.status_code == 200, removed.text

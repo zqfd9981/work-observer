@@ -551,6 +551,7 @@ class LearningNotebook:
                 "source_step_id": row.get("source_step_id"),
                 "target_requirement": row.get("target_requirement"),
                 "answer_to_verify": experiment_answer_origin(career, row),
+                "note_to_verify": deepcopy(row.get("retrieval_note_origin")),
                 "claim_to_verify": experiment_claim_origin(project, row, self.store),
                 "relation_to_verify": experiment_relation_origin(project, row, self.store),
                 "task_to_verify": record_task_context(project, row, self.store),

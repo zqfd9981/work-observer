@@ -2971,7 +2971,7 @@ class CareerService:
                     )
                     origin_note = next((row for row in project["career"].get("insights", [])
                                         if row["id"] == origin_id), {})
-                    retrieval_task_id = origin_note.get("task_id")
+                    retrieval_task_id = self._retrieval_note_task_id(identity, origin_note)
                 local_task = next((row for row in project["career"]["tasks"]
                                    if row["id"] == retrieval_task_id), None)
                 if local_task and is_retrieval_task(local_task):
@@ -3002,6 +3002,8 @@ class CareerService:
                         "可按各查询diagnostic_read_start直达漏回说明，再回查本轮可用的JD或工作原文。"
                         "若有review_origin，可用read_research_history按step_id取回本次复验承接的"
                         "完整反馈与当时认识；旧句子仅作线索，不能直接充当本轮引用或已证实的解释。"
+                        "若有note_origin，保留这次运行时选中的完整个人认识、观察与未知，"
+                        "对照新结果说明哪些受支持、哪些受挑战、哪些仍未知；不以现在编辑的笔记替换。"
                         "保留两组查询、使用者标签和实际返回；单份复查候选不能补进原列表或抬高指标。"
                         "需要核对当时JD时，可按as_of用read_historical_job回读，不把当前新正文冒充旧输入。"
                         "原文缺失或已移出范围时明确无法核对，不改用工作区其他来源替代，"
@@ -3421,6 +3423,15 @@ class CareerService:
         _, record = task_record(self.repository, project, task)
         return task, record
 
+    def _retrieval_note_task_id(self, identity, note):
+        task_id = (note or {}).get("task_id")
+        if not task_id and (note or {}).get("source_step_id"):
+            source = next((row for row in self.get(identity)["results"]
+                           if row["step_id"] == note["source_step_id"]), {})
+            recalled = (source.get("result") or {}).get("career_learning_context") or {}
+            task_id = (recalled.get("retrieval_review") or {}).get("task_id")
+        return task_id
+
     def retrieval_experiment_record(self, identity, task_id):
         project = self._project(identity)
         task, record = self._retrieval_record(project, task_id)
@@ -3430,11 +3441,12 @@ class CareerService:
             "comparison_rows": record["comparison_rows"],
             "question_id": task.get("question_id"), "source_step_id": task.get("source_step_id"),
             "review_step_id": task.get("retrieval_review_step_id"),
+            "note_origin": task.get("retrieval_note_origin"),
         }}
 
     def retrieval_experiment(
         self, identity, *, question_id=None, source_step_id=None, hypothesis="",
-        previous_task_id=None, review_step_id=None, save=False, **inputs,
+        previous_task_id=None, review_step_id=None, source_insight_id=None, save=False, **inputs,
     ):
         from work_observer.research.retrieval_experiment import (
             compare_returns,
@@ -3452,6 +3464,20 @@ class CareerService:
                 raise ValueError("请保留上次检索练习的原回答与调查关联，或另开一次独立对照。")
             question_id = previous.get("question_id")
         review_origin = None
+        note_origin = None
+        if source_insight_id:
+            note = next((row for row in project["career"].get("insights", [])
+                         if row["id"] == source_insight_id), None)
+            note_task = self._retrieval_note_task_id(identity, note)
+            if (not previous or not note or note_task != previous_task_id
+                    and (previous.get("retrieval_note_origin") or {}).get("id")
+                    != source_insight_id):
+                raise ValueError("请选择这项检索实验或其反馈关联的认识，再带入原查询继续验证。")
+            note_origin = {key: note.get(key) for key in (
+                "id", "task_id", "question_id", "previous_view", "observation", "current_view",
+                "open_question", "use_for_research",
+            )}
+            note_origin["recorded_at"] = note.get("updated_at") or note["created_at"]
         if review_step_id:
             review = next((row for row in self.get(identity)["results"]
                            if row["step_id"] == review_step_id
@@ -3497,7 +3523,9 @@ class CareerService:
             }
         if review_origin:
             result["review_origin"] = review_origin
-        if previous or review_origin:
+        if note_origin:
+            result["note_origin"] = note_origin
+        if previous or review_origin or note_origin:
             result["artifact_text"] = record_text(result)
         if not save:
             return {"experiment": result}
@@ -3516,6 +3544,7 @@ class CareerService:
             "purpose": "understanding_check",
             "local_experiment": "retrieval",
             **({"retrieval_review_step_id": review_step_id} if review_origin else {}),
+            **({"retrieval_note_origin": note_origin} if note_origin else {}),
         })
         task_id = saved["tasks"][-1]["id"]
         saved = self.update_task(

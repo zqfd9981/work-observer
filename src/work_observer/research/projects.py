@@ -1550,6 +1550,7 @@ class ProjectService:
                     "task_to_verify": record_task_context(record, row, self.store)
                     if full else None,
                     "answer_to_verify": experiment_answer_origin(career, row) if full else None,
+                    "note_to_verify": deepcopy(row.get("retrieval_note_origin")) if full else None,
                     "relation_to_verify": experiment_relation_origin(record, row, self.store)
                     if full else None,
                     "claim_to_verify": experiment_claim_origin(record, row, self.store)

@@ -127,6 +127,11 @@ def review_context(repository, project, task):
         context["review_origin"] = {key: record["review_origin"].get(key) for key in (
             "step_id", "kind", "question_id", "insight_id", "answer_document_id",
         )}
+    if isinstance(record.get("note_origin"), dict):
+        context["note_origin"] = {key: record["note_origin"].get(key) for key in (
+            "id", "task_id", "question_id", "previous_view", "observation", "current_view",
+            "open_question", "use_for_research", "recorded_at",
+        )}
     cursor = 0
     for run in record["runs"][:2]:
         if not isinstance(run, dict):

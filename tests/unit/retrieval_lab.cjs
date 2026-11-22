@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalReturnComparison,retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -71,3 +71,25 @@ elements.review_step_id={value:'review-feedback'};assert.equal(api.retrievalLabV
 
 const transitions=api.retrievalReturnComparison([{name:'改写表达',before_query:{terms:['泛词']},after_query:{terms:['具体工作']},before_expectation:'sources',after_expectation:'none',sources:[{title:'<script>移出的原文</script>',content_changed:false,before:{in_corpus:true,expected:true,returned:true},after:{in_corpus:false,expected:false,returned:false}},{title:'正文更新的原文',content_changed:true,before:{in_corpus:true,expected:false,returned:false},after:{in_corpus:true,expected:false,returned:true}}]}]);
 assert.match(transitions,/逐份对照两次实际返回/);assert.match(transitions,/未纳入这次对照/);assert.match(transitions,/标记相关/);assert.match(transitions,/预期不应命中/);assert.match(transitions,/两次原始记录不同/);assert.doesNotMatch(transitions,/<script>/);
+
+const thought={id:'thought',task_id:'prior',current_view:'<img>完整认识🤔'.repeat(50)+'末尾：尚未验证语义效果',previous_view:'原判断',observation:'两组原文返回不同',open_question:'还需检验片段上限',use_for_research:false};
+const noteData={...reviewData,tasks:[{id:'prior',local_experiment:'retrieval',artifact_document_id:'original-artifact'}],insights:[thought]};
+assert.equal(api.retrievalNoteTask(thought,noteData).id,'prior');
+assert.equal(api.retrievalNoteTask({...thought,task_id:null,source_step_id:'review-feedback'},noteData).id,'prior');
+assert.equal(api.retrievalNoteTask({id:'unrelated'},noteData),null);
+assert.match(api.retrievalNoteButton(thought,noteData),/data-retrieval-note="thought"/);
+const forNote=api.retrievalReplayDraft({input:values,previous:{task_id:'prior',source_step_id:'root-answer',question_id:'q'}},null,thought);
+assert.equal(forNote.source_insight_id,'thought');assert.equal(forNote.hypothesis,thought.current_view);assert.equal(forNote.source_note.open_question,thought.open_question);assert.equal(forNote.result,null);
+const noteHtml=api.retrievalNoteOrigin(thought,noteData);assert.match(noteHtml,/末尾：尚未验证语义效果/);assert.match(noteHtml,/当时已搁置/);assert.doesNotMatch(noteHtml,/<img>/);
+const noteTask={id:'next',state:'done',outcome:'本机观察仍有漏回',hypothesis:'较短的本次假设',retrieval_note_origin:thought};
+const revision=api.experimentInsightDraft(noteTask);assert.equal(revision.replaces_insight_id,'thought');assert.equal(revision.previous_view,thought.current_view);assert.equal(revision.open_question,thought.open_question);assert.equal(revision.current_view,'');
+api.setup(noteData);api.setLab(forNote);assert.match(api.retrievalLab(noteData),/name="source_insight_id" value="thought"/);
+elements.source_insight_id={value:'thought'};assert.equal(api.retrievalLabValues(fixture).source_insight_id,'thought');
+(async()=>{const route=await api.testNoteRoute('thought');assert.equal(route[0],'prior');assert.equal(route[1],null);assert.equal(route[2].current_view,thought.current_view);console.log('A parked understanding reopens its original retrieval inputs; the full thought and unknown remain available for explicit revision.');})().catch(error=>{console.error(error);process.exitCode=1;});
+
+const runTask={...noteTask,title:'本地复验',local_experiment:'retrieval',artifact_document_id:'run-log',retrieval_note_origin:thought};
+const runs=api.retrievalNoteRuns(thought,{...noteData,tasks:[runTask]});
+assert.match(runs,/这份认识的检索复验记录 · 1 份/);assert.match(runs,/当前记录的观察/);assert.match(runs,/#career\/goal\/task\/next/);assert.match(runs,/末尾：尚未验证语义效果/);assert.doesNotMatch(runs,/<img>/);
+const reviewed={step_id:'note-review',created_at:'2026-11-23',result:{model_calls:3,career_learning_context:{retrieval_review:{note_origin:thought}}}};
+assert.equal(api.learningInputs(reviewed.result)[0].channel,'检索运行起点');assert.equal(api.learningInputs(reviewed.result)[0].note.current_user_view,thought.current_view);
+assert.equal(api.learningImpactRecords('thought',{...noteData,results:[reviewed]})[0].row.step_id,'note-review');
