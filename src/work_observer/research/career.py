@@ -3354,6 +3354,52 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
+    def retrieval_experiment(
+        self, identity, *, question_id=None, source_step_id=None, hypothesis="",
+        save=False, **inputs,
+    ):
+        from work_observer.research.retrieval_experiment import run_retrieval_comparison
+
+        project = self._project(identity)
+        if source_step_id:
+            source = next((row for row in self.get(identity)["results"]
+                           if row["step_id"] == source_step_id and row["kind"] == "answer"
+                           and (row.get("result") or {}).get("status") == "completed"
+                           and row["state"] != "abandoned"), None)
+            if source is None:
+                raise ValueError("请选择本目标中一次完整回答的反馈作为对照起点。")
+            question_id = question_id or source.get("question_id")
+            if question_id != source.get("question_id"):
+                raise ValueError("请保留原回答对应的调查问题，再运行对照。")
+        if question_id and not any(q["id"] == question_id
+                                   for q in project["career"].get("questions", [])):
+            raise ValueError("请选择本目标中的调查问题，或取消关联。")
+        if (set(inputs.get("job_ids", [])) - set(project["job_ids"])
+                or set(inputs.get("document_ids", [])) - set(project["public_document_ids"])):
+            raise ValueError("本次对照只使用当前目标中明确选中的原文，不能混入其他目标资料。")
+        result = run_retrieval_comparison(self.repository, inputs)
+        if not save:
+            return {"experiment": result}
+        if any(step["state"] == "running" for step in project["steps"]):
+            raise ValueError("研究期间可以预览本地检索，结束后再保存记录。")
+        saved = self.add_experiment(identity, {
+            "title": "本地检索对照：查询表达与主题", "question_id": question_id,
+            "task_or_ability": "比较查询改写与主题限定如何影响原文召回，核对漏回与额外来源。",
+            "deliverable": "两组查询、使用者预期标签、实际返回片段和原文定位。",
+            "completion_check": "固定资料、别名与top-k，逐条核对预期标签、命中、漏回与额外返回。",
+            "hypothesis": hypothesis, "previous_task_id": None, "design_change": "",
+            **({"source_step_id": source_step_id} if source_step_id else {}),
+            "purpose": "understanding_check",
+        })
+        task_id = saved["tasks"][-1]["id"]
+        saved = self.update_task(
+            identity, task_id, state="done", outcome=result["outcome"], artifact="",
+            artifact_title="本地检索对照 · 查询、预期与实际原文",
+            artifact_text=result["artifact_text"], comparison_conditions=result["conditions"],
+            comparison_rows=result["comparison_rows"],
+        )
+        return {"experiment": result, "career": saved, "task_id": task_id}
+
     def retry_experiment(self, identity, *, cases, question_id=None, hypothesis="", save=False):
         from work_observer.research.retry_experiment import run_retry_experiment
 

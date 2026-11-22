@@ -8,6 +8,7 @@ from starlette.routing import Route
 
 from work_observer.research.career import CareerService
 from work_observer.research.cohort_experiment import CohortCasesInput
+from work_observer.research.retrieval_experiment import RetrievalComparisonInput
 from work_observer.research.retry_experiment import RetryCasesInput
 from work_observer.research.threshold_experiment import ThresholdCasesInput
 
@@ -374,6 +375,13 @@ class RetryExperimentInput(RetryCasesInput):
     save: bool = False
 
 
+class RetrievalExperimentInput(RetrievalComparisonInput):
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    hypothesis: str = Field(default="", max_length=1500)
+    save: bool = False
+
+
 class CohortExperimentInput(CohortCasesInput):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     hypothesis: str = Field(default="", max_length=1500)
@@ -666,6 +674,13 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             lambda: service().add_experiment(request.path_params["id"], data.model_dump()), 201
         )
 
+    async def retrieval_experiment(request):
+        data = RetrievalExperimentInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().retrieval_experiment(request.path_params["id"], **data.model_dump()),
+            201 if data.save else 200,
+        )
+
     async def retry_experiment(request):
         data = RetryExperimentInput.model_validate(await read_json(request))
         return change(
@@ -740,6 +755,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
         Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retry", retry_experiment, methods=["POST"]),
+        Route("/api/career/{id}/experiments/retrieval", retrieval_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/cohorts", cohort_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/thresholds", threshold_experiment, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),
