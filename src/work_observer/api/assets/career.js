@@ -520,7 +520,7 @@
   }
   function startOpportunityReflection(questionId){
     captureDrafts();const draft=storyDraft();if(draft.insight)throw new Error("已有未保存的认识，内容已保留；先保存或取消，再整理这组岗位取舍。");
-    const question=career.data.questions.find(row=>row.id===questionId);if(!question)throw new Error("请重新选择这条岗位调查。");draft.insight=opportunityReflectionDraft(question,career.data,draft.opportunity_reflections?.[questionId]||{});career.tab="experiments";career.workspaceExpanded=true;history.pushState(null,"","#career/"+career.id+"/tab/experiments");renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    const question=career.data.questions.find(row=>row.id===questionId);if(!question)throw new Error("请重新选择这条岗位调查。");draft.insight=opportunityReflectionDraft(question,career.data,draft.opportunity_reflections?.[questionId]||{});openInsightEditor();
   }
   function insightPassages(note,data,exporting=false){return (note.source_passages||[]).map((passage,index)=>passageOrigin({source_passage:passage},data,exporting,"这份认识参考的原文 · 第 "+(index+1)+" 段",exporting)).join("");}
   async function saveOpportunityQuestion(form){
@@ -1342,7 +1342,7 @@
   }
   function startCalculationInsight(stepId){
     captureDrafts();const draft=storyDraft(),row=career.data.results.find(item=>item.step_id===stepId);if(draft.insight)notify("已有未保存的认识，内容已保留；请先保存或取消，再整理另一轮计算。");else draft.insight=calculationInsightDraft(row);
-    career.tab="experiments";career.workspaceExpanded=true;history.pushState(null,"","#career/"+career.id+"/tab/experiments");renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    openInsightEditor();
   }
   function relationPersonalNotes(notes,goalId,exporting=false){
     if(!notes?.length)return "";return `<details class="career-relation-personal-notes" ${exporting?"open":""}><summary>用户对原关系的认识 · ${notes.length} 份</summary><p class="form-note">这些是对应关系的用户记录，仍需核对；不是原地图当时的结论，选用或搁置也不表示已经证实。</p>${notes.map(note=>`<article><p class="form-note">原关系第 ${Number(note.source_relation_index)+1} 条 · ${note.use_for_research===false?"已搁置":"选用于后续研究"}</p><p><strong>原先理解：</strong>${e(note.previous_view)}</p><p><strong>观察或反例：</strong>${e(note.observation)}</p><p><strong>现在的理解：</strong>${e(note.current_view)}</p><p><strong>仍待核实：</strong>${e(note.open_question||"未记录")}</p>${exporting?"":`<a class="text-button" href="#career/${e(goalId)}/insight/${e(note.id)}">回看认识与来源 ↗</a>`}</article>`).join("")}</details>`;
@@ -1357,7 +1357,7 @@
   }
   function startRelationInsight(stepId,index){
     captureDrafts();const draft=storyDraft();if(draft.insight)notify("已有未保存的认识，内容已保留；请先保存或取消，再整理另一条关系。");else draft.insight=relationInsightDraft(career.data,stepId,index);
-    career.tab="experiments";career.workspaceExpanded=true;history.pushState(null,"","#career/"+career.id+"/tab/experiments");renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    openInsightEditor();
   }
   function insightSource(note,data,exporting=false){
     const sourceDiscussion=data.results.find(row=>row.step_id===note.source_step_id),links=learningInquiryLinks(note,data),inquiryLink=learningInquiryContext(links,data.id,exporting)+experimentInsightSource(note,data,exporting)+passageOrigin(note,data,exporting,"这份认识起点的原文摘录")+insightPassages(note,data,exporting)+sourceCalculationRecall(note.source_calculations||calculationRecords(sourceDiscussion?.result),data.id,exporting,note.source_calculation_notice)+relationInsightSource(note,data,exporting)+claimReviewRecall({career_learning_context:{claim_to_review:note.source_claim_review||(sourceDiscussion?.result?.status!=="completed"?sourceDiscussion?.result?.career_learning_context?.claim_to_review:null)}},exporting,data.offline_sources)+carriedLearningNotes(note.source_understanding_comparison||(!sourceDiscussion?data.questions?.find(row=>row.id===note.question_id)?.carried_understanding:null)||(sourceDiscussion?.result?.status!=="completed"?sourceDiscussion?.result?.career_learning_context?.understanding_comparison:null),exporting,data);
@@ -1393,9 +1393,9 @@
     return {question_id:question.id,task_id:source?.task_id||"",source_step_id:question.conclusion_step_id||question.source_step_id||"",source_claim_index:null,replaces_insight_id:"",previous_view:question.question,observation:evidence.map(row=>row.title+"："+row.quote).join("\n\n"),current_view:question.conclusion,open_question:question.next_evidence||(source?.result?.gaps||[]).filter(text=>!text.startsWith("静态有限样本")).join("\n")};
   }
   function startQuestionInsight(questionId){
-    captureDrafts();if(storyDraft().insight){notify("先保存或取消正在编辑的认识，再整理另一份结论。");career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"center",behavior:"smooth"});return;}
+    captureDrafts();if(storyDraft().insight){notify("先保存或取消正在编辑的认识，再整理另一份结论。");openInsightEditor();return;}
     const question=career.data.questions.find(row=>row.id===questionId);if(!question?.conclusion?.trim())throw new Error("请先保存自己的调查结论，再整理为个人认识。");
-    storyDraft().insight=questionInsightDraft(question,career.data);career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"center",behavior:"smooth"});
+    storyDraft().insight=questionInsightDraft(question,career.data);openInsightEditor();
   }
   const noteSynthesisQuestion="请把这几条个人认识放在一起重新研究：它们分别解释什么业务问题、任务与交付物，在哪些条件下可以连接，哪里存在分歧或尚不能连接？回读当前可用原文，保留反例、来源性质和未知，形成有条件的整体解释，并指出下一步最值得验证的一个缺口。不要因新旧顺序或条数决定真伪，也不要自动改写这些记录。";
   function insightGroupDraft(data,ids,question=""){
@@ -1429,7 +1429,7 @@
     captureDrafts();const draft=storyDraft(),task=career.data.tasks.find(row=>row.id===taskId);
     if(draft.insight)notify("已有未保存的认识记录，内容已保留；先保存或取消，再整理另一项实验。");
     else{draft.insight=experimentInsightDraft(task);career.drafts.set(career.id,draft);}
-    career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    openInsightEditor();
   }
   function experimentInsightSource(note,data,exporting=false){
     const task=note.linked_experiment||data.tasks?.find(row=>row.id===note.task_id);if(!task)return "";
@@ -1450,9 +1450,43 @@
     const note=data.insights?.find(row=>row.id===question.source_insight_id);if(!note)return "";
     return `<details class="career-question-learning-origin" ${exporting?"open":""}><summary>这个问题承接的认识与实验</summary><p class="form-note">当前保存的个人理解${note.use_for_research===false?"，已搁置，不自动恢复选用":""}，只作为继续调查的起点。修改认识后这里显示当前内容；实际研究带入的内容保留在当次记录中。</p><h4>当时想检验什么</h4><p>${e(note.previous_view)}</p><h4>记录的观察</h4><p>${e(note.observation)}</p><h4>当前保存的理解</h4><p>${e(note.current_view)}</p><h4>保留的未知</h4><p>${e(note.open_question||"未记录")}</p>${experimentInsightSource(note,data,exporting)}${relationInsightSource(note,data,exporting)}${exporting?"":`<a class="text-button" href="#career/${e(data.id)}/understanding/${e(note.id)}">回看这条认识的变化脉络 ↗</a>`}</details>`;
   }
+  function insightEditor(data){
+    const draft=storyDraft().insight;
+    return draft?`<form id="career-insight" class="panel">${draft.correction?'<h3>留下我的修正与依据</h3>':""}${draft.understanding_update_origin?`<details class="career-understanding-update-origin"><summary>这次整理从哪份理解出发（完整原话）</summary><p class="form-note">${e(draft.understanding_update_origin.title)} · ${e(draft.understanding_update_origin.channel)}</p><p>${e(draft.understanding_update_origin.note.current_user_view)}</p><p class="form-note">下面的新理解由你填写。是否保留、缩窄或改变原理解，需结合本轮原文判断；新的记录不证明已经验证。</p></details>`:""}<input type="hidden" name="source_step_id" value="${e(draft.source_step_id||"")}"><input type="hidden" name="source_claim_index" value="${e(draft.source_claim_index??"")}">${!demoMode?`<input type="hidden" name="source_relation_index" value="${e(draft.source_relation_index??"")}">`:""}<label>关联哪个调查问题（可选）<select name="question_id"><option value="">不关联具体问题</option>${(data.questions||[]).map(row=>`<option value="${e(row.id)}" ${draft.question_id===row.id?"selected":""}>${e(row.question)}</option>`).join("")}</select></label>${insightSource(draft,data)}${draft.source_length_notice?`<p class="form-note">${e(draft.source_length_notice)}</p>`:""}${draft.id?'<p class="career-editing-note">修改已保存的认识记录</p>':""}${draft.discussion_reflection?'<p class="career-editing-note">从整次讨论整理自己的认识。上方保留全部判断、引用和未知；下面的新理解由你填写。</p>':""}${draft.read_source_reflection?'<p class="career-editing-note">从本轮已读原文整理自己的理解。原研究状态保持原样，下面的解释与仍待核实之处由你填写。</p>':""}${draft.passage_comparison_reflection?'<p class="career-editing-note">从所选原文对照整理自己的认识。写下原先理解、观察到的差异和新的解释；支持或挑战标签只是自己的标注，引用与完整上下文保留在上方来源中。</p>':""}${draft.experiment_comparison_reflection?'<p class="career-editing-note">从整组实验对照整理自己的认识。原先理解和新理解由你填写；观察只摘取当时的用户记录，计划和Agent判断没有填成实际结果。</p>':""}<p class="form-note">结合原文和实际观察编辑成自己的理解，保存不会调用模型。</p><label>这份理解接替哪条认识（可选）<select name="replaces_insight_id"><option value="">独立保存，不接替其他认识</option>${(data.insights||[]).filter(note=>note.id!==draft.id).map(note=>`<option value="${e(note.id)}" ${draft.replaces_insight_id===note.id?"selected":""}>${e(note.current_view.slice(0,100))}</option>`).join("")}</select></label><p class="form-note">选择接替后，旧认识会被搁置，原文与讨论仍保留。保存不会判断哪条认识为真。</p>${draft.experiment_reflection||draft.replaces_insight_id?'<button type="button" class="text-button" data-career-use-insight-prior>用所选旧认识替换下方“原先理解”</button>':""}<label>来自哪次练习<select name="task_id"><option value="">不绑定某项练习</option>${data.tasks.map(task=>`<option value="${e(task.id)}" ${draft.task_id===task.id?"selected":""}>${e(task.title)}</option>`).join("")}</select></label><label>${draft.correction?"要修正的原判断":"我原先的理解，或最初的问题"}<textarea name="previous_view" rows="2" required maxlength="1500">${e(draft.previous_view||"")}</textarea></label><label>${draft.correction?"支持这项修正的原文或实际观察":"看到了什么证据或实际观察"}<textarea name="observation" rows="2" required maxlength="2000">${e(draft.observation||"")}</textarea></label><label>${draft.correction?"我认为应怎样改写，哪些仍需保留未知":"现在我怎么理解"}<textarea name="current_view" rows="3" required maxlength="1500">${e(draft.current_view||"")}</textarea></label><label>仍不确定什么、下一步要验证什么<textarea name="open_question" rows="2" maxlength="1000">${e(draft.open_question||"")}</textarea></label><div class="result-actions"><p class="form-note" data-insight-length>${insightLengthNotice(draft)?e(insightLengthNotice(draft))+" · 全文保留，请精简后保存。":"保存后可按关联问题找回，也可在记录中搁置；关联资料不代表认识已证实。"}</p><button class="primary" ${insightLengthNotice(draft)?"disabled":""}>${draft.correction?"保存我的修正":"记入我的认知记录"}</button><button type="button" class="text-button" data-career-cancel-insight>取消</button></div></form>`:"";
+  }
+  function openInsightEditor(){
+    const draft=storyDraft();if(!draft.insight)return;
+    const route="#career/"+career.id+"/note-draft";
+    if(!draft.insight_return)draft.insight_return=location.hash.startsWith("#career/"+career.id)&&location.hash!==route?location.hash:"#career/"+career.id;
+    career.tab="experiments";career.workspaceExpanded=false;
+    if(location.hash!==route)history.pushState(null,"",route);
+    renderDetail();$("#career-insight-workspace").scrollIntoView({block:"start",behavior:"smooth"});
+  }
+  function insightEditorPage(data){
+    const draft=storyDraft(),note=draft.insight,back=draft.insight_return||"#career/"+data.id,question=data.questions?.find(row=>row.id===note?.question_id),previous=data.insights?.find(row=>row.id===note?.replaces_insight_id);
+    return `<section id="career-insight-workspace" class="career-insight-workspace" aria-label="整理一份认识"><header class="panel"><a class="text-button" href="${e(back)}">← 返回刚才的记录</a><span class="eyebrow">TURN EVIDENCE INTO YOUR UNDERSTANDING</span><h2>${note?.id?"修改这份理解":"把这次观察整理成自己的理解"}</h2><p>写清原先怎样想、看到了什么、现在怎样解释，以及还不确定什么。</p><p class="form-note">保存不调用模型。选择接替旧认识时，会另存新记录并搁置旧记录，保留变化脉络。</p></header>${note?`${question?.conclusion?`<details class="panel career-insight-question-context"><summary>回看调查中已保存的完整解释与限制</summary><h3>${e(question.question)}</h3><p>${e(question.conclusion)}</p>${question.next_evidence?`<p><strong>仍待补证据：</strong>${e(question.next_evidence)}</p>`:""}<a class="text-button" href="#career/${e(data.id)}/investigate/${e(question.id)}">回到这条调查 ↗</a></details>`:""}${previous?`<details class="panel career-insight-previous" open><summary>这次准备接替的旧认识</summary><p>${e(previous.current_view)}</p>${previous.open_question?`<p><strong>当时仍不确定：</strong>${e(previous.open_question)}</p>`:""}<a class="text-button" href="#career/${e(data.id)}/understanding/${e(previous.id)}">回看旧认识与依据 ↗</a></details>`:""}${insightEditor(data)}`:'<p class="panel">当前没有未保存的认识草稿。可以返回调查、研究或已有认识，再开始整理。</p>'}</section>`;
+  }
+  async function saveInsight(form){
+    const submitted=Object.fromEntries(new FormData(form)),data={...submitted},draft=storyDraft().insight,id=career.id,fromRoute=location.hash,noteId=draft.id;
+    data.question_id=data.question_id||null;data.task_id=data.task_id||null;data.source_step_id=data.source_step_id||null;data.source_claim_index=data.source_claim_index===""?null:Number(data.source_claim_index);data.replaces_insight_id=data.replaces_insight_id||null;
+    if(demoMode)delete data.source_relation_index;else data.source_relation_index=data.source_relation_index===""||data.source_relation_index==null?null:Number(data.source_relation_index);
+    if(!demoMode)data.source_passages=(draft.source_passages||[]).map(passageReference);
+    if(!demoMode&&draft.source_passage)data.source_passage=passageReference(draft.source_passage);
+    const updated=await api("career/"+id+"/insights"+(noteId?"/"+encodeURIComponent(noteId):""),{method:noteId?"PATCH":"POST",body:JSON.stringify(data)});
+    if(career.id===id)captureDrafts();
+    const pending=career.drafts.get(id),unchanged=pending?.insight&&["previous_view","observation","current_view","open_question","replaces_insight_id","task_id","question_id"].every(key=>(pending.insight[key]||"")===(submitted[key]||""));
+    if(unchanged){delete pending.insight;delete pending.insight_return;}
+    if(career.id===id){
+      career.data=updated;
+      const savedId=noteId||updated.insights[updated.insights.length-1].id;
+      if(unchanged&&location.hash===fromRoute&&fromRoute==="#career/"+id+"/note-draft"){location.hash="#career/"+id+"/understanding/"+savedId;career.workspaceExpanded=false;}
+      renderDetail();
+    }
+    notify(unchanged?"认识已保存，可以回看理解、依据与变化脉络。":"认识已保存；后来编辑的草稿继续保留。");
+  }
   function learningNotes(data,visibleNotes=data.insights||[]){
     const draft=storyDraft().insight;
-    return `<section class="career-learning-notes"><div class="section-heading"><div><h2>我改变了哪些认识</h2><p class="form-note">记录自己的理解与疑问，后续研究优先找回同一来源讨论、问题、练习、认识接替关系及关键词相关的选用记录，每次最多三份；搁置后仍可点选重查。</p></div>${!draft?'<button type="button" class="secondary" data-career-new-insight>记录一次认识变化</button>':""}</div>${visibleNotes===data.insights?noteSynthesisPanel(data):""}${draft?`<form id="career-insight" class="panel">${draft.correction?'<h3>留下我的修正与依据</h3>':""}${draft.understanding_update_origin?`<details class="career-understanding-update-origin"><summary>这次整理从哪份理解出发（完整原话）</summary><p class="form-note">${e(draft.understanding_update_origin.title)} · ${e(draft.understanding_update_origin.channel)}</p><p>${e(draft.understanding_update_origin.note.current_user_view)}</p><p class="form-note">下面的新理解由你填写。是否保留、缩窄或改变原理解，需结合本轮原文判断；新的记录不证明已经验证。</p></details>`:""}<input type="hidden" name="source_step_id" value="${e(draft.source_step_id||"")}"><input type="hidden" name="source_claim_index" value="${e(draft.source_claim_index??"")}">${!demoMode?`<input type="hidden" name="source_relation_index" value="${e(draft.source_relation_index??"")}">`:""}<label>关联哪个调查问题（可选）<select name="question_id"><option value="">不关联具体问题</option>${(data.questions||[]).map(row=>`<option value="${e(row.id)}" ${draft.question_id===row.id?"selected":""}>${e(row.question)}</option>`).join("")}</select></label>${insightSource(draft,data)}${draft.source_length_notice?`<p class="form-note">${e(draft.source_length_notice)}</p>`:""}${draft.id?'<p class="career-editing-note">修改已保存的认识记录</p>':""}${draft.discussion_reflection?'<p class="career-editing-note">从整次讨论整理自己的认识。上方保留全部判断、引用和未知；下面的新理解由你填写。</p>':""}${draft.read_source_reflection?'<p class="career-editing-note">从本轮已读原文整理自己的理解。原研究状态保持原样，下面的解释与仍待核实之处由你填写。</p>':""}${draft.passage_comparison_reflection?'<p class="career-editing-note">从所选原文对照整理自己的认识。写下原先理解、观察到的差异和新的解释；支持或挑战标签只是自己的标注，引用与完整上下文保留在上方来源中。</p>':""}${draft.experiment_comparison_reflection?'<p class="career-editing-note">从整组实验对照整理自己的认识。原先理解和新理解由你填写；观察只摘取当时的用户记录，计划和Agent判断没有填成实际结果。</p>':""}<p class="form-note">结合原文和实际观察编辑成自己的理解，保存不会调用模型。</p><label>这份理解接替哪条认识（可选）<select name="replaces_insight_id"><option value="">独立保存，不接替其他认识</option>${(data.insights||[]).filter(note=>note.id!==draft.id).map(note=>`<option value="${e(note.id)}" ${draft.replaces_insight_id===note.id?"selected":""}>${e(note.current_view.slice(0,100))}</option>`).join("")}</select></label><p class="form-note">选择接替后，旧认识会被搁置，原文与讨论仍保留。保存不会判断哪条认识为真。</p>${draft.experiment_reflection?'<button type="button" class="text-button" data-career-use-insight-prior>用所选旧认识替换下方“原先理解”</button>':""}<label>来自哪次练习<select name="task_id"><option value="">不绑定某项练习</option>${data.tasks.map(task=>`<option value="${e(task.id)}" ${draft.task_id===task.id?"selected":""}>${e(task.title)}</option>`).join("")}</select></label><label>${draft.correction?"要修正的原判断":"我原先的理解，或最初的问题"}<textarea name="previous_view" rows="2" required maxlength="1500">${e(draft.previous_view||"")}</textarea></label><label>${draft.correction?"支持这项修正的原文或实际观察":"看到了什么证据或实际观察"}<textarea name="observation" rows="2" required maxlength="2000">${e(draft.observation||"")}</textarea></label><label>${draft.correction?"我认为应怎样改写，哪些仍需保留未知":"现在我怎么理解"}<textarea name="current_view" rows="3" required maxlength="1500">${e(draft.current_view||"")}</textarea></label><label>仍不确定什么、下一步要验证什么<textarea name="open_question" rows="2" maxlength="1000">${e(draft.open_question||"")}</textarea></label><div class="result-actions"><p class="form-note" data-insight-length>${insightLengthNotice(draft)?e(insightLengthNotice(draft))+" · 全文保留，请精简后保存。":"保存后可按关联问题找回，也可在记录中搁置；关联资料不代表认识已证实。"}</p><button class="primary" ${insightLengthNotice(draft)?"disabled":""}>${draft.correction?"保存我的修正":"记入我的认知记录"}</button><button type="button" class="text-button" data-career-cancel-insight>取消</button></div></form>`:""}${visibleNotes===data.insights?understandingJourney(data):""}${visibleNotes.length?`<div class="career-learning-timeline">${[...visibleNotes].reverse().map(note=>`<article class="panel career-learning-note" data-career-record="insight:${e(note.id)}"><p class="form-note">${e(when(note.updated_at||note.created_at))} · 我的复盘 · ${note.use_for_research===false?"已搁置，不自动带入":"用于后续研究"}</p>${insightSource(note,data)}<div class="career-learning-change"><div><h3>原先的理解</h3><p>${e(note.previous_view)}</p></div><span aria-hidden="true">→</span><div><h3>现在的理解</h3><p>${e(note.current_view)}</p></div></div><details><summary>为什么改变、还有什么未知</summary><p><strong>观察：</strong>${e(note.observation)}</p>${note.open_question?`<p><strong>下一步：</strong>${e(note.open_question)}</p>`:""}</details><div class="result-actions"><button type="button" class="secondary small" data-career-use-insight="${e(note.id)}">${note.use_for_research===false?"重新选用于研究":"先搁置这条认识"}</button><a class="text-button" href="#career/${e(data.id)}/understanding/${e(note.id)}">回看变化脉络与相关研究 ↗</a><button type="button" class="text-button" data-career-edit-insight="${e(note.id)}">修改这份认识</button><button type="button" class="text-button" data-career-practice-insight="${e(note.id)}">用自己的话解释一次 ↗</button><button type="button" class="text-button" data-career-challenge-insight="${e(note.id)}">用另一个解释挑战它 ↗</button>${note.source_step_id?`<button type="button" class="text-button" data-career-open-insight-source="${e(note.source_step_id)}">回看当时的讨论 ↗</button>`:""}${demoMode?"":`<button type="button" class="text-button" data-career-insight-investigation="${e(note.id)}">把剩余疑问另存为调查 ↗</button>`}<button type="button" class="secondary" data-career-insight-question="${e(note.id)}">${note.open_question?"沿着这个未知继续问":"重新查证这条认识"} ↗</button>${note.replaces_insight_id?`<a class="text-button" href="#career/${e(data.id)}/insight/${e(note.replaces_insight_id)}">回看被接替的认识 ↗</a>`:""}</div></article>`).join("")}</div>`:!draft?'<p class="form-note">一次失败的实验、一次原文重读，或一个还没解决的问题，都可以成为新的起点。</p>':""}</section>`;
+    return `<section class="career-learning-notes"><div class="section-heading"><div><h2>我改变了哪些认识</h2><p class="form-note">记录自己的理解与疑问，后续研究优先找回同一来源讨论、问题、练习、认识接替关系及关键词相关的选用记录，每次最多三份；搁置后仍可点选重查。</p></div>${!draft?'<button type="button" class="secondary" data-career-new-insight>记录一次认识变化</button>':""}</div>${visibleNotes===data.insights?noteSynthesisPanel(data):""}${insightEditor(data)}${visibleNotes===data.insights?understandingJourney(data):""}${visibleNotes.length?`<div class="career-learning-timeline">${[...visibleNotes].reverse().map(note=>`<article class="panel career-learning-note" data-career-record="insight:${e(note.id)}"><p class="form-note">${e(when(note.updated_at||note.created_at))} · 我的复盘 · ${note.use_for_research===false?"已搁置，不自动带入":"用于后续研究"}</p>${insightSource(note,data)}<div class="career-learning-change"><div><h3>原先的理解</h3><p>${e(note.previous_view)}</p></div><span aria-hidden="true">→</span><div><h3>现在的理解</h3><p>${e(note.current_view)}</p></div></div><details><summary>为什么改变、还有什么未知</summary><p><strong>观察：</strong>${e(note.observation)}</p>${note.open_question?`<p><strong>下一步：</strong>${e(note.open_question)}</p>`:""}</details><div class="result-actions"><button type="button" class="secondary small" data-career-use-insight="${e(note.id)}">${note.use_for_research===false?"重新选用于研究":"先搁置这条认识"}</button><a class="text-button" href="#career/${e(data.id)}/understanding/${e(note.id)}">回看变化脉络与相关研究 ↗</a><button type="button" class="text-button" data-career-edit-insight="${e(note.id)}">修改这份认识</button><button type="button" class="text-button" data-career-practice-insight="${e(note.id)}">用自己的话解释一次 ↗</button><button type="button" class="text-button" data-career-challenge-insight="${e(note.id)}">用另一个解释挑战它 ↗</button>${note.source_step_id?`<button type="button" class="text-button" data-career-open-insight-source="${e(note.source_step_id)}">回看当时的讨论 ↗</button>`:""}${demoMode?"":`<button type="button" class="text-button" data-career-insight-investigation="${e(note.id)}">把剩余疑问另存为调查 ↗</button>`}<button type="button" class="secondary" data-career-insight-question="${e(note.id)}">${note.open_question?"沿着这个未知继续问":"重新查证这条认识"} ↗</button>${note.replaces_insight_id?`<a class="text-button" href="#career/${e(data.id)}/insight/${e(note.replaces_insight_id)}">回看被接替的认识 ↗</a>`:""}</div></article>`).join("")}</div>`:!draft?'<p class="form-note">一次失败的实验、一次原文重读，或一个还没解决的问题，都可以成为新的起点。</p>':""}</section>`;
   }
 
   function claimCorrectionDraft(row,index){
@@ -1461,7 +1495,7 @@
     return {correction:true,question_id:row.question_id||"",task_id:row.task_id||"",source_step_id:row.step_id,source_claim_index:index,replaces_insight_id:"",previous_view:original.length<=1500?original:`Agent原判断（第${index+1}条）较长，完整原句保留在本记录的来源中。`,observation:observed.length<=2000?observed:"",current_view:"",open_question:"",source_length_notice:long?"原判断或引用较长，完整文字保留在上方来源中；请用自己的话填写修正与依据，保留适用条件。":""};
   }
   function startClaimCorrection(stepId,index){
-    captureDrafts();const draft=storyDraft();if(draft.insight)notify("已有未保存的认识，先保存或取消，再整理另一条判断。");else{draft.insight=claimCorrectionDraft(career.data.results.find(row=>row.step_id===stepId),index);career.drafts.set(career.id,draft);}career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    captureDrafts();const draft=storyDraft();if(draft.insight)notify("已有未保存的认识，先保存或取消，再整理另一条判断。");else{draft.insight=claimCorrectionDraft(career.data.results.find(row=>row.step_id===stepId),index);career.drafts.set(career.id,draft);}openInsightEditor();
   }
   function discussionInsightDraft(row,data){
     if(!discussionAvailable(row))throw new Error("请从一份完整且可继续使用的讨论整理自己的认识。");
@@ -1490,7 +1524,7 @@
       career.drafts.set(career.id,draft);
     }
     else if(resultId&&(draft.insight.source_step_id!==resultId||claimIndex!=null&&draft.insight.source_claim_index!==claimIndex))notify("已有未保存的认识记录，先保存或取消，再整理另一条判断。");
-    career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"center",behavior:"smooth"});
+    openInsightEditor();
   }
 
   function careerWorkMap(row,evidence){
@@ -1549,7 +1583,7 @@
   function startUnderstandingUpdate(stepId){
     captureDrafts();const draft=storyDraft(),row=career.data.results.find(item=>item.step_id===stepId),items=understandingUpdateCandidates(row,career.data),selected=items.find(item=>item.key===draft.understanding_updates?.[stepId])||items[0];
     if(draft.insight)notify("已有未保存的认识，内容已保留；请先保存或取消，再整理另一份。");else draft.insight=understandingUpdateDraft(row,selected,career.data);
-    career.drafts.set(career.id,draft);career.tab="experiments";history.pushState(null,"","#career/"+career.id+"/tab/experiments");renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    career.drafts.set(career.id,draft);openInsightEditor();
   }
   function learningChanges(result,data){
     const changes=new Map(),current=new Map((data.insights||[]).map(note=>[note.id,note]));
@@ -1754,7 +1788,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   }
   function startStudySourceInsight(stepId){
     captureDrafts();const draft=storyDraft(),row=career.data.results.find(item=>item.step_id===stepId);if(draft.insight)notify("已有未保存的认识，内容已保留；先保存或取消，再整理这组原文。");else draft.insight=studySourceInsightDraft(row,draft.study_sources?.[stepId]||[]);
-    career.tab="experiments";career.workspaceExpanded=true;if(location.hash.split("/")[2]!=="discussion"||location.hash.split("/")[3]!==stepId)history.pushState(null,"","#career/"+career.id+"/tab/experiments");renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    openInsightEditor();
   }
   function coachingResult(row){
     const result=row.result;if(!result)return researchScope(row,career.data)+'<p class="form-note">这一轮还没有可展示的结果，可在完整研究记录中查看进度。</p>';
@@ -1882,7 +1916,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   function startPassageInsight(questionId,passageId){
     captureDrafts();const draft=storyDraft(),question=career.data.questions.find(row=>row.id===questionId),passage=passageId==="origin"?question?.source_passage:question?.evidence_passages?.find(row=>row.id===passageId);
     if(draft.insight)notify("已有未保存的认识，内容已保留；请先保存或取消，再整理另一段原文。");else draft.insight=passageInsightDraft(question,passage);
-    career.drafts.set(career.id,draft);career.tab="experiments";history.pushState(null,"","#career/"+career.id+"/tab/experiments");renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    career.drafts.set(career.id,draft);openInsightEditor();
   }
   function passageOrigin(question,data,exporting=false,heading="问题从哪段原文而来",expanded=exporting||!question.id){
     const passage=question.source_passage;if(!passage)return "";
@@ -1904,7 +1938,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   }
   function startPassageComparisonInsight(questionId,ids){
     captureDrafts();const draft=storyDraft();if(draft.insight)notify("已有未保存的认识，内容已保留；请先保存或取消，再整理这组原文。");else draft.insight=passageComparisonInsightDraft(career.data.questions.find(row=>row.id===questionId),ids);
-    career.tab="experiments";career.workspaceExpanded=true;history.pushState(null,"","#career/"+career.id+"/tab/experiments");renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});
+    openInsightEditor();
   }
   function passageComparisonLink(data,questionId,ids){return "#career/"+data.id+"/passages/"+questionId+"?items="+encodeURIComponent(ids.join(","));}
   function passageComparisonCards(passages,data,exporting=false){
@@ -2077,10 +2111,10 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     return answerRevisionDraft({id:row.question_id||""},row,note);
   }
   function startAnswerRevision(questionId,stepId){
-    captureDrafts();if(storyDraft().insight){notify("先保存或取消正在编辑的认识，再起草这份修正。");career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"center",behavior:"smooth"});return;}
+    captureDrafts();if(storyDraft().insight){notify("先保存或取消正在编辑的认识，再起草这份修正。");openInsightEditor();return;}
     const question=career.data.questions.find(row=>row.id===questionId),source=question&&questionResearches(question,career.data).find(row=>row.step_id===stepId),previous=question&&questionJourneyRecords(question,career.data).insights.find(note=>note.id===storyDraft().question_answers?.[questionId]?.revision_note_id);
     if(!source||!previous)throw new Error("请先选择这条调查的一份原认识和已完成答复。");
-    storyDraft().insight=answerRevisionDraft(question,source,previous);career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"center",behavior:"smooth"});
+    storyDraft().insight=answerRevisionDraft(question,source,previous);openInsightEditor();
   }
   function conclusionDraft(row){
     const labels={direct:"材料描述（仍需核对）",synthesis:"研究归纳",inference:"待验证解释"};
@@ -3016,6 +3050,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     if(career.workspaceQuestion&&section==="requirements")selectInvestigation(id);career.tab=section;const draft=storyDraft(),pending=draft.inquiries?.[career.tab];draft.inquiries={...draft.inquiries,[career.tab]:pending?.question_id===row.id?pending:questionInquiryDraft(row)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus({preventScroll:true});
   }
   function focusCareerRecord(kind,id,claimIndex=null){
+    if(kind==="note-draft"){career.tab="experiments";career.workspaceExpanded=false;renderDetail();return;}
     if(kind==="task"){captureDrafts();const task=career.data.tasks.find(row=>row.id===id);if(!task){notify("这项实验已不在当前目标中，可以重新查找。");return;}career.tab="experiments";selectExperimentInquiry(task);renderDetail();$("#career-experiment-workspace").scrollIntoView({block:"start",behavior:"instant"});return;}
     if(kind==="requirement"){career.tab="requirements";renderDetail();return;}
     if(kind==="interview-checklist"){renderDetail();return;}
@@ -3237,6 +3272,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   }
   function renderDetail(){
     const data=career.data;if(!data)return;
+    if(location.hash.split("/")[2]==="note-draft"){$("#career-onboarding").hidden=true;$("#career-detail").hidden=false;$("#career-detail").innerHTML=insightEditorPage(data);return;}
     const experiment=experimentWorkspaceTask(data);if(experiment&&career.tab==="experiments"){renderExperimentWorkspace(experiment,data);return;}
     if(location.hash.split("/")[2]==="relation-case"){$("#career-onboarding").hidden=true;$("#career-detail").hidden=false;$("#career-detail").innerHTML=relationCasePage(data,location.hash.split("/")[3],Number(location.hash.split("/")[4]));return;}
     if(location.hash.split("/")[2]==="replay"){const source=data.results.find(row=>row.step_id===location.hash.split("/")[3]&&row.inquiry_answer);if(source){$("#career-onboarding").hidden=true;$("#career-detail").hidden=false;$("#career-detail").innerHTML=inquiryAnswerReplayPage(source,data);return;}}
@@ -3406,6 +3442,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     const choice=event.target.closest("[data-career-job]");
     if(choice){if(choice.checked&&career.selected.size>=6){choice.checked=false;notify("最多选择6个目标岗位。",true);return;}if(choice.checked)career.selected.set(choice.dataset.careerJob,jobText(career.jobs.get(choice.dataset.careerJob)));else career.selected.delete(choice.dataset.careerJob);selectedJobs();}
     if(event.target.id==="career-public"){const draft=storyDraft();draft.allow_public=event.target.checked;career.drafts.set(career.id,draft);}
+    if(location.hash.split("/")[2]==="note-draft"&&event.target.matches?.('#career-insight [name="replaces_insight_id"],#career-insight [name="question_id"]')){captureDrafts();renderDetail();return;}
     if(event.target.id==="career-offline"){captureDrafts();career.offline=event.target.checked;renderDetail();}
   });
   document.addEventListener("click",async event=>{
@@ -3468,7 +3505,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.hasAttribute("data-career-reopen-reading"))renderMaterialReading();
       if(target.hasAttribute("data-career-export-reading"))exportMaterialReading(target);
       if(target.dataset.careerPracticeInsight)prepareNotePractice(target.dataset.careerPracticeInsight);
-      if(target.dataset.careerRevisePractice){captureDrafts();if(storyDraft().insight){notify("先保存或取消正在编辑的认识，再起草修正。");return;}const row=career.data.results.find(item=>item.step_id===target.dataset.careerRevisePractice);storyDraft().insight=practiceRevisionDraft(row,career.data);career.tab="experiments";renderDetail();$("#career-insight").scrollIntoView({block:"start",behavior:"smooth"});}
+      if(target.dataset.careerRevisePractice){captureDrafts();if(storyDraft().insight){notify("先保存或取消正在编辑的认识，再起草修正。");return;}const row=career.data.results.find(item=>item.step_id===target.dataset.careerRevisePractice);storyDraft().insight=practiceRevisionDraft(row,career.data);openInsightEditor();}
       if(target.dataset.careerCheckClaim){captureDrafts();const [step,index]=target.dataset.careerCheckClaim.split(":"),row=career.data.results.find(item=>item.step_id===step),draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:claimCheckDraft(row,Number(index),career.data)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"start",behavior:"smooth"});notify("已选中这条判断，可查看原文并编辑查证问题。");}
       if(target.dataset.careerCopyExperiment){const [step,index]=target.dataset.careerCopyExperiment.split(":");await copyExperimentRecipe(career.data.results.find(row=>row.step_id===step)?.result?.application_plan?.actions?.[Number(index)]);}
       if(target.dataset.careerCopyTask)await copyExperimentRecipe(career.data.tasks.find(row=>row.id===target.dataset.careerCopyTask),true);
@@ -3614,7 +3651,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.id==="career-open-library"){$("#career-library").open=true;$("#career-library").scrollIntoView({block:"start",behavior:"smooth"});$("#career-library-form [name=q]").focus();}
       if(target.hasAttribute("data-career-library-ask")){captureDrafts();const row=career.searches.get(career.id)?.records[Number(target.dataset.careerLibraryAsk)];if(row){career.tab=row.section;const draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:libraryInquiry(row,career.data)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
       if(target.dataset.careerInsightResult)startInsight(null,target.dataset.careerInsightResult);
-      if(target.dataset.careerEditInsight){captureDrafts();career.tab="experiments";const note=career.data.insights.find(row=>row.id===target.dataset.careerEditInsight);if(note&&(!storyDraft().insight||storyDraft().insight.id===note.id)){storyDraft().insight=storyDraft().insight||{...note};renderDetail();$("#career-insight").scrollIntoView({block:"center",behavior:"smooth"});}else if(storyDraft().insight){renderDetail();notify("当前有未保存的认识记录，先保存或取消后再编辑另一份。");$("#career-insight")?.scrollIntoView({block:"center",behavior:"smooth"});}}
+      if(target.dataset.careerEditInsight){captureDrafts();career.tab="experiments";const note=career.data.insights.find(row=>row.id===target.dataset.careerEditInsight);if(note&&(!storyDraft().insight||storyDraft().insight.id===note.id)){storyDraft().insight=storyDraft().insight||{...note};openInsightEditor();}else if(storyDraft().insight){openInsightEditor();notify("当前有未保存的认识记录，先保存或取消后再编辑另一份。");}}
       if(target.dataset.careerOpenInsightSource){const [step,index]=target.dataset.careerOpenInsightSource.split(":");if(career.data.results.some(row=>row.step_id===step))focusCareerRecord("discussion",step,index);}
       if(target.dataset.careerInsightQuestion){captureDrafts();const note=career.data.insights.find(row=>row.id===target.dataset.careerInsightQuestion);if(note){career.tab="experiments";const draft=storyDraft();draft.inquiries={...draft.inquiries,experiments:draft.inquiries?.experiments?.insight_id===note.id?draft.inquiries.experiments:{question:note.open_question||"请回查材料，重新检验这条个人认识的依据、限制与反例。",insight_id:note.id,task_id:note.task_id||"",question_id:note.question_id||career.data.tasks.find(row=>row.id===note.task_id)?.question_id||"",source_step_id:""}};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});}}
       if(target.dataset.careerCompareQuestion){captureDrafts();const draft=storyDraft();draft.inquiries={...draft.inquiries,requirements:{question:target.dataset.careerCompareQuestion,source_step_id:"",selected_job_ids:compareJobs(career.data).map(job=>job.id)}};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus();}
@@ -3636,7 +3673,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.hasAttribute("data-career-cancel-story")){captureDrafts();resetStoryEditor();renderDetail();}
       if(target.dataset.careerRemoveStory){captureDrafts();target.disabled=true;career.data=await api(apiPath()+"/stories/"+encodeURIComponent(target.dataset.careerRemoveStory),{method:"DELETE"});if(storyDraft().story_id===target.dataset.careerRemoveStory)resetStoryEditor();if(location.hash.split("/")[2]==="story"&&location.hash.split("/")[3]===target.dataset.careerRemoveStory){history.replaceState(history.state,"","#career/"+career.id+"/tab/stories");career.tab="stories";}renderDetail();await loadGoals();notify("经历已移出本目标，归档原文和历史研究保留。");}
       if(target.hasAttribute("data-career-new-insight")||target.dataset.careerInsightTask){const task=target.hasAttribute("data-career-new-insight")&&experimentWorkspaceTask(career.data);if(task?.outcome)startExperimentInsight(task.id);else startInsight(target.dataset.careerInsightTask||task?.id||null);}
-      if(target.hasAttribute("data-career-cancel-insight")){captureDrafts();delete storyDraft().insight;renderDetail();}
+      if(target.hasAttribute("data-career-cancel-insight")){captureDrafts();const back=storyDraft().insight_return;delete storyDraft().insight;delete storyDraft().insight_return;if(location.hash.split("/")[2]==="note-draft")location.hash=back||"#career/"+career.id;renderDetail();}
       if(target.id==="career-target-find")await findGoalJobs();
       if(target.dataset.careerGoalRemoveJob){captureDrafts();const selected=goalJobs();selected.delete(target.dataset.careerGoalRemoveJob);const draft=storyDraft();draft.settings_jobs=[...selected];career.drafts.set(career.id,draft);showGoalJobs();}
       if(target.hasAttribute("data-career-cancel-settings")){captureDrafts();for(const key of ["settings","settings_jobs","settings_open","settings_query","target_jd"])delete storyDraft()[key];renderDetail();}
@@ -3683,7 +3720,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       else if(form.id==="career-material-form")await saveMaterial(form);
       else if(form.id==="career-story")await saveStory(form);
       else if(form.id==="career-resume-form"){if(form.elements.resume_text.value.length>20000)throw new Error("请把简历正文精简到2万字以内。");career.data=await api(apiPath()+"/resume",{method:"PATCH",body:JSON.stringify({title:form.elements.resume_title.value,text:form.elements.resume_text.value})});delete storyDraft().resume_text;delete storyDraft().resume_title;renderDetail();notify("简历已保存，后续研究将参考这份正文。");}
-      else if(form.id==="career-insight"){const data=Object.fromEntries(new FormData(form));data.question_id=data.question_id||null;data.task_id=data.task_id||null;data.source_step_id=data.source_step_id||null;data.source_claim_index=data.source_claim_index===""?null:Number(data.source_claim_index);data.replaces_insight_id=data.replaces_insight_id||null;if(demoMode)delete data.source_relation_index;else data.source_relation_index=data.source_relation_index===""||data.source_relation_index==null?null:Number(data.source_relation_index);if(!demoMode)data.source_passages=(storyDraft().insight.source_passages||[]).map(passageReference);if(!demoMode&&storyDraft().insight.source_passage)data.source_passage=passageReference(storyDraft().insight.source_passage);const noteId=storyDraft().insight.id;career.data=await api(apiPath()+"/insights"+(noteId?"/"+encodeURIComponent(noteId):""),{method:noteId?"PATCH":"POST",body:JSON.stringify(data)});delete storyDraft().insight;renderDetail();notify("认识记录已保存，是否带入后续研究可在记录上选择。");}
+      else if(form.id==="career-insight")await saveInsight(form);
       else if(form.id==="career-manual-experiment"){const values=taskFormValues(form);if(demoMode){delete values.source_relation_index;delete values.requirement_key;delete values.comparison_rows;delete values.source_step_id;delete values.source_experiment_id;delete values.source_claim_index;}else{values.source_relation_index=values.source_relation_index===""||values.source_relation_index==null?null:Number(values.source_relation_index);values.source_claim_index=values.source_claim_index===""||values.source_claim_index==null?null:Number(values.source_claim_index);values.source_experiment_id=values.source_experiment_id||null;values.comparison_rows=savedComparisonRows(values.comparison_rows);values.source_step_id=values.source_step_id||null;}values.question_id=values.question_id||null;values.previous_task_id=values.previous_task_id||null;const targeted=Boolean(values.requirement_key)||values.source_relation_index!=null,oldIds=new Set(career.data.tasks.map(task=>task.id));career.data=await api(apiPath()+"/experiments",{method:"POST",body:JSON.stringify(values)});delete storyDraft().manual;delete storyDraft().manual_open;renderDetail();await loadGoals();const added=career.data.tasks.find(task=>!oldIds.has(task.id));if(targeted&&added)location.hash="#career/"+career.id+"/task/"+added.id;notify("自己设计的实验已加入练习板。");}
       else if(form.id==="career-settings"){const data=Object.fromEntries(new FormData(form));data.job_ids=[...goalJobs().keys()];const id=career.id,updated=await api(apiPath(),{method:"PATCH",body:JSON.stringify(data)});if(career.id===id){career.data=updated;for(const key of ["settings","settings_jobs","settings_open","settings_query","target_jd"])delete storyDraft()[key];renderDetail();await loadGoals();}notify("目标与背景已更新，经历、练习和认知记录继续保留。");}
       else if(form.id==="career-challenge")await research("challenge","",0,form.elements.task_id.value||null,null,"",{question_id:form.elements.question_id.value||null,hypothesis_a:form.elements.hypothesis_a.value,hypothesis_b:form.elements.hypothesis_b.value,insight_id:form.elements.insight_id.value||null,counter_insight_id:form.elements.counter_insight_id.value||null});
