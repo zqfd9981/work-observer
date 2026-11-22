@@ -3153,6 +3153,14 @@ class CareerService:
                 if retrieval_review is None and local_task and is_retrieval_task(local_task):
                     retrieval_review = review_context(self.repository, project, local_task)
                 if retrieval_review is not None:
+                    if retrieval_review.get("input", {}).get("cases"):
+                        question += (
+                            "本次是小样本检索评估集，每条样例各有原表达、改写表达和使用者标签。"
+                            "逐条核对命中、漏回和额外返回，尤其保留不应命中样例上的额外来源；"
+                            "不能只取最前两组或只看累计指标。累计按样例×来源计数，"
+                            "同一来源在不同样例可重复计入，不是答案准确率或独立标注结论。"
+                            "原文不完整时，未返回不能算负例验证成功；指出最值得继续核对的失败。"
+                        )
                     if retrieval_review.get("artifact_document_id") not in project[
                         "public_document_ids"
                     ]:
@@ -3646,7 +3654,7 @@ class CareerService:
     def retrieval_experiment_record(self, identity, task_id):
         project = self._project(identity)
         task, record = self._retrieval_record(project, task_id)
-        return {"input": record["input"], "previous": {
+        return {"input": record["input"], "record_kind": record.get("record_kind"), "previous": {
             "task_id": task_id, "title": task["title"], "as_of": record.get("as_of"),
             "hypothesis": task.get("hypothesis", ""), "sources": record["sources"],
             "comparison_rows": record["comparison_rows"],
@@ -3670,6 +3678,8 @@ class CareerService:
         previous, previous_record = None, None
         if previous_task_id:
             previous, previous_record = self._retrieval_record(project, previous_task_id)
+            if previous_record.get("record_kind") == "retrieval_suite":
+                raise ValueError("这是一组评估样例，请在检索评估集入口继续运行。")
             if (source_step_id and source_step_id != previous.get("source_step_id")
                     or question_id and question_id != previous.get("question_id")):
                 raise ValueError("请保留上次检索练习的原回答与调查关联，或另开一次独立对照。")
@@ -3763,6 +3773,62 @@ class CareerService:
             artifact_title="本地检索对照 · 查询、预期与实际原文",
             artifact_text=result["artifact_text"], comparison_conditions=result["conditions"],
             comparison_rows=result["comparison_rows"], design_change=change_note,
+        )
+        return {"experiment": result, "career": saved, "task_id": task_id}
+
+    def retrieval_suite(self, identity, *, question_id=None, source_step_id=None,
+                        previous_task_id=None, hypothesis="", save=False, **inputs):
+        from work_observer.research.retrieval_experiment import record_text
+        from work_observer.research.retrieval_suite import run_retrieval_suite
+
+        project = self._project(identity)
+        if previous_task_id:
+            previous, record = self._retrieval_record(project, previous_task_id)
+            if record.get("record_kind") != "retrieval_suite":
+                raise ValueError("请从已保存的检索评估集继续，单条对照可另行加入样例。")
+            if (question_id and question_id != previous.get("question_id")
+                    or source_step_id and source_step_id != previous.get("source_step_id")):
+                raise ValueError("继续评估时请保留原调查和回答关联。")
+            question_id = previous.get("question_id")
+            source_step_id = previous.get("source_step_id")
+        elif source_step_id:
+            source = next((row for row in self.get(identity)["results"]
+                           if row["step_id"] == source_step_id and row["kind"] == "answer"
+                           and (row.get("result") or {}).get("status") == "completed"
+                           and row["state"] != "abandoned"), None)
+            if not source or question_id and question_id != source.get("question_id"):
+                raise ValueError("请选择本目标中一次完整回答作为评估起点，保留其调查关联。")
+            question_id = source.get("question_id")
+        if question_id and not any(row["id"] == question_id
+                                   for row in project["career"].get("questions", [])):
+            raise ValueError("请选择当前目标中的调查问题，或取消关联。")
+        if (set(inputs.get("job_ids", [])) - set(project["job_ids"])
+                or set(inputs.get("document_ids", [])) - set(project["public_document_ids"])):
+            raise ValueError("评估集只使用本目标中选定的原文，不混入其他目标资料。")
+        if save and any(step["state"] == "running" for step in project["steps"]):
+            raise ValueError("研究期间可以预览评估，结束后再保存记录。")
+        result = run_retrieval_suite(self.repository, inputs)
+        result["hypothesis"] = hypothesis
+        result["artifact_text"] = record_text(result)
+        if not save:
+            return {"experiment": result}
+        saved = self.add_experiment(identity, {
+            "title": "本地检索评估集 · " + str(len(result["cases"])) + "条样例",
+            "question_id": question_id, "hypothesis": hypothesis,
+            "task_or_ability": "建设小样本词面检索评估集，逐条检查预期、漏回和额外返回。",
+            "deliverable": "固定原文、每条样例的两组查询与标签、实际返回和失败定位。",
+            "completion_check": "逐条回读失败样例的原文；不以累计指标替代样例核对。",
+            "previous_task_id": previous_task_id, "purpose": "understanding_check",
+            "local_experiment": "retrieval_suite",
+            **({"source_step_id": source_step_id}
+               if source_step_id and not previous_task_id else {}),
+        })
+        task_id = saved["tasks"][-1]["id"]
+        saved = self.update_task(
+            identity, task_id, state="done", outcome=result["outcome"], artifact="",
+            artifact_title="本地检索评估集 · 输入、标签、返回与失败样例",
+            artifact_text=result["artifact_text"], comparison_conditions=result["conditions"],
+            comparison_rows=result["comparison_rows"],
         )
         return {"experiment": result, "career": saved, "task_id": task_id}
 

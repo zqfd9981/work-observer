@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={answerComparisonConditions,answerComparisonRecall,practiceAnswerSource,feedbackPracticeAnswer,practiceAnswerRecall,feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalSuiteNext,retrievalSuiteCase,retrievalSuitePanel,retrievalSuiteResult,setSuite:suite=>{career.drafts.get(career.id).retrieval_suite=suite;},answerComparisonConditions,answerComparisonRecall,practiceAnswerSource,feedbackPracticeAnswer,practiceAnswerRecall,feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -138,3 +138,23 @@ const answerConditions=api.answerComparisonConditions({input_scope_then:{job_ids
 assert.match(answerConditions,/当时纳入 1 份岗位、2 份归档材料/);assert.match(answerConditions,/当时确实仍漏回/);assert.match(answerConditions,/原题末尾/);assert.match(answerConditions,/未执行/);assert.doesNotMatch(answerConditions,/<script>/);
 const comparedInputs=api.answerComparisonRecall({career_learning_context:{answer_comparison:[{step_id:'old',user_answer:'原先解释',interview_question:'如何检验？',claim_details_to_recheck:[],unresolved_then:['实际未运行'],source_references_to_reread:[]},{step_id:'new',user_answer:'根据第一组观察重答',interview_question:'如何检验？',claim_details_to_recheck:[],unresolved_then:['另一组未执行'],source_references_to_reread:[],input_scope_then:{job_ids:['job'],document_ids:['work','answer']},practice_experiment_then:conditionPractice}]}},'goal',true);
 assert.match(comparedInputs,/原先解释/);assert.match(comparedInputs,/根据第一组观察重答/);assert.match(comparedInputs,/当时确实仍漏回/);assert.doesNotMatch(comparedInputs,/<script>/);
+
+api.setup(data);
+const suiteCase=api.retrievalSuiteCase({...values,expectation:'sources'},'<img>评估样例');
+assert.equal(suiteCase.name,'<img>评估样例');assert.equal(suiteCase.expected_document_ids[0],'doc');assert.equal(suiteCase.baseline.terms[0],'Agent');
+api.setSuite({cases:[suiteCase],job_ids:['job'],document_ids:['doc'],top_k:3,name:'第二条 <img>',open:true});
+const suitePanel=api.retrievalSuitePanel(data);
+assert.match(suitePanel,/2至4条/);assert.match(suitePanel,/data-retrieval-suite-run="save" disabled/);assert.match(suitePanel,/&lt;img&gt;/);assert.doesNotMatch(suitePanel,/<img>/);
+const suiteResult=api.retrievalSuiteResult({...result,corpus_complete:false,cases:[{name:'负例 <img>',run_indices:[0]}],totals:[{name:'原表达',case_count:1,matched_case_sources:0,expected_case_sources:0,source_precision:null,source_recall:null,exact_label_matches:null}]},data,'saved-suite');
+assert.match(suiteResult,/原文存在缺失/);assert.match(suiteResult,/无法核对/);assert.match(suiteResult,/无分母/);assert.match(suiteResult,/漏回0，额外返回0/);assert.match(suiteResult,/#career\/goal\/task\/saved-suite/);assert.doesNotMatch(suiteResult,/<img>/);
+
+const caseInputs={...values,expectation:'sources'};
+const firstSuite=api.retrievalSuiteNext({name:'第一条'},caseInputs);
+assert.equal(firstSuite.cases.length,1);assert.equal(firstSuite.cases[0].expected_document_ids[0],'doc');
+const nextSuite=api.retrievalSuiteNext({...firstSuite,name:'负例'}, {...caseInputs,expectation:'none',expected_job_ids:[],expected_document_ids:[]});
+assert.equal(nextSuite.cases.length,2);assert.equal(nextSuite.cases[1].expectation,'none');assert.equal(firstSuite.cases.length,1);
+assert.throws(()=>api.retrievalSuiteNext({...nextSuite,name:'第三条'},{...caseInputs,job_ids:['another']}),/相同原文/);
+assert.throws(()=>api.retrievalSuiteNext({...firstSuite,name:'第一条'},caseInputs),/不同的名称/);
+assert.throws(()=>api.retrievalSuiteNext({name:'无标签'},{...caseInputs,expected_job_ids:[],expected_document_ids:[]}),/标记/);
+const changedSuite=api.retrievalSuiteNext({...nextSuite,name:'第一条改写',editing_index:0},{...caseInputs,candidate:{terms:['新的表达'],required_terms:[]}});
+assert.equal(changedSuite.cases.length,2);assert.equal(changedSuite.cases[0].candidate.terms[0],'新的表达');assert.equal(nextSuite.cases[0].candidate.terms[0],'端云同步');

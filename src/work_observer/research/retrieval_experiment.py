@@ -1,4 +1,4 @@
-"""Run two lexical queries against a learner-selected local corpus and source labels."""
+"""Run local lexical comparisons and recover their learner-labelled records."""
 
 import json
 from typing import Annotated, Literal
@@ -76,7 +76,13 @@ def read_record(text):
         raise ValueError("这份材料没有完整的本地检索对照输入，请从检索练习的运行记录继续。")
     try:
         record = json.loads(body)
-        record["input"] = RetrievalComparisonInput.model_validate(record["input"]).model_dump()
+        suite = record.get("record_kind") == "retrieval_suite"
+        if suite:
+            from work_observer.research.retrieval_suite import RetrievalSuiteInput
+
+            record["input"] = RetrievalSuiteInput.model_validate(record["input"]).model_dump()
+        else:
+            record["input"] = RetrievalComparisonInput.model_validate(record["input"]).model_dump()
         if (not isinstance(record.get("sources"), list)
                 or not isinstance(record.get("aliases"), dict)
                 or not isinstance(record.get("runs"), list)
@@ -84,7 +90,8 @@ def read_record(text):
                        for row in record["sources"])):
             raise ValueError("missing source context")
         rows = record.get("comparison_rows")
-        if (not isinstance(rows, list) or len(rows) != 2
+        expected_rows = len(record["input"]["cases"]) * 2 if suite else 2
+        if (not isinstance(rows, list) or len(rows) != expected_rows
                 or any(not isinstance(row, dict) or any(not isinstance(row.get(key), str)
                                                        for key in ("condition", "observed"))
                        for row in rows)):
@@ -95,9 +102,8 @@ def read_record(text):
 
 
 def is_retrieval_task(task):
-    return task.get("local_experiment") == "retrieval" or task.get("artifact_title", "").startswith(
-        "本地检索对照",
-    )
+    return (task.get("local_experiment") in {"retrieval", "retrieval_suite"}
+            or task.get("artifact_title", "").startswith("本地检索对照"))
 
 
 def task_record(repository, project, task):
@@ -133,7 +139,8 @@ def review_context(repository, project, task):
             "open_question", "use_for_research", "recorded_at",
         )}
     cursor = 0
-    for run in record["runs"][:2]:
+    run_limit = 8 if record.get("record_kind") == "retrieval_suite" else 2
+    for run in record["runs"][:run_limit]:
         if not isinstance(run, dict):
             continue
         position = document["text"].find('"missing_source_checks":', cursor)
@@ -302,10 +309,11 @@ def check_missing_sources(retrieval, lexical, query, found, sources, bodies, mis
     return checks
 
 
-def run_retrieval_comparison(repository, raw):
+def run_retrieval_comparison(repository, raw, *, as_of=None, alias_groups=None):
     data = RetrievalComparisonInput.model_validate(raw)
-    cutoff = now()
-    aliases = StrategyService(repository).active_config()["aliases"]
+    cutoff = as_of or now()
+    aliases = (StrategyService(repository).active_config()["aliases"]
+               if alias_groups is None else alias_groups)
     retrieval = UnifiedRetrieval(repository, alias_groups=aliases)
     lexical = RetrievalService(repository, alias_groups=aliases)
     records, _, _ = lexical._records(None, data.job_ids, cutoff)

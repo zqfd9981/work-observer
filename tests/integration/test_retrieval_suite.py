@@ -1,0 +1,158 @@
+"""Run learner-labelled cases locally, save failures and discuss the selected corpus."""
+
+import json
+import re
+import sqlite3
+from copy import deepcopy
+
+from starlette.testclient import TestClient
+from test_adaptive_investigation import settled, workspace
+
+from work_observer.research.agent import ModelClient
+
+
+class SuiteDiscussionModel(ModelClient):
+    def __init__(self):
+        self.contexts, self.last_usage = [], {}
+
+    async def turn(self, history):
+        context = json.loads(history[1]["content"])
+        self.contexts.append(context)
+        personal = context["project_context"]["career_evidence"]
+        review = personal["retrieval_review"]
+        assert review["available"] and len(review["input"]["cases"]) == 3
+        assert len(review["runs"]) == 6
+        assert review["runs"][-1]["unexpected_source_keys"] == ["job:" + self.jobs[0]]
+        assert {row["id"] for row in context["fixed_scope"]["jobs"]} == set(self.jobs)
+        documents = {self.artifact}
+        if personal.get("selected_story"):
+            documents.add(personal["selected_story"]["document_id"])
+        assert set(context["fixed_scope"]["archived_public_ids"]) == documents
+        outputs = [json.loads(row["output"]) for row in history
+                   if row.get("type") == "function_call_output"]
+        if not outputs:
+            name, args = "read_archived_document", {"document_id": self.artifact, "start": 0}
+        elif len(outputs) == 1:
+            name, args = "read_job", {"job_id": self.jobs[0], "start": 0}
+        else:
+            jd = outputs[-1]["evidence"][0]
+            name, args = "finish_research", {
+                "claims": [{"category": "task", "basis": "direct", "requirement": "unspecified",
+                            "text": jd["quote"], "evidence_ids": [jd["citation_key"]]}],
+                "gaps": ["为何改写找回了更多来源，也可能同时产生额外返回？"],
+            }
+            schema = next(tool for tool in self.tools if tool["name"] == name)["parameters"]
+            if "application_plan" in schema["properties"]:
+                args["application_plan"] = None
+            if "revisions" in schema["properties"]:
+                args["revisions"] = []
+        call = {"type": "function_call", "name": name, "arguments": json.dumps(args),
+                "call_id": str(len(history))}
+        return [call], call
+
+
+def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_interview(tmp_path):
+    model = SuiteDiscussionModel()
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth = {"X-WO-Token": re.search(
+            r'name="wo-token" content="([^"]+)"', client.get("/").text,
+        )[1]}
+
+        def post(path, values):
+            response = client.post(path, headers=auth, json=values)
+            assert response.status_code in {200, 201, 202}, response.text
+            return response.json()
+
+        bodies = ["负责知识库检索，构造评估集和失败样本。",
+                  "负责端云同步与记忆存储，使用KV管理上下文。",
+                  "负责其他项目的任务与交付，未涉及本组检索问题。", "评估集与端云同步。"]
+        jobs = [post("/api/import", {
+            "title": "合成样例岗位" + str(i), "company": "合成团队" + str(i),
+            "description": body, "data_kind": "synthetic",
+        })["job_id"] for i, body in enumerate(bodies)]
+        goal = post("/api/career", {
+            "title": "合成小样本评估", "goal": "逐条核对标签和失败原因", "job_ids": jobs[:3],
+            "first_question": "找回更多来源是否一定说明查询更好？",
+            "material_title": "不应混入的其他说明", "material_text": "另一项目的材料。",
+        })
+        base = "/api/career/" + goal["id"]
+
+        def case(name, baseline, candidate, expected=None):
+            return {"name": name, "baseline": {"terms": [baseline]},
+                    "candidate": {"terms": [candidate]},
+                    "expectation": "sources" if expected else "none",
+                    "expected_job_ids": expected or []}
+
+        values = {"job_ids": jobs[:2], "top_k": 3, "question_id": goal["focus_question_id"],
+                  "hypothesis": "更具体的表达可能找回职责，但也可能在负例上返回资料。",
+                  "cases": [case("评估职责", "查无表达甲", "评估集", jobs[:1]),
+                            case("记忆职责", "上下文", "端云同步", jobs[1:2]),
+                            case("不应命中的问题", "查无表达乙", "评估集")]}
+        preview = post(base + "/experiments/retrieval-suite", values)["experiment"]
+        assert len(preview["runs"]) == 6 and len(preview["comparison_rows"]) == 6
+        assert preview["totals"][0]["source_recall"] == 0.5
+        assert preview["totals"][1]["source_recall"] == 1
+        assert preview["totals"][1]["source_precision"] == 2 / 3
+        assert [row["exact_label_matches"] for row in preview["totals"]] == [2, 2]
+        assert preview["runs"][0]["missing_expected_source_keys"] == ["job:" + jobs[0]]
+        assert preview["runs"][-1]["metrics"]["correct_no_match"] is False
+        assert {row["job_id"] for row in preview["sources"]} == set(jobs[:2])
+        assert not client.get(base).json()["tasks"] and not model.contexts
+        for invalid in [
+            {**values, "job_ids": [jobs[3]]},
+            {**values, "cases": [values["cases"][0]] * 2},
+            {**values, "top_k": True},
+            {**values, "cases": [case("范围外标签", "甲", "乙", jobs[3:]),
+                                  values["cases"][1]]},
+        ]:
+            rejected = client.post(base + "/experiments/retrieval-suite", headers=auth,
+                                   json={**invalid, "save": True})
+            assert rejected.status_code == 422, rejected.text
+        assert not client.get(base).json()["tasks"]
+        saved = post(base + "/experiments/retrieval-suite", {**values, "save": True})
+        task = saved["career"]["tasks"][-1]
+        assert task["state"] == "done" and task["local_experiment"] == "retrieval_suite"
+        assert task["question_id"] == goal["focus_question_id"]
+        assert len(task["comparison_rows"]) == 6 and task["outcome"]
+        replay = client.get(base + "/tasks/" + task["id"] + "/retrieval-inputs").json()
+        assert replay["record_kind"] == "retrieval_suite"
+        assert replay["input"] == saved["experiment"]["input"]
+        model.jobs, model.artifact = jobs[:2], task["artifact_document_id"]
+        for kind in ("reflect", "interview"):
+            step = post(base + "/prepare", {"kind": kind, "task_id": task["id"]})
+            post("/api/projects/" + goal["id"] + "/run", {"step_id": step["step_id"]})
+            discussed = settled(client, base)["results"][0]
+            assert discussed["result"]["status"] == "completed", discussed["result"]
+            assert len(discussed["result"]["career_learning_context"]["retrieval_review"][
+                "runs"
+            ]) == 6
+        story = post(base + "/stories", {
+            "title": "合成局部评估练习", "source_task_id": task["id"],
+            "situation": "只使用本机的合成资料。", "action": "配置三条查询和使用者预期。",
+            "result": "改写找回正例，也在负例中返回来源。",
+            "limits": "这是本机词面检查，没有验证语义质量或生产效果。",
+        })["stories"][-1]
+        assert len(story["retrieval_source"]["runs"]) == 6
+        step = post(base + "/prepare", {"kind": "interview", "story_id": story["id"]})
+        post("/api/projects/" + goal["id"] + "/run", {"step_id": step["step_id"]})
+        discussed = settled(client, base)["results"][0]
+        assert discussed["result"]["status"] == "completed", discussed["result"]
+        before = deepcopy(client.get(base).json()["tasks"])
+        rerun = post(base + "/experiments/retrieval-suite", {
+            **values, "save": True, "previous_task_id": task["id"],
+        })
+        assert rerun["career"]["tasks"][-1]["previous_task_id"] == task["id"]
+        assert rerun["career"]["tasks"][:-1] == before
+        document_id = goal["materials"][0]["id"]
+        with sqlite3.connect(tmp_path / "adaptive.db") as connection:
+            connection.execute("UPDATE public_documents SET text=? WHERE id=?",
+                               ("模拟临时材料不完整，保留旧哈希用于完整性检查。", document_id))
+        incomplete = post(base + "/experiments/retrieval-suite", {
+            "job_ids": jobs[:1], "document_ids": [document_id],
+            "cases": [case("空问题甲", "甲甲甲", "乙乙乙"),
+                      case("空问题乙", "丙丙丙", "丁丁丁")],
+        })["experiment"]
+        assert not incomplete["corpus_complete"]
+        assert all(row["exact_label_matches"] is None for row in incomplete["totals"])
+        assert all(row["source_recall"] is None for row in incomplete["totals"])
+        assert all(row["metrics"]["correct_no_match"] is None for row in incomplete["runs"])
