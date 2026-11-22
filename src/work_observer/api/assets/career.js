@@ -387,7 +387,7 @@
   }
   function jdIntake(target){
     const draft=target==="target"?storyDraft().target_jd:null,values=draft?.values||{};
-    return `<details class="career-jd-intake" data-career-jd="${target}" ${draft?.open?"open":""}><summary>＋ 导入或粘贴一份新的JD</summary><label class="research-file-drop"><input type="file" data-career-jd-file accept=".txt,.md,.markdown,.docx,.pdf"><strong>从一份JD文件带入正文</strong><span>TXT / Markdown / Word / PDF，8MB以内。正文填入下方编辑区，核对后再保存。</span></label>${jdFields(values)}<button type="button" class="secondary" data-career-save-jd="${target}">保存JD并选为目标岗位</button><p class="form-note" data-jd-status role="status">只保存你核对后的文字；不会自动打开链接或调用模型。</p></details>`;
+    return `<details class="career-jd-intake" data-career-jd="${target}" ${draft?.open?"open":""}><summary>${target==="onboard"?"导入或粘贴岗位招聘原文":"＋ 导入或粘贴一份新的JD"}</summary><label class="research-file-drop"><input type="file" data-career-jd-file accept=".txt,.md,.markdown,.docx,.pdf"><strong>从一份JD文件带入正文</strong><span>TXT / Markdown / Word / PDF，8MB以内。正文填入下方编辑区，核对后再保存。</span></label>${jdFields(values)}<button type="button" class="secondary" data-career-save-jd="${target}" ${target==="onboard"?"hidden":""}>保存JD并选为目标岗位</button><p class="form-note" data-jd-status role="status">${target==="onboard"?"核对后点击下方主按钮，一起保存JD和问题。":"只保存你核对后的文字；不会自动打开链接或调用模型。"}</p></details>`;
   }
   function inlineJDValues(intake){return Object.fromEntries($$("[data-jd-field]",intake).map(field=>[field.dataset.jdField,field.value.trim()]));}
   async function importInlineJDFile(input){
@@ -399,18 +399,30 @@
     catch(error){if(intake.isConnected)status.textContent=error.message+" 原有编辑内容保留，可重新选文件或粘贴正文。";}
     finally{delete intake.dataset.reading;if(intake.isConnected){input.disabled=false;save.disabled=false;body.disabled=false;if(create&&!form?.dataset.saving)create.disabled=Boolean(wasDisabled);}}
   }
+  function updateCareerStartMode(){
+    const form=$("#career-create"),mode=form.dataset.startMode||"job";
+    $$("[data-career-start-mode]",form).forEach(button=>{button.setAttribute("aria-pressed",String(button.dataset.careerStartMode===mode));button.hidden=demoMode&&button.dataset.careerStartMode==="compare";});
+    $$("[data-career-start-panel]",form).forEach(panel=>{const active=panel.dataset.careerStartPanel===mode;panel.hidden=!active;panel.disabled=!active;if(active){const details=$("details",panel);if(details)details.open=true;}});
+    form.elements.first_question.placeholder=({job:"例如：这份工作交付什么，哪些要求是必备、加分或仍需核实？",compare:"例如：这几类岗位都写Agent，实际任务和交付物有什么不同？",material:"例如：这份文档中的重试机制解决什么问题，在哪些条件下仍会失败？"})[mode];
+    $("#career-create-submit").textContent=({job:"保存JD，进入岗位理解 ↗",compare:"保存JD，进入岗位对照 ↗",material:"保存问题与资料，进入研究 ↗"})[mode];
+    $("[data-career-start-notice]",form).textContent=({job:"填写的JD随主按钮保存；问题可留空，先从理解这份工作开始。",compare:"当前入口的2至6份JD随主按钮保存；问题留空时先比较工作与交付。",material:"保存你的问题与这里的工作资料；未填写资料也可以先建立问题。"})[mode]+" 切换入口保留草稿，本次只保存当前入口的资料和共同填写的个人背景。保存不调用模型。";
+  }
+  function chooseCareerStartMode(mode){
+    const form=$("#career-create");if(!["job","compare","material"].includes(mode))return;
+    if(form.dataset.saving||$('[data-career-jd="onboard"]')?.dataset.reading||$("#career-comparison-start").dataset.reading||$$('input[type="file"]',form).some(input=>input.disabled)){notify("正在读取或保存内容，完成后可以切换；当前草稿会保留。");return;}
+    form.dataset.startMode=mode;updateCareerStartMode();
+  }
   async function createCareerStart(form){
-    const rows=$$("[data-comparison-start-row]",form),hasPair=rows.some(row=>row.dataset.savedJobId||["title","company","description","job_url"].some(key=>comparisonStartRowValues(row)[key]));
-    if(hasPair)return createComparisonStart(form);
-    const intake=$('[data-career-jd="onboard"]'),jd=intake?inlineJDValues(intake):{},values=Object.fromEntries(new FormData(form));
+    const mode=form.dataset.startMode||"job";if(mode==="compare")return createComparisonStart(form);
+    const intake=mode==="job"?$('[data-career-jd="onboard"]'):null,jd=intake?inlineJDValues(intake):{},values=Object.fromEntries(new FormData(form));
     if(intake?.dataset.reading)throw new Error("JD文件仍在读取，完成后再保存；当前内容会保留。");
     if(["title","company","description","job_url"].some(key=>jd[key])){
       if(!values.first_question.trim())values.first_question=singleJDStartQuestion;
       if(!values.title.trim())values.title=Array.from("理解 "+(jd.title||"这份岗位")).slice(0,150).join("");
       careerStartValues(values,[...career.selected.keys()]);
       await saveInlineJD(intake.querySelector("[data-career-save-jd]"));
-    }else if(career.selected.size===1&&!values.first_question.trim()&&!values.title.trim())values.title=Array.from("理解 "+[...career.selected.values()][0]).slice(0,150).join("");
-    return api("career",{method:"POST",body:JSON.stringify(careerStartValues(values,[...career.selected.keys()]))});
+    }else if(mode==="job"&&career.selected.size===1&&!values.first_question.trim()&&!values.title.trim())values.title=Array.from("理解 "+[...career.selected.values()][0]).slice(0,150).join("");
+    return api("career",{method:"POST",body:JSON.stringify(careerStartValues(values,mode==="job"?[...career.selected.keys()]:[]))});
   }
   async function saveInlineJD(button){
     const intake=button.closest("[data-career-jd]"),target=intake.dataset.careerJd,id=career.id;
@@ -3085,7 +3097,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     else{
       career.id=null;career.data=null;
       if(items.length&&id!=="new"){$("#career-home").innerHTML=careerHome(items);$("#career-home").hidden=false;}
-      else{if(!$("#career-comparison-start").children.length)$("#career-comparison-start").innerHTML=comparisonStartPanel();if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");$("#career-onboarding").hidden=false;await findJobs();}
+      else{if(!$("#career-comparison-start").children.length)$("#career-comparison-start").innerHTML=comparisonStartPanel();if(!$("#career-jd-intake").children.length)$("#career-jd-intake").innerHTML=jdIntake("onboard");updateCareerStartMode();$("#career-onboarding").hidden=false;await findJobs();}
     }
   };
 
@@ -3116,13 +3128,14 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   $("#career-new").addEventListener("click",()=>{location.hash="career/new";});
   $("#career-create").addEventListener("submit",async event=>{
     event.preventDefault();const form=event.target;if(form.dataset.saving)return;form.dataset.saving="true";
-    const buttons=[...form.querySelectorAll('button[type="submit"],#career-create-submit,#career-create-comparison,[data-comparison-start-clear],[data-comparison-start-add],[data-comparison-start-remove]')];for(const button of buttons)button.disabled=true;
+    const buttons=[...form.querySelectorAll('button[type="submit"],#career-create-submit,#career-create-comparison,[data-comparison-start-clear],[data-comparison-start-add],[data-comparison-start-remove],[data-career-start-mode]')];for(const button of buttons)button.disabled=true;
     try{
       const created=await createCareerStart(form);
-      form.reset();$("#career-comparison-start").innerHTML=comparisonStartPanel();career.selected.clear();selectedJobs();career.tab="requirements";location.hash="career/"+created.id+(created.focus_question_id?"/investigate/"+created.focus_question_id:"");
+      form.reset();form.dataset.startMode="job";$("#career-comparison-start").innerHTML=comparisonStartPanel();updateCareerStartMode();career.selected.clear();selectedJobs();career.tab="requirements";location.hash="career/"+created.id+(created.focus_question_id?"/investigate/"+created.focus_question_id:"");
     }catch(error){notify(error.message,true);}finally{delete form.dataset.saving;for(const button of buttons)button.disabled=false;syncComparisonStart();}
   });
   $("#source-dialog").addEventListener("close",captureMaterialReading);
+  document.addEventListener("click",event=>{const button=event.target.closest?.("[data-career-start-mode]");if(button)chooseCareerStartMode(button.dataset.careerStartMode);});
   $("#career-capture-dialog").addEventListener("close",()=>{career.capture=null;});
   document.addEventListener("input",event=>{if(event.target.closest?.("[data-interview-check-key]"))captureDrafts();});
   document.addEventListener("input",event=>{
@@ -3248,7 +3261,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.hasAttribute("data-comparison-start-add"))addComparisonStartRow();
       if(target.hasAttribute("data-comparison-start-remove"))removeComparisonStartRow(target.closest("[data-comparison-start-row]"));
       if(target.hasAttribute("data-comparison-start-edit"))resetComparisonStartRow(target.closest("[data-comparison-start-row]"));
-      if(target.hasAttribute("data-comparison-start-clear"))$("#career-comparison-start").innerHTML=comparisonStartPanel();
+      if(target.hasAttribute("data-comparison-start-clear")){$("#career-comparison-start").innerHTML=comparisonStartPanel();updateCareerStartMode();}
       if(career.workspaceQuestion&&target.matches("[data-career-job-comparison],[data-career-show-source-change],[data-career-open-material],[data-career-reuse-library]")){captureDrafts();career.workspaceExpanded=true;renderDetail();}
       if(target.dataset.careerCompareAnswers)prepareAnswerComparison(target.dataset.careerCompareAnswers);
       if(target.dataset.careerExportAnswers)exportAnswerReplay(target.dataset.careerExportAnswers);
