@@ -73,6 +73,7 @@
     const conversation=$("#career-conversation-note");if(conversation)data.conversation_note={...data.conversation_note,...Object.fromEntries(new FormData(conversation))};
     const proofEditor=$("#career-proof-editor");if(proofEditor)data.proof={...data.proof,...Object.fromEntries(new FormData(proofEditor))};
     const questionEditor=$("#career-question-editor");if(questionEditor){const values=Object.fromEntries(new FormData(questionEditor));values.selected_job_ids=JSON.parse(values.selected_job_ids||"[]");values.material_ids=questionMaterialSelection(questionEditor,data.question_editor);delete values.question_material_ids;data.question_editor={...data.question_editor,...values};}
+    for(const transfer of $$("[data-career-inquiry-transfer]")){const values=new FormData(transfer);data.inquiry_transfers={...data.inquiry_transfers,[transfer.dataset.questionId]:{old_ids:values.getAll("old_ids"),current_ids:values.getAll("current_ids"),changed_conditions:values.get("changed_conditions"),question:values.get("question"),open:transfer.closest("details").open}};}
     for(const panel of $$("[data-career-answer-history]")){const key=panel.dataset.careerAnswerHistory;data.answer_comparisons={...data.answer_comparisons,[key]:{...data.answer_comparisons?.[key],history_open:panel.open}};}
     for(const panel of $$("[data-career-question-answer]")){const key=panel.dataset.careerQuestionAnswer;data.question_answers={...data.question_answers,[key]:{...data.question_answers?.[key],open:panel.open}};}
     for(const select of $$("[data-career-revision-note]")){const key=select.dataset.careerRevisionNote;data.question_answers={...data.question_answers,[key]:{...data.question_answers?.[key],revision_note_id:select.value}};}
@@ -1467,7 +1468,33 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   }
   function carriedInquiry(question,data,exporting=false){
     const old=question.carried_understanding?.inquiry,source=question.reused_from;if(!old||!source)return "";
-    return `<details class="career-carried-inquiry" ${exporting?"open":""}><summary>从「${e(source.project_title)}」接续的调查笔记</summary><p class="form-note">下面是本轮实际取回时的旧调查；原结论、解释和标注没有自动变成当前判断。旧资料只保留定位，没有自动加入当前范围。当前问题、假设和结论可以另外编辑。</p>${inquiryRecall({model_calls:1,career_learning_context:{read_inquiries:[{...old,carried_understanding:null}]}},source.project_id,exporting)}${old.origin_learning_note?learningRecallCard(old.origin_learning_note,"旧调查的认识起点",source.project_id,exporting):""}</details>`;
+    return `<details class="career-carried-inquiry" ${exporting?"open":""}><summary>从「${e(source.project_title)}」接续的调查笔记</summary><p class="form-note">下面是本轮实际取回时的旧调查；原结论、解释和标注没有自动变成当前判断。旧资料只保留定位，没有自动加入当前范围。当前问题、假设和结论可以另外编辑。</p>${inquiryRecall({model_calls:1,career_learning_context:{read_inquiries:[{...old,carried_understanding:null}]}},source.project_id,exporting)}${old.origin_learning_note?learningRecallCard(old.origin_learning_note,"旧调查的认识起点",source.project_id,exporting):""}</details>${exporting||demoMode?"":inquiryTransferPanel(question,data)}`;
+  }
+  function inquiryTransferSources(question,data){
+    const old=question.carried_understanding?.inquiry,sources=new Map();
+    for(const row of [old?.source_passage,...(old?.evidence_passages||[])])if(row?.public_document_id&&!sources.has(row.public_document_id))sources.set(row.public_document_id,{id:row.public_document_id,title:row.title||"旧调查归档原文"});
+    return {old:[...sources.values()],current:(data.materials||[]).filter(row=>!sources.has(row.id)&&(data.document_ids||[]).includes(row.id))};
+  }
+  function inquiryTransferDraft(question,data,values){
+    if(!question?.carried_understanding?.inquiry)throw new Error("请从带入的旧调查开始准备对照。");
+    const sources=inquiryTransferSources(question,data),oldIds=[...new Set(values.old_ids||[])],currentIds=[...new Set(values.current_ids||[])],ids=[...oldIds,...currentIds];
+    if(!oldIds.length||!currentIds.length||ids.length>6)throw new Error("请至少各选一份旧场景与当前场景资料，合计最多6份。");
+    if(oldIds.some(id=>!sources.old.some(row=>row.id===id))||currentIds.some(id=>!sources.current.some(row=>row.id===id)))throw new Error("所选资料已变化，请重新选择两边的原文。");
+    const changes=(values.changed_conditions||"").trim(),ask=(values.question||"").trim();if(!changes)throw new Error("请先写下这次已知的场景变化，或明确哪些变化尚不清楚。");
+    const names=(rows,selected)=>selected.map(id=>rows.find(row=>row.id===id).title).join("；");
+    const text="请围绕这条带入的旧调查做跨场景查证。\n旧场景资料："+names(sources.old,oldIds)+"\n当前场景资料："+names(sources.current,currentIds)+"\n我描述的场景变化（仍需原文核对）：\n"+changes+"\n本次问题：\n"+(ask||"原先的 A/B 解释在新场景下还能成立吗？")+"\n分别回读两边原文，比较工作对象、任务、交付物和责任边界。说明哪些解释获得支持、受到挑战或仍未知，以及结论的适用条件；不把标注当结论，不把场景差异当因果，也不自动改写我的认识。";
+    if(text.length>1500)throw new Error("完整对照提问超过1500字，请缩短场景描述、提问或资料标题后再准备；原笔记仍完整保留。");
+    return {kind:"ask",question:text,question_id:question.id,material_id:"",material_ids:ids,selected_job_ids:[...(question.selected_job_ids||[])],source_step_id:"",insight_id:"",counter_insight_id:"",insight_ids:[],task_id:"",story_id:"",comparison_step_ids:[],passage_ids:[]};
+  }
+  function inquiryTransferPanel(question,data){
+    const sources=inquiryTransferSources(question,data);if(!sources.old.length)return "";
+    const saved=storyDraft().inquiry_transfers?.[question.id]||{},choices=(rows,field)=>`<div class="career-material-choices">${rows.map(row=>`<div class="career-material-choice"><label><input type="checkbox" name="${field}" value="${e(row.id)}" ${(saved[field]||[]).includes(row.id)?"checked":""}><span>${e(row.title)}</span></label><button type="button" class="text-button" data-public-source="${e(row.id)}">读原文 ↗</button></div>`).join("")}</div>`;
+    return `<details class="career-inquiry-transfer" ${saved.open?"open":""}><summary>选两边原文，查证旧解释能否迁移</summary><p class="form-note">先选择旧场景与当前场景的资料，写清变化。准备时会把选中的旧原文加入当前目标，并生成可编辑提问；此时不调用模型，也不改变原调查。</p>${sources.current.length?`<form data-career-inquiry-transfer="${e(question.id)}" data-question-id="${e(question.id)}"><fieldset><legend>旧场景原文 · 至少一份</legend>${choices(sources.old,"old_ids")}</fieldset><fieldset><legend>当前场景原文 · 至少一份</legend>${choices(sources.current,"current_ids")}</fieldset><label>这次哪些条件发生了变化？<textarea name="changed_conditions" rows="3" maxlength="600" required placeholder="例如：工作对象从内部测试变成对外服务；个人验收权限仍不清楚。">${e(saved.changed_conditions||"")}</textarea></label><label>重点查证什么？（可选）<textarea name="question" rows="2" maxlength="600" placeholder="原先的 A/B 解释在新场景下还能成立吗？">${e(saved.question||"")}</textarea></label><button class="secondary" ${data.running?"disabled":""}>准备跨场景对照提问 ↗</button><p class="form-note">两边合计最多6份。选入不表示已读取或验证；后续回答保留实际原文引用。</p></form>`:'<p class="form-note">先在当前目标补充一份新场景的工作资料，再与旧原文对读。</p>'}</details>`;
+  }
+  async function prepareInquiryTransfer(form){
+    const id=career.id,question=career.data.questions.find(row=>row.id===form.dataset.questionId),values=storyDraft().inquiry_transfers?.[form.dataset.questionId]||{},prepared=inquiryTransferDraft(question,career.data,values);
+    for(const identity of values.old_ids||[])if(!career.data.document_ids.includes(identity)){const updated=await api("career/"+id+"/materials/attach",{method:"POST",body:JSON.stringify({document_id:identity})});if(career.id!==id){notify("这份旧资料已加入刚才的目标，可返回该调查继续准备提问。");return;}career.data=updated;}
+    const draft=storyDraft();career.tab="requirements";selectInvestigation(question.id);draft.inquiries={...draft.inquiries,requirements:prepared};draft.inquiry_views={...draft.inquiry_views,[question.id]:prepared};const route="#career/"+id+"/investigate/"+question.id;if(location.hash!==route)history.pushState(null,"",route);renderDetail();await loadGoals();$("#career-inquiry").scrollIntoView({block:"start",behavior:"smooth"});$("#career-inquiry [name=question]").focus({preventScroll:true});notify("两边资料和对照提问已准备；可编辑后再研究，准备过程未调用模型。");
   }
   async function bringRecalledInquiry(stepId,projectId,identity){
     captureDrafts();const id=career.id,updated=await api("career/"+id+"/reuse",{method:"POST",body:JSON.stringify({source_project_id:projectId,kind:"question",record_id:identity,source_step_id:stepId})});
@@ -2660,10 +2687,11 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     }catch(error){target.disabled=false;notify(error.message,true);}
   });
   document.addEventListener("submit",async event=>{
-    const form=event.target;if(!["career-inquiry-answer","career-passage-comparison","career-agenda-filter","career-relation-practice","career-relation-inquiry","career-work-form","career-cohort-form","career-retry-lab-form","career-capture-passage","career-home-search","career-global-search-form","career-review-form","career-note-synthesis","career-synthesis","career-conversation-note","career-job-observation","career-passage-editor","career-story","career-interview-answer","career-resume-form","career-insight","career-manual-experiment","career-settings","career-inquiry","career-library-form","career-challenge","career-material-form","career-material-revision-form","career-material-batch","career-material-comparison","career-pitch-form","career-question-editor","career-proof-editor"].includes(form.id)&&!form.dataset.careerTaskForm)return;
+    const form=event.target;if(!["career-inquiry-answer","career-passage-comparison","career-agenda-filter","career-relation-practice","career-relation-inquiry","career-work-form","career-cohort-form","career-retry-lab-form","career-capture-passage","career-home-search","career-global-search-form","career-review-form","career-note-synthesis","career-synthesis","career-conversation-note","career-job-observation","career-passage-editor","career-story","career-interview-answer","career-resume-form","career-insight","career-manual-experiment","career-settings","career-inquiry","career-library-form","career-challenge","career-material-form","career-material-revision-form","career-material-batch","career-material-comparison","career-pitch-form","career-question-editor","career-proof-editor"].includes(form.id)&&!form.dataset.careerTaskForm&&!form.dataset.careerInquiryTransfer)return;
     event.preventDefault();const submit=event.submitter||form.querySelector("button");submit.disabled=true;captureDrafts();
     try{
-      if(form.id==="career-inquiry-answer")await submitInquiryAnswer(form);
+      if(form.dataset.careerInquiryTransfer)await prepareInquiryTransfer(form);
+      else if(form.id==="career-inquiry-answer")await submitInquiryAnswer(form);
       else if(form.id==="career-passage-comparison")preparePassageComparison(form);
       else if(form.id==="career-relation-practice")await saveRelationPractice(form);
       else if(form.id==="career-relation-inquiry")await saveRelationInquiry(form);

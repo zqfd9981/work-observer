@@ -340,3 +340,4 @@
 .career-experiment-design-origin{padding:16px;border-left:3px solid var(--line);background:var(--green-soft);margin:14px 0}.career-experiment-design-origin p{white-space:pre-wrap;overflow-wrap:anywhere}
 
 .career-carried-inquiry{padding:16px;border-left:3px solid var(--line);margin:16px 0;background:var(--green-soft)}.career-carried-inquiry p,.career-carried-inquiry blockquote{white-space:pre-wrap;overflow-wrap:anywhere}
+.career-inquiry-transfer{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:9px}.career-inquiry-transfer>summary{font-weight:600;cursor:pointer}.career-inquiry-transfer fieldset{min-width:0;border:0;padding:0;margin:16px 0}.career-inquiry-transfer legend{font-weight:600}.career-inquiry-transfer textarea{width:100%;box-sizing:border-box}.career-inquiry-transfer p{overflow-wrap:anywhere}

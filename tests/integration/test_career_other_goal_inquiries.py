@@ -42,15 +42,24 @@ class OtherGoalInquiryModel(ModelClient):
             for row in context["fixed_scope"]["public_document_titles"]
             if row["title"] == "合成当前场景原文"
         )
+        prior = carried["material_ids"][0] if carried else None
+        reread_prior = prior in context["fixed_scope"]["archived_public_ids"]
         if carried:
             assert carried["hypothesis_a"] == HYPOTHESIS_A
             assert carried["hypothesis_b"] == HYPOTHESIS_B
             assert carried["evidence_passages"][0]["user_note"] == NOTE
             assert inquiry["state"] == "open" and not inquiry["conclusion"]
             assert not inquiry["hypothesis_a"] and not inquiry["hypothesis_b"]
-            assert carried["material_ids"][0] not in context["fixed_scope"]["archived_public_ids"]
         if carried and not outputs:
             name, args = "read_archived_document", {"document_id": current, "start": 0}
+        elif carried and reread_prior and len(outputs) == 1:
+            assert {
+                row["document_id"] for row in project["career_evidence"]["selected_materials"]
+            } == {
+                current,
+                prior,
+            }
+            name, args = "read_archived_document", {"document_id": prior, "start": 0}
         elif not carried and not outputs:
             name, args = "search_other_goal_memory", {"terms": [MARKER], "offset": 0}
         elif not carried and len(outputs) == 1:
@@ -74,8 +83,10 @@ class OtherGoalInquiryModel(ModelClient):
             assert not passage["in_current_scope"] and "evidence" not in outputs[-1]
             name, args = "read_archived_document", {"document_id": current, "start": 0}
         else:
-            evidence = outputs[-1]["evidence"]
-            assert {row["public_document_id"] for row in evidence} == {current}
+            evidence = [row for output in outputs for row in output.get("evidence", [])]
+            assert {row["public_document_id"] for row in evidence} == (
+                {current, prior} if reread_prior else {current}
+            )
             name, args = (
                 "finish_research",
                 {
@@ -89,7 +100,11 @@ class OtherGoalInquiryModel(ModelClient):
                             "evidence_ids": [row["id"] for row in evidence],
                         }
                     ],
-                    "gaps": ["旧原文未在当前范围内重读，实际分工和验收仍未知。"],
+                    "gaps": [
+                        "已回读两边原文，个人实际分工和验收权限仍未知。"
+                        if reread_prior
+                        else "旧原文未在当前范围内重读，实际分工和验收仍未知。"
+                    ],
                 },
             )
             if project.get("previous_findings") or project.get("historical_reply"):
@@ -227,6 +242,28 @@ def test_unfinished_other_goal_inquiry_continues_with_full_read_snapshot_and_cur
         )["results"][0]
         assert second["result"]["status"] == "completed", second["result"]["stop_reason"]
         assert second["result"]["model_calls"] == 2
+        assert client.get(base).json() == source_after_edit
+        before_attach = client.get(target_base).json()
+        prior_id = source["materials"][0]["id"]
+        joined = save(target_base + "/materials/attach", {"document_id": prior_id})
+        assert joined["usage"] == before_attach["usage"]
+        assert joined["questions"] == before_attach["questions"]
+        third = run_stage(
+            client,
+            target["id"],
+            auth,
+            "ask",
+            question="对照两边原文，核对工作对象变化。",
+            question_id=copied["id"],
+            material_ids=[prior_id, target["materials"][0]["id"]],
+        )["results"][0]
+        assert third["result"]["status"] == "completed", third["result"]["stop_reason"]
+        assert third["result"]["model_calls"] == 3
+        assert {row["public_document_id"] for row in third["result"]["evidence"]} == {
+            prior_id,
+            target["materials"][0]["id"],
+        }
+        assert client.get(target_base).json()["questions"] == before_attach["questions"]
         assert client.get(base).json() == source_after_edit
         erased = client.delete("/api/projects/" + source["id"], headers=auth)
         assert erased.status_code == 200, erased.text
