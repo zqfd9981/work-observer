@@ -9,6 +9,8 @@ from test_career_workspace import run_stage
 from work_observer.api.web import create_app
 from work_observer.config import Settings
 from work_observer.research.agent import ModelClient
+from work_observer.research.learning import LearningNotebook
+from work_observer.research.store import ResearchStore
 from work_observer.storage.database import upgrade
 
 PURPOSE = (
@@ -18,6 +20,7 @@ PURPOSE = (
     "这次最在意的条件：真实工作对象与交付反馈，不按岗位名称判断。"
 )
 UNKNOWN = "日常任务比例和验收权限需要向团队核实。"
+NEW_PURPOSE = "合成新取舍：更想深入接口实现，仍需核对实际职责，不能据此改写招聘事实。"
 
 
 class JobPriorityModel(ModelClient):
@@ -27,8 +30,17 @@ class JobPriorityModel(ModelClient):
     async def turn(self, history):
         context = json.loads(history[1]["content"])
         self.contexts.append(context)
-        inquiry = context["project_context"]["career_evidence"]["selected_inquiry"]
-        assert inquiry["why_matters"] == PURPOSE and inquiry["next_evidence"] == UNKNOWN
+        personal = context["project_context"]["career_evidence"]
+        inquiry = personal["selected_inquiry"]
+        assert inquiry["why_matters"] in {PURPOSE, NEW_PURPOSE}
+        assert inquiry["next_evidence"] == UNKNOWN
+        if inquiry.get("comparison_requested"):
+            assert [
+                row["inquiry_at_start"]["why_matters"] for row in inquiry["earlier_discussions"]
+            ] == [NEW_PURPOSE, PURPOSE]
+        for note in personal.get("learning_notes", []):
+            if note.get("source_inquiry"):
+                assert note["source_inquiry"]["why_matters"] == PURPOSE
         assert inquiry["state"] == "open" and not inquiry["conclusion"]
         jobs = context["fixed_scope"]["jobs"]
         assert len(jobs) == 2 and {row["id"] for row in jobs} == set(inquiry["selected_job_ids"])
@@ -138,13 +150,62 @@ def test_priorities_remain_user_context_with_the_exact_original_scope_and_snapsh
         assert result["status"] == "completed", result["stop_reason"]
         snapshot = result["career_learning_context"]["inquiry_at_start"]
         assert snapshot["why_matters"] == PURPOSE and snapshot["selected_job_ids"] == jobs[:2]
+        original_step = studied["results"][0]["step_id"]
+        note = save(
+            base + "/insights",
+            {
+                "source_step_id": original_step,
+                "question_id": question["id"],
+                "previous_view": "合成原先理解：按名称推定具体分工。",
+                "observation": "原文没有明确个人验收权限。",
+                "current_view": "合成理解：先核对实际任务。",
+                "open_question": "真实任务比例仍需核实。",
+            },
+        )["insights"][-1]
         changed = save(
             base + "/questions/" + question["id"],
-            {**values, "why_matters": "后来重新考虑的个人取舍。"},
+            {**values, "why_matters": NEW_PURPOSE},
             "patch",
         )
         assert changed["profile"] == goal["profile"]
         assert (
             changed["results"][0]["result"]["career_learning_context"]["inquiry_at_start"]
+            == snapshot
+        )
+        second = run_stage(
+            client,
+            goal["id"],
+            auth,
+            "ask",
+            question_id=question["id"],
+            question="合成取舍变化复核：按新的取舍核对原文。",
+        )
+        latest = second["results"][0]
+        assert latest["result"]["status"] == "completed", latest["result"]["stop_reason"]
+        compared = run_stage(
+            client,
+            goal["id"],
+            auth,
+            "ask",
+            question_id=question["id"],
+            question="合成取舍变化复核：两次判断的差异来自什么条件？",
+            comparison_step_ids=[latest["step_id"], original_step],
+        )
+        assert compared["results"][0]["result"]["status"] == "completed"
+        record = client.get("/api/projects/" + goal["id"]).json()
+        store = ResearchStore(tmp_path / "checkpoints.db", namespace=str(database.resolve()))
+        notebook = LearningNotebook(lambda: record, store)
+        historical = notebook.read_research_history(original_step)["research"]
+        assert historical["inquiry_at_start"] == snapshot
+        recalled_note = notebook.read(note["id"])["note"]
+        assert recalled_note["source_inquiry"] == snapshot
+        assert "不是现在的问题内容" in recalled_note["source_inquiry_notice"]
+        other = LearningNotebook(
+            lambda: {"id": "another-goal"}, store, project_lister=lambda: [record]
+        )
+        assert (
+            other.read_other_goal_memory(goal["id"], "research", original_step)["memory"][
+                "inquiry_at_start"
+            ]
             == snapshot
         )

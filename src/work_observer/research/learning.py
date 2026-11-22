@@ -552,6 +552,9 @@ class LearningNotebook:
             "question": entry.get("user_question") or entry.get("interview_question") or "",
             "question_id": entry.get("question_id"), "recorded_at": entry["created_at"],
             "scope_then": deepcopy(result.get("scope")),
+            "inquiry_at_start": deepcopy(result.get("career_learning_context", {}).get(
+                "inquiry_at_start",
+            )),
             "claim_details_to_recheck": [{
                 "position": index + 1,
                 **{key: claim.get(key) for key in ("text", "category", "basis", "requirement")},
@@ -728,6 +731,13 @@ def learning_record(row, record, store):
         )
         if selected:
             context = result.get("career_learning_context", {})
+            if context.get("inquiry_at_start"):
+                note["source_inquiry"] = deepcopy(context["inquiry_at_start"])
+                note["source_inquiry_notice"] = (
+                    "来源讨论开始时的调查目的、用户解释与待核条件，不是现在的问题内容。"
+                    "用户目的、经历自述与取舍不等于岗位事实或能力证明，"
+                    "也不能不经核对就沿用为当前场景的偏好或结论。"
+                )
             if context.get("selected_experiments"):
                 note["source_experiments"] = deepcopy(context["selected_experiments"])
                 note["source_experiments_notice"] = (

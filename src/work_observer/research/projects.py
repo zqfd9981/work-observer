@@ -1750,6 +1750,9 @@ class ProjectService:
                             "question": entry.get("user_question"),
                             "recorded_at": entry["created_at"],
                             "source_cutoff": result.get("created_at"),
+                            "inquiry_at_start": deepcopy(result.get(
+                                "career_learning_context", {},
+                            ).get("inquiry_at_start")),
                             "claims_to_recheck": [
                                 claim["text"] for claim in result.get("claims", [])
                             ],
@@ -1793,6 +1796,8 @@ class ProjectService:
                 selected_inquiry["comparison_requested"] = bool(comparison_steps)
                 selected_inquiry["history_notice"] = (
                     "先前分析只供对照问题如何推进，不是新证据。"
+                    "inquiry_at_start保留当时的目的、个人解释与待核条件；"
+                    "目的或取舍变化不等于岗位事实变化，也不证明理解进步。"
                     "须重读本轮可用原文；指出新材料改变或未能改变哪些判断，不能直接沿用旧结论。"
                     "source_cutoff是当时研究的来源截止，不是网站发布时间。"
                     "回读旧JD可用read_historical_job；原引用有historical_cutoffs时按其时点读取，"
