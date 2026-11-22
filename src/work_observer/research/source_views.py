@@ -66,8 +66,8 @@ def _heading(text):
 
 
 def _caption_starts(block):
-    """A literal caption followed by '1、岗位做什么' starts a peer section in read text."""
-    captions, previous, position = set(), None, block["start"]
+    """Locate literal captions from adjacent read lines; no work-type inference."""
+    captions, previous, position = {}, None, block["start"]
     for line in block["text"].splitlines(keepends=True):
         stripped = line.strip()
         if re.fullmatch(r"1[、.．]\s*岗位做什么[：:]?", stripped) and previous:
@@ -77,7 +77,11 @@ def _caption_starts(block):
                 and not re.search(r"[。；!?！？;]", text)
                 and _heading(text) is None
             ):
-                captions.add(start)
+                captions[start] = 2
+        if re.match(r"^(?:[-*]\s+|[•·])\S", stripped) and previous:
+            start, text = previous
+            if re.fullmatch(r"[1-9]\d?[、.．]\s*[^。；!?！？;：:\r\n]{1,80}", text):
+                captions[start] = 3
         if stripped:
             previous = position, stripped
         position += len(line)
@@ -284,7 +288,7 @@ def build_source_views(evidence, *, max_evidence=60, max_sentences=200):
                 if direction:
                     level = 3
                 elif line_start and start in captions:
-                    level = 2
+                    level = captions[start]
                 heading_text = direction.group() if direction else text
                 heading_end = start + len(heading_text)
                 if level is not None:

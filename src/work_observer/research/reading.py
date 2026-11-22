@@ -129,6 +129,38 @@ def reading_guide(evidence, returned_ids):
             "citation_key": reference(row["evidence_id"]),
         }
 
+    def sections(sentences):
+        grouped = {}
+        for sentence in sentences:
+            if sentence["heading_heuristic"]:
+                original = sentence.get("heading_span", sentence)
+                key = (original["start"], original["end"])
+                grouped[key] = {
+                    "heading": heading(original),
+                    "context": [heading(row) for row in sentence["context"]],
+                    "fragments": [],
+                }
+            elif sentence["text"].strip():
+                if sentence["context"]:
+                    parent = sentence["context"][-1]
+                    section = grouped.get((parent["start"], parent["end"]))
+                    if section is None:
+                        continue
+                else:
+                    section = grouped.setdefault(None, {
+                        "heading": None, "context": [], "fragments": [],
+                    })
+                fragments = section["fragments"]
+                citation = reference(sentence["evidence_id"])
+                if (fragments and fragments[-1]["end"] == sentence["start"]
+                        and fragments[-1]["citation_key"] == citation):
+                    fragments[-1]["text"] += sentence["text"]
+                    fragments[-1]["end"] = sentence["end"]
+                else:
+                    fragments.append({"text": sentence["text"], "start": sentence["start"],
+                                      "end": sentence["end"], "citation_key": citation})
+        return [row for row in grouped.values() if row["fragments"]]
+
     guides, remaining, omitted_sources = [], 12000, 0
     for job in view["jobs"]:
         for source in job["sources"]:
@@ -145,6 +177,8 @@ def reading_guide(evidence, returned_ids):
                 "issues": source["issues"],
                 "headings": [],
                 "passages": [],
+                "sections": [],
+                "omitted_sections": 0,
                 "omitted_headings": 0,
                 "omitted_passages": 0,
             }
@@ -181,6 +215,13 @@ def reading_guide(evidence, returned_ids):
                     continue
                 guide["passages"].append(passage)
                 remaining -= size
+            for section in sections(source["sentences"]):
+                size = len(json.dumps(section, ensure_ascii=False))
+                if size > remaining:
+                    guide["omitted_sections"] += 1
+                    continue
+                guide["sections"].append(section)
+                remaining -= size
             guides.append(guide)
     return {
         "sources": guides,
@@ -193,6 +234,10 @@ def reading_guide(evidence, returned_ids):
             "complete_read只表示该语句的已读字符连续完整，不表示语义已核实；"
             "coverage.gaps是尚未读到的范围，不可当作没有要求。"
             "分句仅按标点和换行定位，跨句修饰仍须结合上下文。"
+            "sections按已读原文的字面标题保留各自段落与引用，不推断业务工作线。"
+            "heading为null的已读片段尚未按标题归组，不能省略或自动并入相邻小节。"
+            "先分别核对各节的任务、对象和交付物，再决定能否连接；"
+            "跨岗位比较句不能当成单个岗位的交付物，编号标题本身也不是能力或职责证明。"
             "同一正文的不同方向须分别解释；‘专攻之一’不能变成每人承担全部方向，"
             "章节中的团队或运行角色也不能直接改成应聘者的组织权限。"
             "这些是原文定位辅助，不是新来源、模型摘要或新增核对步骤；"

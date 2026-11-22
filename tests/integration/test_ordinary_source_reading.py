@@ -165,3 +165,52 @@ def test_standard_research_can_continue_to_the_end_of_a_long_jd(source_workspace
     assert repo.job(job)["current"]["description_text"] == text
     for evidence in result["evidence"]:
         assert evidence["quote"] == text[evidence["start"] : evidence["end"]]
+
+
+class SectionReaderModel:
+    async def turn(self, history):
+        outputs = [json.loads(row["output"]) for row in history
+                   if row.get("type") == "function_call_output"]
+        if not outputs:
+            context = json.loads(history[1]["content"])
+            name, args = "read_job", {"job_id": context["fixed_scope"]["jobs"][0]["id"]}
+        else:
+            sections = outputs[0]["reading_guide"]["sources"][0]["sections"]
+            internal, prototype = sections
+            assert internal["heading"]["text"].strip() == "1. 内部核对"
+            assert prototype["heading"]["text"].strip() == "2. 客户原型"
+            assert "内部清单" in str(internal["fragments"])
+            assert "种子用户反馈" not in str(internal["fragments"])
+            assert "种子用户反馈" in str(prototype["fragments"])
+            keys = list(dict.fromkeys(span["citation_key"] for section in sections
+                                      for span in section["fragments"]))
+            name, args = "finish_research", {
+                "claims": [{"category": "deliverable", "basis": "synthesis",
+                            "requirement": "unspecified",
+                            "text": "合成原文分别描述内部核对清单与客户原型反馈，"
+                                    "仍需分别核实交付对象与迁移条件。",
+                            "evidence_ids": keys}],
+                "gaps": ["真实验收权限与迁移条件仍未知。"],
+            }
+        call = {"type": "function_call", "name": name, "arguments": json.dumps(args),
+                "call_id": str(len(history))}
+        return [call], call
+
+
+def test_standard_read_exposes_separate_work_sections_in_the_same_tool_response(
+    source_workspace, tmp_path,
+):
+    repo, _, _ = source_workspace
+    text = ("岗位职责\n1. 内部核对\n- 对照账本，交付内部清单。\n"
+            "2. 客户原型\n- 交付原型与种子用户反馈。")
+    job = import_jd(repo, RawArchive(tmp_path / "section-jd"), ManualJD(
+        title="合成两条工作线", company="合成团队", description=text, data_kind="synthetic",
+    ))["job_id"]
+    result = asyncio.run(research(
+        repo, "分别核对两条工作线的交付对象。", Settings(), job_ids=[job],
+        coverage_mode="question", max_calls=2, model=SectionReaderModel(),
+    ))
+    assert result["status"] == "completed", result.get("stop_reason")
+    assert result["model_calls"] == 2
+    assert [row["tool"] for row in result["trace"]] == ["read_job", "finish_research"]
+    assert repo.job(job)["current"]["description_text"] == text
