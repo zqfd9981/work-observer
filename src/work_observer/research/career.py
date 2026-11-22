@@ -26,6 +26,7 @@ from work_observer.research.learning import (
     work_relation_record,
 )
 from work_observer.research.projects import ProjectService, step_continuation
+from work_observer.research.resume import resume_items
 from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.unified import UnifiedRetrieval
 from work_observer.text_match import match_text
@@ -310,6 +311,7 @@ class CareerService:
                     "state": steps[latest["step_id"]]["state"],
                     "created_at": latest["created_at"],
                 } if latest else None,
+                "resume_items": resume_items(row),
                 "task_count": len(career["tasks"]),
                 "done_count": sum(task["state"] == "done" for task in career["tasks"]),
             })

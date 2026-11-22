@@ -43,6 +43,26 @@ def test_home_listing_keeps_full_focus_and_latest_step_without_calls(tmp_path, m
         prepared = post(base + "/prepare", {
             "kind": "ask", "question": "先查清交付物边界。", "question_id": qid,
         })
+        task = post(base + "/experiments", {
+            "title": "合成实验：条件变化", "task_or_ability": "核对条件",
+            "deliverable": "对照记录", "completion_check": "分别记录预期与实际",
+            "question_id": qid,
+        })["tasks"][-1]
+        observation = "合成反例：改变条件后没有产生预期交付物，适用性仍未知。"
+        updated = client.patch(base + "/tasks/" + task["id"], headers=auth, json={
+            "state": "done", "outcome": observation,
+        })
+        assert updated.status_code == 200
+        planned = post(base + "/experiments", {
+            "title": "另一项合成计划", "task_or_ability": "检查输入变化",
+            "deliverable": "后续记录", "completion_check": "保留实际失败与未知",
+            "question_id": qid,
+        })["tasks"][-1]
+        note = post(base + "/insights", {
+            "previous_view": "以为同名任务会有相同责任。", "observation": "权限尚未披露。",
+            "current_view": "需要分别核对交付与验收边界。", "open_question": "实际验收人是谁？",
+            "question_id": qid,
+        })["insights"][-1]
         before = deepcopy(client.get(base).json())
         listing = client.get("/api/career").json()
         assert listing[0]["id"] == active["id"]
@@ -54,7 +74,19 @@ def test_home_listing_keeps_full_focus_and_latest_step_without_calls(tmp_path, m
         assert latest["kind"] == "ask" and latest["state"] == "queued"
         assert latest["question_id"] == qid
         assert latest["question"] == "先查清交付物边界。"
+        resumes = {row["category"]: row for row in current["resume_items"]}
+        assert set(resumes) == {
+            "question", "research", "observation", "experiment", "understanding",
+        }
+        assert resumes["question"]["record_id"] == qid
+        assert resumes["question"]["title"] == question
+        assert resumes["observation"]["record_id"] == task["id"]
+        assert resumes["observation"]["body"] == observation
+        assert resumes["experiment"]["record_id"] == planned["id"]
+        assert resumes["understanding"]["record_id"] == note["id"]
+        assert resumes["research"]["record_id"] == prepared["step_id"]
         untouched = next(row for row in listing if row["id"] == empty["id"])
+        assert untouched["resume_items"] == []
         assert untouched["latest_research"] is None
         assert untouched["focus_question"] is None and untouched["focus_question_id"] is None
         assert client.get(base).json() == before
