@@ -340,7 +340,7 @@
     try{const data=await api("career/review?"+params);if(request!==review.request||location.hash.split("/")[1]!=="review")return;review.data=data;$("#career-review").innerHTML=noteReview(data,filters);}catch(error){if(request===review.request)$("#career-review").innerHTML=errorBox(error);}
   }
   function prepareNotePractice(id){
-    captureDrafts();if(!career.data.insights?.some(row=>row.id===id))throw new Error("请重新选择一条已保存的认识。");storyDraft().interview_focus="insight:"+id;career.tab="interview";renderDetail();$(".career-interview-focus").scrollIntoView({block:"start",behavior:"smooth"});notify("已选中这条认识，可以先查看，再决定是否生成自测问题。");
+    captureDrafts();if(!career.data.insights?.some(row=>row.id===id))throw new Error("请重新选择一条已保存的认识。");chooseInterviewFocus("insight:"+id);career.tab="interview";renderDetail();$(".career-interview-focus").scrollIntoView({block:"start",behavior:"smooth"});notify("已选中这条认识，可以先查看，再决定是否生成自测问题。");
   }
   const libraryRecordLabels={story:"我的经历自述",task:"实验预期与观察",insight:"我的认识与疑问",discussion:"当时的研究与回答",pitch:"我的项目讲述",question:"持续调查的问题"};
   function careerSearchValues(hash=location.hash){
@@ -1182,8 +1182,8 @@
   async function submitInquiryAnswer(form){
     captureDrafts();await research("answer",form.elements.answer.value,0,null,null,form.dataset.questionText,{question_id:form.dataset.questionId,inquiry_answer:true});
   }
-  const interviewSources=data=>data.results.filter(row=>(["interview","teachback","followup"].includes(row.kind)||row.kind==="ask"&&row.result?.career_learning_context?.answer_comparison?.length===2)&&row.current!==false&&row.result?.status==="completed"&&(row.result.gaps||[]).some(text=>/[?？]/.test(text)));
-  const interviewQuestions=row=>row?.inquiry_answer?[row.interview_question].filter(Boolean):(row?.result.gaps||[]).filter(text=>/[?？]/.test(text));
+  const interviewSources=data=>data.results.filter(row=>(["interview","teachback","followup"].includes(row.kind)||row.kind==="ask"&&row.result?.career_learning_context?.answer_comparison?.length===2)&&row.current!==false&&discussionAvailable(row)&&(row.result.gaps||[]).some(text=>/[?？]/.test(text)));
+  const interviewQuestions=row=>row?.inquiry_answer?[row.interview_question].filter(Boolean):(row?.result?.gaps||[]).filter(text=>/[?？]/.test(text));
   function interviewFocusLabel(row,data){
     if(row?.inquiry_answer)return "调查问题作答："+(row.interview_question||"当时的原问题");
     if(row?.understanding_check&&row.insight_id){const note=row.result?.career_learning_context?.selected_note||data.insights?.find(item=>item.id===row.insight_id),view=note?.current_user_view||note?.current_view||"原选认识";return "认识自测："+view.slice(0,90)+(view.length>90?"…":"");}
@@ -1194,19 +1194,20 @@
   }
   function interviewFocusPanel(data){
     const focus=storyDraft().interview_focus||"",[kind,id]=focus.split(":"),practice=kind==="insight",record=(practice?data.insights||[]:kind==="story"?data.stories:data.tasks).find(row=>row.id===id),documentId=kind==="story"?record?.document_id:kind==="task"?record?.artifact_document_id:null;
-    return `<section class="panel career-interview-focus"><label>下一组练习围绕什么<select id="career-interview-focus"><option value="">综合岗位与近期材料</option>${(data.insights||[]).map(row=>`<option value="insight:${e(row.id)}" ${focus==="insight:"+row.id?"selected":""}>认识自测：${e(row.current_view.slice(0,90))}${row.current_view.length>90?"…":""}${row.use_for_research===false?"（已搁置）":""}</option>`).join("")}${data.stories.map(row=>`<option value="story:${e(row.id)}" ${focus==="story:"+row.id?"selected":""}>经历：${e(row.title)}</option>`).join("")}${data.tasks.filter(experimentHasObservations).map(row=>`<option value="task:${e(row.id)}" ${focus==="task:"+row.id?"selected":""}>工作样本：${e(row.title)}</option>`).join("")}</select></label><p class="form-note">${practice?"围绕这条认识解释原因、改变条件或寻找反例，回答后再对照原文反馈。认识是待检验的个人理解；已搁置的记录仅供这次练习。选择不会开始研究。":"指定后，新问题、回答反馈和后续追问沿用同一份材料。失败的工作样本也可以练习，结果与迁移边界需如实说明。选择材料不会开始研究，也不会改变已有问题。"}</p>${practice&&record?`<details class="career-practice-note"><summary>回看本次选中的完整认识与未知</summary><p>${e(record.current_view)}</p><p><strong>当时观察：</strong>${e(record.observation)}</p><p><strong>仍待验证：</strong>${e(record.open_question||"未记录")}</p><a class="text-button" href="#career/${e(data.id)}/insight/${e(record.id)}">回看认识记录与依据 ↗</a></details>`:""}<div class="result-actions">${documentId?`<button type="button" class="text-button" data-public-source="${e(documentId)}">核对所选材料原文 ↗</button>`:""}${button("interview",practice?"生成这条认识的自测问题":"围绕所选材料准备面试")}</div></section>`;
+    return `<section class="panel career-interview-focus"><label>这次围绕什么练习<select id="career-interview-focus"><option value="">综合岗位与近期材料</option>${(data.insights||[]).map(row=>`<option value="insight:${e(row.id)}" ${focus==="insight:"+row.id?"selected":""}>认识自测：${e(row.current_view.slice(0,90))}${row.current_view.length>90?"…":""}${row.use_for_research===false?"（已搁置）":""}</option>`).join("")}${data.stories.map(row=>`<option value="story:${e(row.id)}" ${focus==="story:"+row.id?"selected":""}>经历：${e(row.title)}</option>`).join("")}${data.tasks.filter(experimentHasObservations).map(row=>`<option value="task:${e(row.id)}" ${focus==="task:"+row.id?"selected":""}>工作样本：${e(row.title)}</option>`).join("")}</select></label><p class="form-note">${practice?"下方只列出这条认识的已有题组。围绕它解释原因、改变条件或寻找反例，回答后再对照原文反馈。认识是待检验的个人理解；已搁置的记录仅供这次练习。选择不会开始研究。":"下方题组按所选材料显示；选择综合材料可查看全部可练题组。新出题、回答反馈和后续追问沿用各自明确的材料。失败的工作样本也可以练习，选择不会开始研究或改变已有记录。"}</p>${practice&&record?`<details class="career-practice-note"><summary>回看本次选中的完整认识与未知</summary><p>${e(record.current_view)}</p><p><strong>当时观察：</strong>${e(record.observation)}</p><p><strong>仍待验证：</strong>${e(record.open_question||"未记录")}</p><a class="text-button" href="#career/${e(data.id)}/insight/${e(record.id)}">回看认识记录与依据 ↗</a></details>`:""}<div class="result-actions">${documentId?`<button type="button" class="text-button" data-public-source="${e(documentId)}">核对所选材料原文 ↗</button>`:""}${button("interview",practice?"生成这条认识的自测问题":"围绕所选材料准备面试")}</div></section>`;
   }
 
-  function interviewAttempts(source,question,data){
+  function interviewAttempts(source,question,data,index=interviewQuestions(source).indexOf(question)){
     if(!source||!question)return [];
     return data.results.filter(row=>row.kind==="answer"&&row.interview_question===question
+      &&(source.inquiry_answer||row.source_step_id===source.step_id&&row.question_index===index)
       &&["story_id","task_id","question_id","insight_id"].every(key=>(row[key]||null)===(source[key]||null))
        &&Boolean(row.inquiry_answer)===Boolean(source.inquiry_answer)
       &&Boolean(row.understanding_check)===Boolean(source.understanding_check))
       .sort((a,b)=>(a.created_at||"").localeCompare(b.created_at||""));
   }
   function answerReplaySelection(source,index,data){
-    const question=interviewQuestions(source)[index],attempts=interviewAttempts(source,question,data),key=source.step_id+":"+index;
+    const question=interviewQuestions(source)[index],attempts=interviewAttempts(source,question,data,index),key=source.step_id+":"+index;
     const saved=storyDraft().answer_comparisons?.[key]?.ids||[],ids=[...new Set([...saved.filter(id=>attempts.some(row=>row.step_id===id)),attempts[0]?.step_id,attempts.at(-1)?.step_id])].filter(Boolean).slice(0,2);
     return {key,question,attempts,pair:ids.map(id=>attempts.find(row=>row.step_id===id))};
   }
@@ -1242,14 +1243,27 @@
     captureDrafts();const {source,index}=replaySource(key),html=answerReplayPackage(source,index,career.data),url=URL.createObjectURL(new Blob([html],{type:"text/html;charset=utf-8"})),link=document.createElement("a");
     link.href=url;link.download="我的回答与反馈对照.html";document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
+  const interviewSourceFocus=row=>row?.insight_id?"insight:"+row.insight_id:row?.story_id?"story:"+row.story_id:row?.task_id?"task:"+row.task_id:"";
+  function chooseInterviewFocus(value){
+    const draft=storyDraft();draft.interview_focus=value;delete draft.next_source_step_id;delete draft.source_step_id;delete draft.question_index;
+    if(location.hash.split("/")[2]==="replay")history.pushState(null,"","#career/"+career.id+"/tab/interview");
+  }
+  function interviewSelection(data,draft=storyDraft()){
+    const [kind,id]=(draft.interview_focus||"").split(":"),records=({story:data.stories,task:data.tasks,insight:data.insights})[kind],focus=records?.some(row=>row.id===id)?kind+":"+id:"";
+    const sources=interviewSources(data).filter(row=>!focus||row[kind+"_id"]===id),requested=draft.next_source_step_id||draft.source_step_id,selected=sources.find(row=>row.step_id===requested)||sources[0],questions=interviewQuestions(selected);
+    const counts=questions.map((text,index)=>interviewAttempts(selected,text,data,index).length),draftIndex=questions.findIndex((text,index)=>draft.interview_answers?.[selected.step_id+":"+index]?.trim()),unanswered=counts.findIndex(count=>!count),fallback=draftIndex>=0?draftIndex:unanswered>=0?unanswered:0,chosen=Number(draft.question_index);
+    const index=selected?.step_id===requested&&Number.isInteger(chosen)&&chosen>=0&&chosen<questions.length?chosen:fallback,key=selected?.step_id+":"+index,answer=draft.interview_answers?.[key]??"";
+    const next=questions.map((text,offset)=>(index+offset+1)%questions.length).find(position=>position!==index&&!counts[position]);
+    return {sources,selected,questions,index,key,answer,counts,next};
+  }
+  function interviewProgress(selected,index,data,counts,next){
+    const questions=interviewQuestions(selected),answered=counts.filter(Boolean).length,root="#career/"+e(data.id)+"/replay/"+e(selected.step_id)+"/";
+    return `<nav class="career-practice-progress" aria-label="本组题目的作答进度"><p>第 ${index+1} / ${questions.length} 题 · ${answered} 道题有已保存回答</p><div class="career-practice-steps">${questions.map((text,n)=>`<a href="${root+n}" ${n===index?'aria-current="step"':""}>第 ${n+1} 题 · ${counts[n]?"已作答":storyDraft().interview_answers?.[selected.step_id+":"+n]?.trim()?"有草稿":"未作答"}</a>`).join("")}</div><p class="form-note">${answered===questions.length?"这组题都有已保存回答，可以选题重答或回看反馈。":"可以按顺序继续，也可以选择任何一道题；切换保留未提交的回答草稿。"} 作答记录不代表掌握程度，反馈是否完整需分别查看。</p>${next!==undefined?`<a class="text-button" href="${root+next}">继续下一道未答题 ↗</a>`:""}</nav>`;
+  }
   function interview(data){
-    const sources=interviewSources(data),draft=storyDraft();
-    const selected=sources.find(row=>row.step_id===(draft.next_source_step_id||draft.source_step_id))||sources[0];
+    const draft=storyDraft(),{sources,selected,questions,index,key,answer,counts,next}=interviewSelection(data,draft);
     const preparingNote=!selected&&draft.interview_focus?.startsWith("insight:");
-    const questions=interviewQuestions(selected),index=Math.min(Number(draft.question_index||0),Math.max(0,questions.length-1));
-    const key=selected?.step_id+":"+index,answer=draft.interview_answers?.[key]??(!draft.source_step_id?draft.answer||"":"");
-    const attempts=interviewAttempts(selected,questions[index],data);
-    return `<div class="section-heading"><div><h2>${selected?.understanding_check||preparingNote?"把理解讲清楚，再检查边界":"让真实经历经得住追问"}</h2><p class="form-note">${selected?.understanding_check||preparingNote?"先用自己的话解释，再对照原文检查推理、反例与未知。这里的回答不是做过项目的证明。":"先回答，再根据真实回答追问；也可以重答同一道题，回看表达与证据的变化。"}</p></div></div>${interviewFocusPanel(data)}${selected?`<form id="career-interview-answer" class="panel career-answer-form" data-source-step="${e(selected.step_id)}" data-question-index="${index}"><p class="form-note career-interview-source">本组问题围绕：${e(interviewFocusLabel(selected,data))}</p>${selected.story_id&&data.stories.some(story=>story.id===selected.story_id)?`<a class="text-button" href="#career/${e(data.id)}/story/${e(selected.story_id)}">回看这份经历与面试准备 ↗</a>`:""}<div class="form-grid"><label>本次练习哪组问题<select name="source_step_id">${sources.map(row=>`<option value="${e(row.step_id)}" ${row===selected?"selected":""}>${e(interviewFocusLabel(row,data))} · ${row.kind==="ask"?"对照两次回答的追问":row.kind==="followup"?"针对回答的追问":row.understanding_check?"理解自测":"岗位模拟面试"} · ${e(when(row.created_at))}</option>`).join("")}</select></label><label>选择本次回答的问题<select name="question_index">${questions.map((text,n)=>`<option value="${n}" ${index===n?"selected":""}>${n+1}. ${e(text)}</option>`).join("")}</select></label></div><blockquote class="career-active-question">${e(questions[index])}</blockquote><label>${selected?.understanding_check?"用自己的话解释（允许说不知道）":"写下你的真实回答"}<textarea id="career-answer" name="answer" rows="6" maxlength="2500" required placeholder="${selected?.understanding_check?"用自己的话解释为什么、适用条件是什么；可以明确写不知道或尚未验证，不必编造实际经历。":"写实际行动、当时的选择、验证方法，以及你还说不清的部分。"}">${e(answer)}</textarea></label><button class="primary" ${researchUnavailable(data)?"disabled":""}>${selected.understanding_check?"检查我的理解与推理":"结合原文反馈我的回答"} ↗</button></form>${answerReplay(selected,index,data)}}`:preparingNote?empty("从一条认识开始练习","先生成自测问题，再用自己的话回答；可以明确说不知道或尚未验证。"):empty("从你的材料出发的一次模拟面试","先补充一份经历，或直接准备面试问题；缺少的信息会明确指出。")}`;
+    return `<div class="section-heading"><div><h2>${selected?.understanding_check||preparingNote?"把理解讲清楚，再检查边界":"让真实经历经得住追问"}</h2><p class="form-note">${selected?.understanding_check||preparingNote?"先用自己的话解释，再对照原文检查推理、反例与未知。这里的回答不是做过项目的证明。":"先回答，再根据真实回答追问；也可以重答同一道题，回看表达与证据的变化。"}</p></div></div>${interviewFocusPanel(data)}${selected?`<form id="career-interview-answer" class="panel career-answer-form" data-source-step="${e(selected.step_id)}" data-question-index="${index}"><p class="form-note career-interview-source">本组问题围绕：${e(interviewFocusLabel(selected,data))}</p>${selected.story_id&&data.stories.some(story=>story.id===selected.story_id)?`<a class="text-button" href="#career/${e(data.id)}/story/${e(selected.story_id)}">回看这份经历与面试准备 ↗</a>`:""}<div class="form-grid"><label>本次练习哪组问题<select name="source_step_id">${sources.map(row=>`<option value="${e(row.step_id)}" ${row===selected?"selected":""}>${e(interviewFocusLabel(row,data))} · ${row.kind==="ask"?"对照两次回答的追问":row.kind==="followup"?"针对回答的追问":row.understanding_check?"理解自测":"岗位模拟面试"} · ${e(when(row.created_at))}</option>`).join("")}</select></label><label>选择本次回答的问题<select name="question_index">${questions.map((text,n)=>`<option value="${n}" ${index===n?"selected":""}>${n+1}. ${e(text)}</option>`).join("")}</select></label></div>${interviewProgress(selected,index,data,counts,next)}<blockquote class="career-active-question">${e(questions[index])}</blockquote><label>${selected?.understanding_check?"用自己的话解释（允许说不知道）":"写下你的真实回答"}<textarea id="career-answer" name="answer" rows="6" maxlength="2500" required placeholder="${selected?.understanding_check?"用自己的话解释为什么、适用条件是什么；可以明确写不知道或尚未验证，不必编造实际经历。":"写实际行动、当时的选择、验证方法，以及你还说不清的部分。"}">${e(answer)}</textarea></label><button class="primary" ${researchUnavailable(data)?"disabled":""}>${selected.understanding_check?"检查我的理解与推理":"结合原文反馈我的回答"} ↗</button></form>${answerReplay(selected,index,data)}`:preparingNote?empty("从一条认识开始练习","先生成自测问题，再用自己的话回答；可以明确说不知道或尚未验证。"):draft.interview_focus?empty("这份材料还没有可练的题组","可以从上方为它准备问题，或切换到综合材料查看其他已存题组。没有自动开始模型调用。"):empty("从你的材料出发的一次模拟面试","先补充一份经历，或直接准备面试问题；缺少的信息会明确指出。")}`;
   }
 
   function startPitch(storyId=null,stepId=null,pitchId=null){
@@ -2967,7 +2981,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(career.data.results.some(row=>row.step_id===id&&row.inquiry_answer)){renderDetail();return;}
       const source=interviewSources(career.data).find(row=>row.step_id===id),index=Number(claimIndex||0);
       if(!source||!Number.isInteger(index)||!interviewQuestions(source)[index]){notify("这组练习暂不可用，请重新选择。");return;}
-      captureDrafts();const draft=storyDraft();draft.next_source_step_id=id;draft.question_index=String(index);career.drafts.set(career.id,draft);career.tab="interview";renderDetail();
+      captureDrafts();const draft=storyDraft();draft.interview_focus=interviewSourceFocus(source);draft.next_source_step_id=id;draft.question_index=String(index);career.drafts.set(career.id,draft);career.tab="interview";renderDetail();
       ($(`[data-career-answer-replay="${id}:${index}"]`)||$("#career-interview-answer")).scrollIntoView({block:"start",behavior:"smooth"});return;
     }
     if(kind==="investigate"){captureDrafts();if(!selectInvestigation(id)){notify("这条调查问题已不在当前目标中。");return;}career.tab="requirements";renderDetail();$("#career-detail").scrollIntoView({block:"start"});return;}
@@ -3088,7 +3102,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     if(row.result?.status!=="completed"||!(["interview","teachback","followup"].includes(row.kind)||row.kind==="ask"&&row.result?.career_learning_context?.answer_comparison?.length===2))return "";
     const questions=interviewQuestions(row);if(!questions.length)return "";
     const available=discussionAvailable(row)&&interviewSources(data).some(item=>item.step_id===row.step_id);
-    return `<section class="panel career-practice-questions"><h3>${row.understanding_check?"用自己的话解释，再核对理解":"选择一道题，准备自己的回答"}</h3><p class="form-note">${row.understanding_check?"可以说不知道或尚未验证；解释与自述不能证明做过实际项目。":"按实际参与、证据和未完成的部分回答。打开题目不会调用模型。"}</p>${questions.map((text,index)=>{const attempts=interviewAttempts(row,text,data);return `<article class="career-practice-question" data-practice-question="${e(row.step_id)}:${index}"><h4>第 ${index+1} 题</h4><p>${e(text)}</p><div class="result-actions">${available?`<a class="secondary button-link small" href="#career/${e(data.id)}/replay/${e(row.step_id)}/${index}">${attempts.length?"再答一次 / 对照已有反馈":"回答这道题"} ↗</a>`:'<span class="form-note">原研究已结束或资料范围已调整；这里保留当时题目，先核对原记录。</span>'}${attempts.length?`<span class="form-note">已保存 ${attempts.length} 次回答。</span>`:""}</div>${!available&&attempts.length?`<details><summary>回看已有回答与反馈</summary>${attempts.map(answer=>`<p><a class="text-button" href="#career/${e(data.id)}/discussion/${e(answer.step_id)}">${e(when(answer.created_at))} · 原回答与反馈 ↗</a></p>`).join("")}</details>`:""}</article>`;}).join("")}</section>`;
+    return `<section class="panel career-practice-questions"><h3>${row.understanding_check?"用自己的话解释，再核对理解":"选择一道题，准备自己的回答"}</h3><p class="form-note">${row.understanding_check?"可以说不知道或尚未验证；解释与自述不能证明做过实际项目。":"按实际参与、证据和未完成的部分回答。打开题目不会调用模型。"}</p>${questions.map((text,index)=>{const attempts=interviewAttempts(row,text,data,index);return `<article class="career-practice-question" data-practice-question="${e(row.step_id)}:${index}"><h4>第 ${index+1} 题</h4><p>${e(text)}</p><div class="result-actions">${available?`<a class="secondary button-link small" href="#career/${e(data.id)}/replay/${e(row.step_id)}/${index}">${attempts.length?"再答一次 / 对照已有反馈":"回答这道题"} ↗</a>`:'<span class="form-note">原研究已结束或资料范围已调整；这里保留当时题目，先核对原记录。</span>'}${attempts.length?`<span class="form-note">已保存 ${attempts.length} 次回答。</span>`:""}</div>${!available&&attempts.length?`<details><summary>回看已有回答与反馈</summary>${attempts.map(answer=>`<p><a class="text-button" href="#career/${e(data.id)}/discussion/${e(answer.step_id)}">${e(when(answer.created_at))} · 原回答与反馈 ↗</a></p>`).join("")}</details>`:""}</article>`;}).join("")}</section>`;
   }
   function answerPracticePanel(row,data){
     if(row.kind!=="answer"||!row.interview_question)return "";
@@ -3231,7 +3245,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       draft.open=true;renderDetail();return;
     }
     if(event.target.matches?.('#career-inquiry [name="source_step_id"]')){if(event.target.value)continueDiscussion(event.target.value);else{captureDrafts();storyDraft().inquiries[career.tab].claim_review_index=null;renderDetail();}return;}
-    if(event.target.matches?.('#career-interview-focus')){captureDrafts();renderDetail();return;}
+    if(event.target.matches?.('#career-interview-focus')){const value=event.target.value;captureDrafts();chooseInterviewFocus(value);renderDetail();return;}
     if(event.target.matches?.('#career-inquiry [name="material_id"]')){captureDrafts();renderDetail();return;}
     if(event.target.matches?.('#career-manual-experiment [name="question_id"]')){captureDrafts();renderDetail();return;}
     if(event.target.matches?.('[data-career-revision-note]')){captureDrafts();renderDetail();return;}
@@ -3251,8 +3265,8 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
     }
     if(event.target.matches?.('#career-interview-answer [name="source_step_id"],#career-interview-answer [name="question_index"]')){
       const target=event.target;captureDrafts();const draft=storyDraft();delete draft.next_source_step_id;
-      if(target.name==="source_step_id"){draft.source_step_id=target.value;draft.question_index="0";}else draft.question_index=target.value;
-      career.drafts.set(career.id,draft);renderDetail();return;
+      if(target.name==="source_step_id"){draft.source_step_id=target.value;delete draft.question_index;}else draft.question_index=target.value;
+      career.drafts.set(career.id,draft);const selection=interviewSelection(career.data);if(selection.selected){const next="#career/"+career.id+"/replay/"+selection.selected.step_id+"/"+selection.index;if(location.hash!==next)history.pushState(null,"",next);}renderDetail();return;
     }
     const targetJob=event.target.closest("[data-career-target-job]");
     if(targetJob){
@@ -3347,7 +3361,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.dataset.careerInsightClaim){const [stepId,index]=target.dataset.careerInsightClaim.split(":");startInsight(null,stepId,Number(index));}
       if(target.dataset.careerNextExperiment)startNextExperiment(target.dataset.careerNextExperiment);
       if(target.dataset.careerNextPlan)await research("plan","",0,target.dataset.careerNextPlan);
-      if(target.dataset.careerInterviewFocus){captureDrafts();storyDraft().interview_focus=target.dataset.careerInterviewFocus;career.tab="interview";if(location.hash.split("/")[2]!=="story")history.pushState(null,"","#career/"+career.id+"/tab/interview");renderDetail();$(".career-interview-focus").scrollIntoView({block:"center",behavior:"smooth"});}
+      if(target.dataset.careerInterviewFocus){captureDrafts();chooseInterviewFocus(target.dataset.careerInterviewFocus);career.tab="interview";if(location.hash.split("/")[2]!=="story")history.pushState(null,"","#career/"+career.id+"/tab/interview");renderDetail();$(".career-interview-focus").scrollIntoView({block:"center",behavior:"smooth"});}
       if(target.dataset.careerLoadJobChange)await loadJobChanges(target.dataset.careerLoadJobChange);
       if(target.dataset.careerCompareObservations){captureDrafts();const chosen=storyDraft().job_changes;await loadJobChanges(target.dataset.careerCompareObservations,{before_observation_id:chosen.before_observation_id,after_observation_id:chosen.after_observation_id});}
       if(target.dataset.careerSaveJobChange)await saveJobChangeQuestion(target.dataset.careerSaveJobChange);
@@ -3383,7 +3397,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
       if(target.hasAttribute("data-career-cancel-pitch")){captureDrafts();delete storyDraft().pitch;renderDetail();}
       if(target.hasAttribute("data-career-pitch-research")){const form=$("#career-pitch-form"),storyId=form.elements.story_id.value;if(!storyId)throw new Error("请先选择一份经历，再让Agent围绕原文整理。");await research("pitch","",0,null,null,"",{story_id:storyId});}
       if(target.dataset.careerCopyPitch){const row=career.data.pitches.find(item=>item.id===target.dataset.careerCopyPitch);try{if(!navigator.clipboard?.writeText)throw new Error();await navigator.clipboard.writeText(row.text);notify("讲述文字已复制。");}catch{notify("浏览器未允许自动复制，可以选中讲述文字后复制。",true);}}
-      if(target.dataset.careerUsePitch){captureDrafts();const row=career.data.pitches.find(item=>item.id===target.dataset.careerUsePitch),draft=storyDraft(),sources=interviewSources(career.data),source=sources.find(item=>item.step_id===(draft.next_source_step_id||draft.source_step_id))||sources[0];if(row&&source){const index=Math.min(Number(draft.question_index||0),interviewQuestions(source).length-1);draft.source_step_id=source.step_id;draft.question_index=String(index);delete draft.next_source_step_id;draft.interview_answers={...draft.interview_answers,[source.step_id+":"+index]:row.text};career.drafts.set(career.id,draft);career.tab="interview";renderDetail();$("#career-answer").scrollIntoView({block:"center",behavior:"smooth"});$("#career-answer").focus();notify("已填入回答草稿，核对与所选问题的关系后再提交。");}}
+      if(target.dataset.careerUsePitch){captureDrafts();const row=career.data.pitches.find(item=>item.id===target.dataset.careerUsePitch),draft=storyDraft();if(row?.story_id&&draft.interview_focus!=="story:"+row.story_id)chooseInterviewFocus("story:"+row.story_id);const {selected:source,index}=interviewSelection(career.data);if(row&&!source){career.tab="interview";renderDetail();$(".career-interview-focus").scrollIntoView({block:"center",behavior:"smooth"});throw new Error("这份材料还没有可练题组，请先准备问题，再把讲述稿用作回答草稿。");}if(row&&source){draft.source_step_id=source.step_id;draft.question_index=String(index);delete draft.next_source_step_id;draft.interview_answers={...draft.interview_answers,[source.step_id+":"+index]:row.text};career.drafts.set(career.id,draft);career.tab="interview";renderDetail();$("#career-answer").scrollIntoView({block:"center",behavior:"smooth"});$("#career-answer").focus();notify("已填入回答草稿，核对与所选问题的关系后再提交。");}}
       if(target.dataset.careerControl)await controlResearch(target.dataset.careerControl,target.dataset.careerStep);
       if(target.dataset.careerExportExperiment)await exportExperimentArchive(target.dataset.careerExportExperiment,target);
       if(target.dataset.careerExperimentEdit)editExperimentRecord(...target.dataset.careerExperimentEdit.split(":"));
