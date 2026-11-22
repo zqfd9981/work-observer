@@ -2963,6 +2963,13 @@ class CareerService:
                     if not task or not _has_experiment_observations(task):
                         raise ValueError("请先为这个工作样本记录实际观察，再围绕它面试。")
                     continued_requirement = task.get("target_requirement") or continued_requirement
+                    if (task.get("local_experiment") == "context_merge" and continued_requirement
+                            and not selected_job_ids):
+                        selected_job_ids = None
+                        assessment_job_ids = list(dict.fromkeys(
+                            row["job_id"] for row in continued_requirement["evidence"]
+                            if row.get("job_id") in project["job_ids"]
+                        ))
                     if not task.get("outcome", "").strip():
                         question += ("所选样本尚未整理整体观察；按comparison_rows逐组提问，"
                                      "未记录observed的条件保留未知，不将局部观察当作全部完成。")
@@ -3505,6 +3512,15 @@ class CareerService:
                     previous_result = previous_run.get("result") or {}
                     preferred.extend(row.get("public_document_id")
                                      for row in previous_result.get("evidence", []))
+            context_task = next((row for row in project["career"]["tasks"]
+                                 if row["id"] == task_id
+                                 and row.get("local_experiment") == "context_merge"), None)
+            if context_task:
+                requirement_documents = list(dict.fromkeys(
+                    key for key in [context_task.get("artifact_document_id"),
+                                    *material_ids, material_id]
+                    if key in project["public_document_ids"]
+                ))
             documents, omitted = research_documents(
                 project, kind, preferred, repository=self.repository,
                 query="\n".join(value for value in topic if value) or project["goal"],
@@ -4067,6 +4083,56 @@ class CareerService:
             artifact_text=result["artifact_text"], comparison_conditions=result["conditions"],
             comparison_rows=result["comparison_rows"],
             design_change=change_note,
+        )
+        return {"experiment": result, "career": saved, "task_id": task_id}
+
+    def context_experiment(self, identity, *, cases, data_kind="synthetic", question_id=None,
+                           requirement_key="", hypothesis="", save=False):
+        from work_observer.research.context_experiment import run_context_experiment
+
+        project = self._project(identity)
+        inquiry = next((row for row in project["career"].get("questions", [])
+                        if row["id"] == question_id), None)
+        if question_id and not inquiry:
+            raise ValueError("请选择本目标中想继续验证的调查问题。")
+        target = self._experiment_requirement(identity, requirement_key) if requirement_key else (
+            deepcopy((inquiry or {}).get("target_requirement"))
+        )
+        if (requirement_key and (inquiry or {}).get("target_requirement")
+                and inquiry["target_requirement"]["key"] != requirement_key):
+            raise ValueError("请沿用这条调查选定的岗位工作，另一项工作可另开练习。")
+        result = run_context_experiment(cases, data_kind)
+        result["hypothesis"] = hypothesis
+        result["artifact_text"] += (
+            "\n\n运行前的预期（用户记录，不是计算结果）：\n" + (hypothesis or "未填写")
+        )
+        if target:
+            result["target_requirement"] = target
+            result["artifact_text"] += (
+                "\n\n关联的岗位工作（历史选择，仍需回读JD核对，不是本机计算的结论）：\n"
+                + json.dumps(target, ensure_ascii=False, indent=2)
+            )
+        if not save:
+            return {"experiment": result}
+        if any(step["state"] == "running" for step in project["steps"]):
+            raise ValueError("研究结束后可以保存，仍可先预览本地计算。")
+        if len(result["artifact_text"]) > 99_000:
+            raise ValueError("这组完整运行记录过长，请减少样本或内容字数后再保存。")
+        saved = self.add_experiment(identity, {
+            "title": "本地上下文合并：重复与冲突", "question_id": question_id,
+            "task_or_ability": "比较直接拼接与按标识合并，核对重复副本、冲突和缺少的一端。",
+            "deliverable": "两端构造快照、逐条来源、合并结果与未解决冲突。",
+            "completion_check": "逐条核对副本与冲突，保留删除、时序和真实同步仍未知的条件。",
+            "hypothesis": hypothesis, "local_experiment": "context_merge",
+            "purpose": "understanding_check", "previous_task_id": None, "design_change": "",
+            **({"target_requirement": target} if target else {}),
+        })
+        task_id = saved["tasks"][-1]["id"]
+        saved = self.update_task(
+            identity, task_id, state="done", outcome=result["outcome"], artifact="",
+            artifact_title="本地上下文合并 · 输入、来源与冲突",
+            artifact_text=result["artifact_text"],
+            comparison_conditions=result["conditions"], comparison_rows=result["comparison_rows"],
         )
         return {"experiment": result, "career": saved, "task_id": task_id}
 

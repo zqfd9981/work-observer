@@ -8,6 +8,7 @@ from starlette.routing import Route
 
 from work_observer.research.career import CareerService
 from work_observer.research.cohort_experiment import CohortCasesInput
+from work_observer.research.context_experiment import ContextCasesInput
 from work_observer.research.retrieval_experiment import RetrievalComparisonInput
 from work_observer.research.retrieval_suite import RetrievalSuiteInput
 from work_observer.research.retry_experiment import RetryCasesInput
@@ -374,6 +375,13 @@ class ExperimentInput(BaseModel):
     comparison_rows: list[ExperimentComparisonRow] = Field(default_factory=list, max_length=8)
 
 
+class ContextExperimentInput(ContextCasesInput):
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    requirement_key: str = Field(default="", max_length=100)
+    hypothesis: str = Field(default="", max_length=1500)
+    save: bool = False
+
+
 class RetryExperimentInput(RetryCasesInput):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     hypothesis: str = Field(default="", max_length=1500)
@@ -712,6 +720,13 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             201 if data.save else 200,
         )
 
+    async def context_experiment(request):
+        data = ContextExperimentInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().context_experiment(request.path_params["id"], **data.model_dump()),
+            201 if data.save else 200,
+        )
+
     async def retry_experiment(request):
         data = RetryExperimentInput.model_validate(await read_json(request))
         return change(
@@ -785,6 +800,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/steps/{step_id}", end_step, methods=["DELETE"]),
         Route("/api/career/{id}/tasks", import_tasks, methods=["POST"]),
         Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
+        Route("/api/career/{id}/experiments/context", context_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retry", retry_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retrieval", retrieval_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retrieval-suite", retrieval_suite, methods=["POST"]),
