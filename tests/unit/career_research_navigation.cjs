@@ -31,5 +31,6 @@ function reset({route=origin,id=goal,run=async()=>({state:'running'}),open=async
  assert.equal(ctx.location.hash,otherRoute);assert.equal(events.filter(e=>e[0]==='focus').length,0);
  reset({route:reading});await api.run(goal,step,reading);
  assert.equal(events.filter(e=>e[0]==='history').length,0);assert.equal(events.filter(e=>e[0]==='run').length,1);assert.equal(events.filter(e=>e[0]==='focus').length,1);
- console.log('Research starts and resumes on its reading page, exposes queued state after a start failure, sends only one run request, and preserves navigation made before or during the response without adding duplicate history entries.');
+ const batchRoot='d'.repeat(32),batchRoute='#career/'+goal+'/batch/'+batchRoot;reset();await api.run(goal,step,origin,batchRoot);assert.equal(ctx.location.hash,batchRoute);assert.deepEqual(events.filter(e=>e[0]==='run'),[['run','projects/'+goal+'/run','POST',step]]);assert.deepEqual(events.filter(e=>e[0]==='focus'),[['focus','batch',batchRoot]]);reset({route:batchRoute});await api.run(goal,step,batchRoute,batchRoot);assert.equal(events.filter(e=>e[0]==='history').length,0);assert.equal(ctx.location.hash,batchRoute);
+ console.log('Research starts and resumes on its own reader or canonical batch, sends one run request, preserves navigation changes, and resumes a child round without replacing the batch URL or adding duplicate history.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
