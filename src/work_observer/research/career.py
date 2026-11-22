@@ -2090,6 +2090,7 @@ class CareerService:
         task_id=None,
         source_step_id=None,
         claim_review_index=None,
+        feedback_gap_index=None,
         experiment_ids=None,
         question="",
         section="requirements",
@@ -2123,6 +2124,8 @@ class CareerService:
             raise ValueError("直接回答请只选择一个调查问题；其他练习可另行开始。")
         if claim_review_index is not None and (kind != "ask" or not source_step_id):
             raise ValueError("请先选定一份旧研究和具体判断，再发起这项查证。")
+        if feedback_gap_index is not None and (kind != "plan" or not source_step_id):
+            raise ValueError("请从一次完整回答的反馈选择待验证的问题，再设计练习。")
         material_focus_supplied = material_id is not None or material_ids is not None
         material_ids = list(material_ids or [])
         if material_ids and (kind not in {"ask", "map", "plan"} or material_id):
@@ -2139,6 +2142,7 @@ class CareerService:
             source_job_ids = []
             assessment_job_ids, interview_task_origin = None, None
             retrieval_review, retrieval_job_ids, retrieval_document_ids = None, None, None
+            feedback_origin, feedback_documents = None, None
             synthesis_sources = []
             if kind == "ask" and source_step_id:
                 sources = [
@@ -2481,18 +2485,25 @@ class CareerService:
                     question_id = question_id or task.get("question_id")
                 answer_document_id = previous.get("answer_document_id")
                 answer_record = previous
-                feedback = "\n".join(
-                    [claim["text"] for claim in previous["result"]["claims"]]
-                    + previous["result"].get("gaps", [])
-                )[:1000]
+                gaps = previous["result"].get("gaps", [])
+                if feedback_gap_index is not None and feedback_gap_index >= len(gaps):
+                    raise ValueError("这份反馈中没有所选的未知项，请重新选择。")
+                feedback_origin = {
+                    "step_id": previous["step_id"], "question": previous["interview_question"],
+                    "project_id": identity, "project_title": project["title"],
+                    "answer_document_id": previous.get("answer_document_id"),
+                    "gap_index": feedback_gap_index,
+                    "gap": gaps[feedback_gap_index] if feedback_gap_index is not None else None,
+                    "story_id": previous.get("story_id"),
+                    "notice": "旧反馈与未知是验证起点，不是已证实的事实；须回读回答和工作原文。",
+                }
                 question = (
                     QUESTIONS["plan"] + "\n本次只围绕这次模拟面试回答的证据缺口，设计一个最小练习。"
                     "不要把表达不清直接当作能力不会，先区分需要重新表达与确实缺少实际观察。"
-                    "本次面试问题："
-                    + previous["interview_question"][:700]
-                    + "\n上一轮研究反馈（待结合原文核对）："
-                    + feedback
-                    + "\n按selected_answer读取用户回答原文，不照抄旧反馈作为事实。"
+                    "完整原题及明确点选的未知见career_evidence.feedback_origin。"
+                    "按其step_id用read_research_history回查完整旧反馈，不以截短预览替代末尾限制。"
+                    "点选了gap时只针对该项设计一项验证；未点选则从完整反馈中确定一个可检验问题。"
+                    "按selected_answer读取用户回答原文，不照抄旧反馈作为事实。"
                     "最多给application_plan中的一个动作，检查方式应有机会发现失败或反例，"
                     "而不是保证一次练习就能胜任岗位。"
                 )
@@ -2971,9 +2982,54 @@ class CareerService:
                     "不能从业务/技术说明补造具体招聘资格或个人职责，也不能推定用户经历与能力。"
                     "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
                 )
+            feedback_task = next((row for row in project["career"]["tasks"]
+                                  if row["id"] == task_id), {})
+            if feedback_origin is None:
+                feedback_origin = deepcopy(feedback_task.get("feedback_origin"))
+            if (feedback_origin and inherit_focus
+                    and feedback_origin.get("project_id", identity) == identity):
+                scope_step_id = (
+                    feedback_origin["step_id"] if kind == "plan" and source_step_id
+                    else feedback_task.get("source_step_id")
+                )
+                scope_step = next((row for row in project["steps"]
+                                   if row["id"] == scope_step_id), {})
+                scope_run = self.store.get(scope_step["run_id"]) if scope_step.get("run_id") else {}
+                scope = ((scope_run or {}).get("result") or {}).get("scope") or {}
+                if selected_job_ids is None and assessment_job_ids is None:
+                    assessment_job_ids = [key for key in scope_step.get("job_ids", [])
+                                          if key in project["job_ids"]]
+                source_documents = scope.get("archived_public_ids", scope_step.get(
+                    "public_document_ids", [],
+                ))
+                allowed_documents = set(project["public_document_ids"]) | {
+                    feedback_origin.get("answer_document_id"),
+                }
+                feedback_documents = list(dict.fromkeys(key for key in [
+                    *source_documents, feedback_origin.get("answer_document_id"),
+                    feedback_task.get("artifact_document_id")
+                    if feedback_task.get("feedback_origin") else None,
+                    *material_ids, material_id, focused_document_id,
+                ] if key and key in allowed_documents))
+                retrieval_review = deepcopy(scope_step.get("career_retrieval_review"))
+            if feedback_origin and not (kind == "plan" and source_step_id):
+                if feedback_origin.get("project_id", identity) != identity:
+                    question += (
+                        "feedback_origin属于复用记录的原目标，保留原题与未知；"
+                        "不能按本目标read_research_history读取该旧step_id，也不自动加入旧目标资料。"
+                        "本轮依据fixed_scope中的当前岗位和已选练习，检查适用条件；"
+                        "无法重核旧反馈时明确未知，不把旧观察当作新岗位的能力证明。"
+                    )
+                else:
+                    question += (
+                        "这项练习承接的原题与反馈定位见career_evidence.feedback_origin；"
+                        "若有gap，保留这项明确点选的未知，按step_id读取完整旧反馈，再对照实际观察。"
+                        "原反馈不是标准答案，不把尚未观察的条件写成完成，也不自动修改用户认识。"
+                    )
             if kind in {"reflect", "ask", "challenge", "plan", "interview", "teachback", "pitch",
                         "answer", "followup"} and (
-                task_id or inherit_focus and (insight_id or question_id or story_id)
+                task_id or retrieval_review is not None
+                or inherit_focus and (insight_id or question_id or story_id)
             ):
                 from work_observer.research.retrieval_experiment import (
                     is_retrieval_task,
@@ -2991,7 +3047,9 @@ class CareerService:
                 focused_story = next((row for row in project["career"]["stories"]
                                       if row["id"] == story_id), {})
                 story_source = focused_story.get("retrieval_source") if inherit_focus else None
-                if story_source and not task_id:
+                if retrieval_review is not None:
+                    local_task = {}
+                elif story_source and not task_id:
                     retrieval_review = deepcopy(story_source)
                     if focused_story.get("reused_from"):
                         retrieval_review["source_scope_only"] = True
@@ -3000,21 +3058,20 @@ class CareerService:
                             "本轮目标岗位以fixed_scope为准，读取当前目标JD核对迁移条件；"
                             "旧岗位要求与旧实验结果不能替代新岗位依据，不自动加入其他目标原文。"
                         )
+                    local_task = {}
+                else:
+                    local_task = next((row for row in project["career"]["tasks"]
+                                       if row["id"] == retrieval_task_id), {})
+                if retrieval_review is None and local_task and is_retrieval_task(local_task):
+                    retrieval_review = review_context(self.repository, project, local_task)
+                if retrieval_review is not None:
                     if retrieval_review.get("artifact_document_id") not in project[
                         "public_document_ids"
                     ]:
                         retrieval_review.update(
                             available=False,
-                            unavailable_reason="这份经历对应的运行记录已不在当前目标中；"
-                            "本轮只能回查经历与仍可读原文，不自动恢复旧记录。",
+                            unavailable_reason="原运行记录不在当前目标，不能以后来记录替代。",
                         )
-                    local_task = {}
-                else:
-                    local_task = next((row for row in project["career"]["tasks"]
-                                       if row["id"] == retrieval_task_id), {})
-                if local_task and is_retrieval_task(local_task):
-                    retrieval_review = review_context(self.repository, project, local_task)
-                if retrieval_review is not None:
                     if inherit_focus:
                         explicit_scope = selected_job_ids if selected_job_ids is not None else (
                             assessment_job_ids
@@ -3198,6 +3255,9 @@ class CareerService:
             if retrieval_document_ids is not None:
                 documents = retrieval_document_ids
                 omitted = len(set(project["public_document_ids"]) - set(documents))
+            if feedback_documents is not None:
+                documents = feedback_documents
+                omitted = len(set(project["public_document_ids"]) - set(documents))
             if not project["job_ids"] and not documents:
                 raise ValueError("请先导入一份可用于本次研究的工作资料，或选择目标岗位JD。")
             project = self.projects.add(
@@ -3218,8 +3278,12 @@ class CareerService:
                 project["steps"][-1]["job_ids"] = selected_job_ids[:]
             if retrieval_review is not None:
                 project["steps"][-1]["career_retrieval_review"] = retrieval_review
+            if feedback_origin:
+                project["steps"][-1]["career_feedback_origin"] = feedback_origin
             if retrieval_document_ids is not None:
                 project["steps"][-1]["career_source_document_ids"] = retrieval_document_ids[:]
+            if feedback_documents is not None:
+                project["steps"][-1]["career_source_document_ids"] = feedback_documents[:]
             project["steps"][-1]["career_omitted_documents"] = omitted
             if adaptive and not offline:
                 project["steps"][-1]["career_adaptive"] = True
@@ -3281,6 +3345,7 @@ class CareerService:
                     "insight_ids": insight_ids,
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
+                    **({"feedback_origin": feedback_origin} if feedback_origin else {}),
                     "comparison_step_ids": comparison_step_ids,
                     "passage_ids": passage_ids,
                     "synthesis_sources": synthesis_sources,
@@ -3440,6 +3505,8 @@ class CareerService:
                         "question_id": source.get("question_id"),
                         "previous_task_id": source.get("task_id"),
                         "source_step_id": step_id,
+                        **({"feedback_origin": deepcopy(source["feedback_origin"])}
+                           if source.get("feedback_origin") else {}),
                         **({"source_task_index": source_task_indices[0]}
                            if len(source_task_indices) == 1 else {}),
                         **({"target_requirement": step["career_requirement"]}

@@ -155,6 +155,14 @@ def test_story_questions_answer_and_followup_keep_the_saved_retrieval_source(tmp
                            answer="我只做了本地词面查询对照，仍有漏回，未验证语义效果。")
         assert feedback["job_ids"] == jobs[:1]
         answered = run(feedback)
+        gap_index = answered["result"]["gaps"].index(
+            "如何解释查询变化与漏回，哪些观察仍不能证明语义效果或岗位胜任？",
+        )
+        gap_plan = prepare("plan", source_step_id=answered["step_id"], feedback_gap_index=gap_index)
+        assert gap_plan["job_ids"] == jobs[:1]
+        assert gap_plan["career_retrieval_review"] == snapshot
+        assert gap_plan["career_feedback_origin"]["gap_index"] == gap_index
+        assert client.delete(base + "/steps/" + gap_plan["id"], headers=auth).status_code == 200
         followup = prepare("followup", source_step_id=answered["step_id"])
         assert followup["job_ids"] == jobs[:1]
         run(followup)

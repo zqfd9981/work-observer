@@ -94,9 +94,11 @@ def work_relation_record(owner, study, result, index, current):
 
 def experiment_answer_origin(career, task):
     source = next((row for row in career.get("runs", [])
-                   if row["step_id"] == task.get("source_step_id")
-                   and row["kind"] == "answer"), None)
-    if not source:
+                   if row["step_id"] == task.get("source_step_id")), None)
+    if source and source["kind"] == "plan":
+        source = next((row for row in career.get("runs", [])
+                       if row["step_id"] == source.get("source_step_id")), None)
+    if not source or source["kind"] != "answer":
         return None
     return {
         "step_id": source["step_id"], "original_question": source.get("interview_question"),
@@ -402,6 +404,7 @@ class LearningNotebook:
             ) + "\n" + (original_answer.get("original_question") or "")
                 + "\n" + (original_answer.get("user_answer") or "")
                 + "\n" + original_claim.get("claim", {}).get("text", "")
+                + "\n" + ((row.get("feedback_origin") or {}).get("gap") or "")
                 + "\n" + json.dumps(original_relation, ensure_ascii=False))
             hits = [term for term in terms if match_text(term) in text]
             if hits or not terms:
@@ -551,6 +554,7 @@ class LearningNotebook:
                 "source_step_id": row.get("source_step_id"),
                 "target_requirement": row.get("target_requirement"),
                 "answer_to_verify": experiment_answer_origin(career, row),
+                "feedback_to_verify": deepcopy(row.get("feedback_origin")),
                 "note_to_verify": deepcopy(row.get("retrieval_note_origin")),
                 "claim_to_verify": experiment_claim_origin(project, row, self.store),
                 "relation_to_verify": experiment_relation_origin(project, row, self.store),
@@ -727,6 +731,15 @@ class LearningNotebook:
         } for row in notes_then if row}.values())
         if learning.get("retrieval_review"):
             record["retrieval_review_then"] = deepcopy(learning["retrieval_review"])
+        if learning.get("feedback_origin"):
+            record["feedback_origin"] = deepcopy(learning["feedback_origin"])
+        if result.get("application_plan"):
+            plan = deepcopy(result["application_plan"])
+            for action in plan["actions"]:
+                action["source_references_to_reread"] = [references[key]
+                                                        for key in action.pop("evidence_ids", [])
+                                                        if key in references]
+            record["application_plan_then"] = plan
         if calculations := calculation_records(result):
             record["local_calculations"] = calculations
             record["local_calculation_notice"] = CALCULATION_NOTICE
@@ -752,6 +765,8 @@ class LearningNotebook:
             "user_reported_answer与learning_notes_then保留当时原回答与明确带入的个人认识，"
             "仍是自述和待检验理解；不以现在编辑的认识替换。retrieval_review_then只是当时"
             "带入的运行线索，未在本轮重跑，不能作为新的原文证据。"
+            "application_plan_then是当时的建议与尚未执行的预期，引用改为原文定位；"
+            "feedback_origin保留它明确针对的反馈与未知，不表示该未知已经解决。"
             "计划不等于实际结果，旧研究不能证明当前事实或个人能力，不修改原记录。",
         }
 

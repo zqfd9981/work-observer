@@ -1550,6 +1550,7 @@ class ProjectService:
                     "task_to_verify": record_task_context(record, row, self.store)
                     if full else None,
                     "answer_to_verify": experiment_answer_origin(career, row) if full else None,
+                    "feedback_to_verify": deepcopy(row.get("feedback_origin")) if full else None,
                     "note_to_verify": deepcopy(row.get("retrieval_note_origin")) if full else None,
                     "relation_to_verify": experiment_relation_origin(record, row, self.store)
                     if full else None,
@@ -1986,6 +1987,7 @@ class ProjectService:
                 }
                 if step.get("career_answer_document_id")
                 else None,
+                "feedback_origin": deepcopy(step.get("career_feedback_origin")),
                 "omitted_documents": step.get("career_omitted_documents", 0),
                 "document_selection_notice": "omitted_documents是未放入开头优先选择的资料数量，"
                 "不表示资料不存在、无关或不可读取。可读范围见fixed_scope.archived_public_ids，"
