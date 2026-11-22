@@ -1877,6 +1877,7 @@ class CareerService:
         question_id=None,
         requirement_key="",
         comparison_step_ids=None,
+        passage_ids=None,
         synthesis_question_ids=None,
         selected_job_ids=None,
         inherit_focus=True,
@@ -1952,6 +1953,8 @@ class CareerService:
                         )
                     if question_id == source.get("question_id") and not comparison_step_ids:
                         comparison_step_ids = source.get("comparison_step_ids", [])
+                    if question_id == source.get("question_id") and passage_ids is None:
+                        passage_ids = source.get("passage_ids", [])
             insight_ids = list(insight_ids or [])
             selected_insights = [
                 row for key in insight_ids for row in project["career"].get("insights", [])
@@ -2099,6 +2102,14 @@ class CareerService:
                         raise ValueError("请选择这个调查问题关联的实验，或取消实验选择。")
             if kind == "teachback" and (not (question_id or insight_id) or story_id or task_id):
                 raise ValueError("请选择一条已保存的认识或调查问题做理解自测，不绑定经历或样本。")
+            passage_ids = list(passage_ids or [])
+            if passage_ids and (kind != "ask" or not question_id
+                                or not 2 <= len(passage_ids) <= 4
+                                or len(set(passage_ids)) != len(passage_ids)
+                                or not set(passage_ids) <= {
+                                    row["id"] for row in saved_question.get("evidence_passages", [])
+                                }):
+                raise ValueError("请选择同一调查问题中仍保留的2至4段不同摘录。")
             if autonomous and (kind != "ask" or not question_id or offline):
                 raise ValueError("请选一个已保存的问题，并取消只整理原文，再开始连续查证。")
             comparison_step_ids = comparison_step_ids or []
@@ -2519,6 +2530,16 @@ class CareerService:
                     "及用户结论都不是新证据；保留它当时的岗位范围，不能把局部观察外推到整个目标。"
                     "本轮形成复核建议，不自动更新原问题的结论或状态。"
                 )
+                if passage_ids:
+                    question += (
+                        "本次明确对照selected_inquiry.selected_passages中的2至4段摘录及其完整标注。"
+                        "分别回读对应的同一份归档原文和上下文；摘录、用户的支持或挑战标注及"
+                        "target_view都不是本轮独立证据。先核对主体、业务对象、时间与适用条件"
+                        "是否相同，再解释是实际冲突、条件不同、补充信息还是仍无法判断。"
+                        "同一归档的多段摘录不算多份独立来源，不按标注条数选赢家。"
+                        "材料已移出本轮范围或原文不可读时明确无法重核，不自动恢复。"
+                        "给出能区分解释的下一项证据，不自动改写原问题、结论或摘录标注。"
+                    )
                 if saved_question.get("source_passage"):
                     question += (
                         "selected_inquiry.source_passage是问题起点的原文摘录与位置，"
@@ -2838,6 +2859,7 @@ class CareerService:
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
                     "comparison_step_ids": comparison_step_ids,
+                    "passage_ids": passage_ids,
                     "synthesis_sources": synthesis_sources,
                     "selected_job_ids": selected_job_ids[:],
                     "autonomous_rounds": 3 if autonomous else 0,
@@ -2864,6 +2886,8 @@ class CareerService:
                 project["steps"][-1]["career_question_id"] = question_id
             if comparison_step_ids:
                 project["steps"][-1]["career_comparison_steps"] = comparison_step_ids
+            if passage_ids:
+                project["steps"][-1]["career_passage_ids"] = passage_ids
             if synthesis_sources:
                 project["steps"][-1]["career_synthesis"] = synthesis_sources
             if autonomous:

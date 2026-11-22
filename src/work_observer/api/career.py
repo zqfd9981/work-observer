@@ -276,6 +276,9 @@ class CareerResearchInput(BaseModel):
     comparison_step_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] = Field(
         default_factory=list, max_length=2
     )
+    passage_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
+        default=None, max_length=4
+    )
     synthesis_question_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
         default=None, min_length=2, max_length=4
     )

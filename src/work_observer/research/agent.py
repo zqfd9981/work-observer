@@ -1736,6 +1736,12 @@ async def _research(
                                      "hypothesis_a", "hypothesis_b", "source_step_id",
                                      "selected_job_ids", "material_ids",
                                  )} if personal.get("selected_inquiry") else None,
+            "passage_comparison": deepcopy({
+                "question_id": personal["selected_inquiry"]["id"],
+                "passage_ids": personal["selected_inquiry"]["selected_passage_ids"],
+                "passages": personal["selected_inquiry"]["selected_passages"],
+                "missing_ids": personal["selected_inquiry"]["missing_selected_passage_ids"],
+            }) if (personal.get("selected_inquiry") or {}).get("selected_passage_ids") else None,
             "relation_comparison": ((personal.get("selected_inquiry") or {}).get(
                 "carried_understanding"
             ) or {}).get("work_relations", []),

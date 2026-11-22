@@ -1568,6 +1568,18 @@ class ProjectService:
                 None,
             )
             if selected_inquiry:
+                selected_ids = step.get("career_passage_ids", [])
+                if selected_ids:
+                    passages = {row["id"]: row for row in
+                                selected_inquiry.get("evidence_passages", [])}
+                    selected = [deepcopy(passages[key]) for key in selected_ids if key in passages]
+                    selected_inquiry.update(
+                        selected_passage_ids=selected_ids[:], selected_passages=selected,
+                        missing_selected_passage_ids=[key for key in selected_ids
+                                                      if key not in passages],
+                        other_evidence_passage_count=len(passages) - len(selected),
+                        evidence_passages=selected,
+                    )
                 origin_note = next(
                     (row for row in career.get("insights", [])
                      if row["id"] == selected_inquiry.get("source_insight_id")), None
