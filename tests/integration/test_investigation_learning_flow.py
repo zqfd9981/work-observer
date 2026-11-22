@@ -1,10 +1,78 @@
 """One compound question can lead to a user-authored note and an unrun test plan."""
 
+import json
+from copy import deepcopy
+
 from starlette.testclient import TestClient
 from test_adaptive_investigation import ScriptedPlanner, brief, prepare, settled, task, workspace
 
 from work_observer.research.learning import LearningNotebook, learning_record
 from work_observer.research.store import ResearchStore
+
+
+def test_two_practice_requests_keep_their_own_actions_citations_and_saved_origins(tmp_path):
+    class TwoPracticePlanner(ScriptedPlanner):
+        async def turn(self, history):
+            response, raw = await super().turn(history)
+            call = response[0]
+            if call["name"] == "finish_research":
+                arguments = json.loads(call["arguments"])
+                plan = arguments["application_plan"]
+                evidence = next(json.loads(row["output"])["evidence"] for row in history
+                                if row.get("type") == "function_call_output"
+                                and json.loads(row["output"]).get("engine") == "langgraph")
+                by_job = {row["job_id"]: row["citation_key"] for row in evidence}
+                first = deepcopy(plan["actions"][0])
+                second = deepcopy(first)
+                # Deliberately reverse action order to prove bindings do not rely on position.
+                first.update(title="合成重复请求对照", evidence_ids=[by_job[self.jobs[1]]])
+                second.update(title="合成失败输入对照", evidence_ids=[by_job[self.jobs[0]]])
+                plan["actions"] = [first, second]
+                for i, outcome in enumerate(arguments["task_outcomes"]):
+                    outcome.update(action_indices=[1 - i], claim_indices=[])
+                call["arguments"] = json.dumps(arguments)
+            return response, raw
+
+    model = TwoPracticePlanner(brief([
+        task("practice", question="如何用构造输入检查失败处理？"),
+        task("practice", question="如何用重复请求检查幂等性？"),
+    ]), produce_plan=True)
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, jobs = prepare(client, "分别为这两份JD设计一个最小验证")
+        model.jobs = jobs
+        for i, item in enumerate(model.plan["tasks"]):
+            item["source_job_ids"] = [jobs[i]]
+        response = client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        assert response.status_code == 202, response.text
+        data = settled(client, base)
+        result = data["results"][0]["result"]
+        assert result["status"] == "completed", result
+        assert [row["action_indices"] for row in result["investigation"]["outcomes"]] == [[1], [0]]
+        assert not data["tasks"]  # Suggestions have not been selected or executed.
+        saved = client.post(base + "/tasks", headers=auth, json={
+            "step_id": step, "action_indices": [0, 1],
+        })
+        assert saved.status_code == 200, saved.text
+        tasks = saved.json()["tasks"]
+        assert [(row["title"], row["source_task_index"]) for row in tasks] == [
+            ("合成重复请求对照", 1), ("合成失败输入对照", 0),
+        ]
+        assert all(row["state"] == "planned" and not row["outcome"] for row in tasks)
+        assert all(not case["observed"] for row in tasks for case in row["comparison_rows"])
+        record = client.get("/api/projects/" + goal).json()
+        store = ResearchStore(tmp_path / "checkpoints.db",
+                              namespace=str((tmp_path / "adaptive.db").resolve()))
+        try:
+            read = LearningNotebook(lambda: record, store).read_experiments(
+                [row["id"] for row in tasks],
+            )["experiments"]
+            for experiment, source_index in zip(read, [1, 0], strict=True):
+                context = experiment["task_to_verify"]
+                assert context["task_index"] == source_index
+                assert len(context["suggested_actions"]) == 1
+                assert {row["job_id"] for row in context["evidence"]} == {jobs[source_index]}
+        finally:
+            store.close()
 
 
 def test_selected_task_note_plan_observation_and_next_test_keep_their_source(tmp_path):

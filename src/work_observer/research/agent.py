@@ -1648,6 +1648,12 @@ async def _research(
             and application_background.get("purpose") == "understanding_check"
         ):
             system += applications.LEARNING_POLICY
+            if adaptive:
+                system += (
+                    "复合调查中，上述一个最小验证动作按每个明确的practice请求分别计算，"
+                    "总计仍最多3项；用task_outcomes.action_indices逐项关联，"
+                    "不合并不同问题，不据此生成个人能力判断或学习路线。"
+                )
     if archive_enabled:
         system += archive_history.policy(archive_contract_version)
     if archived_read_enabled:

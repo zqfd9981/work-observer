@@ -7,6 +7,19 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.text_match import match_text
 
 
+def task_action_indices(result, index):
+    """Locate this task's suggested actions, including the existing single-task shape."""
+    investigation = result.get("investigation") or {}
+    outcome = next((row for row in investigation.get("outcomes", [])
+                    if row["task_index"] == index), {})
+    actions = (result.get("application_plan") or {}).get("actions", [])
+    if "action_indices" in outcome:
+        return [i for i in outcome["action_indices"] if type(i) is int and 0 <= i < len(actions)]
+    practice = [i for i, task in enumerate(investigation.get("tasks", []))
+                if task["intent"] == "practice"]
+    return list(range(len(actions))) if practice == [index] else []
+
+
 def task_context(result, index):
     investigation = result.get("investigation") or {}
     tasks = investigation.get("tasks", [])
@@ -20,10 +33,8 @@ def task_context(result, index):
     selected = [{"claim_index": n, **deepcopy(claims[n])} for n in outcome["claim_indices"]
                 if 0 <= n < len(claims)]
     cited = {key for claim in selected for key in claim.get("evidence_ids", [])}
-    actions = (result.get("application_plan") or {}).get("actions", []) if (
-        tasks[index]["intent"] == "practice"
-        and sum(task["intent"] == "practice" for task in tasks) == 1
-    ) else []
+    actions = [(result.get("application_plan") or {})["actions"][i]
+               for i in task_action_indices(result, index)]
     cited.update(key for action in actions for key in action.get("evidence_ids", []))
     return {
         "task_index": index, "task": deepcopy(tasks[index]), "outcome": deepcopy(outcome),

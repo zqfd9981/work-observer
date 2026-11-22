@@ -19,7 +19,7 @@ from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.archived_sources import catalog as archive_catalog
-from work_observer.research.investigation_memory import task_context
+from work_observer.research.investigation_memory import task_action_indices, task_context
 from work_observer.research.learning import (
     calculation_records,
     experiment_relation_origin,
@@ -3293,9 +3293,9 @@ class CareerService:
                 key = f"{step['run_id']}:{index}"
                 if any(row["source_key"] == key for row in tasks):
                     continue
-                practice_indices = [n for n, task in enumerate(
+                source_task_indices = [n for n in range(len(
                     (result.get("investigation") or {}).get("tasks", []),
-                ) if task["intent"] == "practice"]
+                )) if index in task_action_indices(result, n)]
                 tasks.append(
                     {
                         "id": uuid4().hex,
@@ -3304,8 +3304,8 @@ class CareerService:
                         "question_id": source.get("question_id"),
                         "previous_task_id": source.get("task_id"),
                         "source_step_id": step_id,
-                        **({"source_task_index": practice_indices[0]}
-                           if len(practice_indices) == 1 else {}),
+                        **({"source_task_index": source_task_indices[0]}
+                           if len(source_task_indices) == 1 else {}),
                         **({"target_requirement": step["career_requirement"]}
                            if step.get("career_requirement") else {}),
                         "design_change": "",

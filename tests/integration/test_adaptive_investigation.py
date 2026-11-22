@@ -59,9 +59,12 @@ class ScriptedPlanner(ModelClient):
                          "task_outcomes": [{
                              "task_index": index,
                              "status": "partial" if task["retrieval_status"]
-                             != "candidates_need_reading" else "answered",
+                             != "candidates_need_reading" or (
+                                 task["intent"] == "practice" and not self.produce_plan
+                             ) else "answered",
                              "answer": "合成脚本回应该项问题，仍须核对实际资料与条件。",
                              "claim_indices": list(range(len(claims))),
+                             "action_indices": [],
                              "questions": ["接口开发时，你如何取舍测试范围并保留限制？"]
                              if task["intent"] == "interview" else [],
                          } for index, task in enumerate(latest["tasks"])]}
@@ -90,6 +93,10 @@ class ScriptedPlanner(ModelClient):
                             ],
                         }], "open_questions": ["个人环境与时间未提供。"],
                     }
+                    eligible = [i for i, item in enumerate(latest["tasks"])
+                                if item["intent"] in {"practice", "verify"}]
+                    if len(eligible) == 1:
+                        arguments["task_outcomes"][eligible[0]]["action_indices"] = [0]
             name = "finish_research"
             if self.omit_once:
                 arguments["task_outcomes"] = []
@@ -159,7 +166,7 @@ def test_followup_search_ranks_concrete_requirements_in_the_frozen_job_scope(tmp
                     "gaps": ["该合成资料没有披露能力的实际验收方式。"],
                     "task_outcomes": [{"task_index": 0, "status": "answered",
                                        "answer": "任职要求写明掌握端云同步记忆。",
-                                       "claim_indices": [0], "questions": []}],
+                                       "claim_indices": [0], "action_indices": [], "questions": []}],
                     "application_plan": None,
                 }
             call = {"type": "function_call", "name": name,

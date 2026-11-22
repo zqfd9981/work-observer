@@ -8,7 +8,7 @@ from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from work_observer.research.question_scope import ScopeConstraint, ScopeRelease, narrow
 from work_observer.retrieval.unified import UnifiedRetrieval
@@ -49,6 +49,7 @@ class TaskOutcome(BaseModel):
     status: Literal["answered", "partial", "needs_context"]
     answer: str = Field(min_length=1, max_length=1600)
     claim_indices: list[int] = Field(max_length=12)
+    action_indices: list[StrictInt] = Field(default_factory=list, max_length=3)
     questions: list[str] = Field(max_length=3)
 
 
@@ -60,6 +61,7 @@ def execution_tools(definitions):
         if definition["name"] == "finish_research":
             schema = definition["parameters"]
             outcome = TaskOutcome.model_json_schema()
+            outcome["required"] = list(outcome["properties"])
             schema.setdefault("$defs", {})["TaskOutcome"] = outcome
             schema["properties"]["task_outcomes"] = {
                 "type": "array", "minItems": 1, "maxItems": 3,
@@ -74,6 +76,14 @@ def outcomes(values, investigation, claims, evidence, *, application_plan=None):
     rows = [TaskOutcome.model_validate(value) for value in values]
     if sorted(row.task_index for row in rows) != list(range(len(investigation["tasks"]))):
         raise ValueError("请逐项回应当前调查任务，不遗漏或重复。")
+    actions = (application_plan or {}).get("actions", [])
+    eligible = [i for i, task in enumerate(investigation["tasks"])
+                if task["intent"] in {"practice", "verify"}]
+    assigned = []
+    if actions and len(eligible) == 1 and not any(row.action_indices for row in rows):
+        next(row for row in rows if row.task_index == eligible[0]).action_indices = list(
+            range(len(actions)),
+        )
     effective = investigation.get("effective_scope")
     if effective:
         references = [claim.evidence_ids for claim in claims]
@@ -92,6 +102,22 @@ def outcomes(values, investigation, claims, evidence, *, application_plan=None):
                for index in row.claim_indices):
             raise ValueError("任务须关联本次实际提交的判断序号（从0开始）。")
         intent = investigation["tasks"][row.task_index]["intent"]
+        if (any(not 0 <= index < len(actions) for index in row.action_indices)
+                or len(set(row.action_indices)) != len(row.action_indices)):
+            raise ValueError("练习须关联本次实际建议的action_indices，序号从0开始且不重复。")
+        if row.action_indices and row.task_index not in eligible:
+            raise ValueError("练习建议只关联设计验证或检验认识任务，不能挂到其他问题。")
+        if row.action_indices:
+            action_sources = {source_key(evidence[key]) for i in row.action_indices
+                              for key in actions[i]["evidence_ids"] if key in evidence}
+            required = set(investigation["tasks"][row.task_index].get("required_source_keys", []))
+            if not action_sources or required - action_sources:
+                raise ValueError("练习设计须保留本项指定来源的原文依据，不能改用其他岗位替代。")
+        assigned.extend(row.action_indices)
+        if intent == "practice" and row.status == "answered" and not row.action_indices:
+            raise ValueError(
+                "已回答的练习任务须关联可保存的验证设计；没有设计时保留部分回答并说明缺口。",
+            )
         if (row.status == "answered" and investigation["tasks"][row.task_index].get(
             "retrieval_status",
         ) in {"comparison_targets_needed", "scope_has_no_matching_jobs"}):
@@ -111,6 +137,8 @@ def outcomes(values, investigation, claims, evidence, *, application_plan=None):
             required = set(investigation["tasks"][row.task_index].get("required_source_keys", []))
             if required - sources:
                 raise ValueError("比较的每一侧都须有对应原文，其他岗位或背景资料不能替代缺失一侧。")
+    if sorted(assigned) != list(range(len(actions))):
+        raise ValueError("每项练习建议须且只能关联一个对应任务；不能用同一练习重复回答不同问题。")
     return [row.model_dump() for row in sorted(rows, key=lambda row: row.task_index)]
 
 
@@ -175,6 +203,10 @@ continued_discussion.investigation中的约束默认沿用；本次明确换城�
 没有个人背景时只设计理解验证，列出构造输入、待检验预期、产物、检查方式与未控制条件，
 不据此判断个人适配；有背景也不虚构经验。没有练习或验证意图时application_plan填null。
 finish_research用task_outcomes逐项回答当前任务，task_index和claim_indices均从0开始。
+action_indices填写本项对应application_plan.actions的序号，从0开始；没有建议填[]。
+每项建议只归属一个practice或verify任务，保留各自要检验的问题、条件和原文，不把不同工作线混成一次练习。
+多个明确的练习请求可分别给一个最小动作，总计最多3个；不生成个人学习路线，不虚构已执行结果。
+practice只有给出关联的可保存验证设计时才能标answered；资料不足或没有设计时标partial并说明缺口。
 answer给该项可阅读的解释、对比、验证设计或面试问题；事实关联本次claims，推断标明推断。
 questions只在interview任务填写最多3道完整面试题，其他任务填[]；题目会进入现有作答反馈流程。
 缺资料用partial或needs_context，不把候选命中当已回答。完全无证据可提交空claims并写明缺口。

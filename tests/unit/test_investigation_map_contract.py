@@ -36,7 +36,7 @@ def test_map_contract_keeps_existing_task_and_application_outputs_and_resolves_r
     sample = {
         "claims": [], "gaps": ["缺少原文。"], "application_plan": None, "work_map": None,
         "task_outcomes": [{"task_index": 0, "status": "partial", "answer": "需要回读资料。",
-                           "claim_indices": [], "questions": []}],
+                           "claim_indices": [], "action_indices": [], "questions": []}],
     }
     Draft202012Validator(finish).validate(sample)
     sample["claims"] = [{"category": category, "basis": "inference", "requirement": "unspecified",
