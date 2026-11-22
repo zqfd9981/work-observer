@@ -10,6 +10,85 @@ from work_observer.config import Settings
 from work_observer.storage.database import upgrade
 
 
+def test_user_can_design_a_requirement_sample_without_another_model_turn(tmp_path):
+    database = tmp_path / "manual-requirement.db"
+    upgrade(database)
+    model = CareerModel()
+    with TestClient(create_app(
+        Settings(database_path=database, raw_directory=tmp_path / "raw"),
+        model=model, reports_dir=tmp_path / "reports",
+    ), base_url="http://127.0.0.1") as client:
+        auth = {"X-WO-Token": re.search(
+            r'name="wo-token" content="([^"]+)"', client.get("/").text,
+        )[1]}
+
+        def save(path, values, method="post"):
+            response = getattr(client, method)(path, headers=auth, json=values)
+            assert response.status_code in {200, 201}, response.text
+            return response.json()
+
+        jobs = [save("/api/import", {
+            "title": f"合成手动样本岗位{i}", "company": "合成团队", "data_kind": "synthetic",
+            "description": "必须掌握Python接口开发与测试。负责失败样例验证。",
+        })["job_id"] for i in range(2)]
+        identity = save("/api/career", {
+            "title": "合成：自己设计定向工作样本", "goal": "先做可检查的交付", "job_ids": jobs,
+        })["id"]
+        base = "/api/career/" + identity
+        role = run_stage(client, identity, auth, "role")
+        requirement = role["requirements"][0]
+        key = requirement["key"]
+        with_gap = save(base + "/requirement-evidence", {
+            "requirement_key": key, "records": [], "relevance": "只有练习计划。",
+            "missing": "还缺相同请求的实际输入输出与异常观察。",
+        })
+        calls = len(model.contexts)
+        values = {
+            "requirement_key": key, "title": "合成手动接口检查样本",
+            "task_or_ability": "接口失败条件的检查", "hypothesis": "重复输入可能重复写入。",
+            "deliverable": "两组实际输入输出和检查记录", "completion_check": "逐项比较预期与观察",
+            "comparison_rows": [
+                {"condition": "单次请求", "input": "固定id一次", "expected": "一次写入"},
+                {"condition": "重复请求", "input": "相同id两次", "expected": "尚需实际观察"},
+            ],
+        }
+        saved = save(base + "/experiments", values)
+        task = saved["tasks"][-1]
+        target = task["target_requirement"]
+        assert len(model.contexts) == calls and saved["results"] == with_gap["results"]
+        assert target["key"] == key and target["evidence"] == requirement["evidence"]
+        assert target["missing"] == "还缺相同请求的实际输入输出与异常观察。"
+        assert task["origin"] == "user" and not task.get("source_step_id")
+        assert task["state"] == "planned" and not task["outcome"] and not task["artifact"]
+        assert all(not row["observed"] for row in task["comparison_rows"])
+        assert saved["requirements"][0]["proof"]["records"] == []
+        save(base + "/requirement-evidence", {
+            "requirement_key": key, "records": [], "missing": "后来改写的缺口，不能改写实验起点。",
+        })
+        observed = save(base + "/tasks/" + task["id"], {
+            "state": "done", "outcome": "合成负面观察：两次写入，原因仍需核实。",
+            "artifact_title": "合成接口输入输出",
+            "artifact_text": "相同id两次请求，观察到两次写入。",
+        }, "patch")
+        assert observed["tasks"][-1]["target_requirement"] == target
+        follow = save(base + "/experiments", {
+            "title": "合成后续边界检查", "task_or_ability": "只改变请求去重条件",
+            "deliverable": "对照记录", "completion_check": "同一输入分别观察",
+            "previous_task_id": task["id"], "design_change": "仅改变去重条件。",
+        })["tasks"][-1]
+        assert follow["target_requirement"] == target and not follow.get("source_step_id")
+        reflected = run_stage(client, identity, auth, "reflect", task_id=task["id"])
+        assert reflected["results"][0]["result"]["status"] == "completed"
+        selected = model.contexts[-1]["project_context"]["career_evidence"]["selected_requirement"]
+        assert selected == target
+        assert reflected["results"][0]["selected_job_ids"] == [target["evidence"][0]["job_id"]]
+        before_count = len(reflected["tasks"])
+        invalid = client.post(base + "/experiments", headers=auth,
+                              json={**values, "requirement_key": "missing"})
+        assert invalid.status_code == 422
+        assert len(client.get(base).json()["tasks"]) == before_count
+
+
 def test_requirement_experiment_keeps_selected_material_and_target_through_observation(tmp_path):
     database = tmp_path / "requirement-experiment.db"
     upgrade(database)

@@ -349,3 +349,5 @@
 .career-comparison-study{min-width:0}.career-comparison-study>.career-inquiry-start,.career-source-inquiry{padding:14px;background:var(--green-soft);border-radius:9px;margin:0 0 14px}.career-comparison-study .career-inquiry-start p,.career-source-inquiry p{white-space:pre-wrap;overflow-wrap:anywhere}
 
 .career-question-conversations{padding:18px;border:1px solid var(--line);border-radius:10px;margin:18px 0;background:var(--green-soft)}.career-conversation-group{margin:18px 0}.career-conversation-group>article,.career-checklist-replies>section{padding:16px;background:white;border:1px solid var(--line);border-radius:8px;margin:12px 0;min-width:0}.career-conversation-group p,.career-conversation-group blockquote,.career-checklist-replies p,.career-checklist-replies blockquote{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.career-manual-requirement{padding:18px;border:1px solid var(--line);border-radius:9px;background:var(--green-soft);margin:14px 0}.career-manual-requirement p,.career-manual-requirement blockquote{white-space:pre-wrap;overflow-wrap:anywhere}

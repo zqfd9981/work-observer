@@ -3209,6 +3209,21 @@ class CareerService:
     def add_experiment(self, identity, data):
         with self.store.lock, self.store.db:
             project = self._project(identity)
+            if key := data.get("requirement_key"):
+                if data.get("source_step_id") or data.get("previous_task_id"):
+                    raise ValueError("请从当前岗位要求设计新练习，或保留原实验的设计来源。")
+                requirement = next((row for row in self.get(identity)["requirements"]
+                                    if row["key"] == key), None)
+                if not requirement:
+                    raise ValueError("这项岗位分析已不在当前列表，请重新选择要准备的工作。")
+                data = {**data, "target_requirement": {
+                    **{field: requirement[field] for field in (
+                        "key", "text", "category", "requirement", "evidence", "basis",
+                    )},
+                    **requirement["proof"],
+                    "notice": "用户从岗位分析中选定的练习方向；"
+                    "计划、关联材料与完成记录不代表胜任。",
+                }}
             if data.get("source_experiment_id") and not data.get("source_step_id"):
                 raise ValueError("请从本轮已读取的旧实验中选择设计，再准备复验。")
             if data.get("source_claim_index") is not None and (
