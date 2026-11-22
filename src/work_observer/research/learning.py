@@ -712,6 +712,20 @@ class LearningNotebook:
             "unknowns_then": list(result.get("gaps", [])),
             "source_references_to_reread": list(references.values()),
         }
+        if entry.get("answer"):
+            record["user_reported_answer"] = entry["answer"]
+            record["answer_document_id"] = entry.get("answer_document_id")
+        learning = result.get("career_learning_context") or {}
+        notes_then = [learning.get("selected_note"), learning.get("origin_learning_note"),
+                      *learning.get("selected_notes", [])]
+        record["learning_notes_then"] = list({row["id"]: {
+            key: deepcopy(row.get(key)) for key in (
+                "id", "task_id", "question_id", "previous_view", "reported_observation",
+                "current_user_view", "open_question", "use_for_research", "recorded_at",
+            )
+        } for row in notes_then if row}.values())
+        if learning.get("retrieval_review"):
+            record["retrieval_review_then"] = deepcopy(learning["retrieval_review"])
         if calculations := calculation_records(result):
             record["local_calculations"] = calculations
             record["local_calculation_notice"] = CALCULATION_NOTICE
@@ -734,6 +748,9 @@ class LearningNotebook:
             "current_relation_notes列当前选用的用户认识，包括明确接替原关系笔记的新理解；"
             "related_relation_indices是本地图work_relations从0开始的序号。"
             "接替记录可能参考其他资料，保留各自来源，不表示原图已修改或新解释已证实。"
+            "user_reported_answer与learning_notes_then保留当时原回答与明确带入的个人认识，"
+            "仍是自述和待检验理解；不以现在编辑的认识替换。retrieval_review_then只是当时"
+            "带入的运行线索，未在本轮重跑，不能作为新的原文证据。"
             "计划不等于实际结果，旧研究不能证明当前事实或个人能力，不修改原记录。",
         }
 

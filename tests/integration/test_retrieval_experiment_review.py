@@ -7,11 +7,14 @@ from starlette.testclient import TestClient
 from test_adaptive_investigation import settled, workspace
 
 from work_observer.research.agent import ModelClient
+from work_observer.research.learning import LearningNotebook
+from work_observer.research.store import ResearchStore
 
 
 class RetrievalReviewModel(ModelClient):
     def __init__(self):
         self.contexts, self.last_usage = [], {}
+        self.parent_artifact = None
 
     async def turn(self, history):
         context = json.loads(history[1]["content"])
@@ -31,12 +34,23 @@ class RetrievalReviewModel(ModelClient):
         assert {row["id"] for row in context["fixed_scope"]["jobs"]} == {self.job}
         answer = personal.get("selected_answer")
         documents = {self.document, self.artifact}
+        if self.parent_artifact:
+            documents.add(self.parent_artifact)
         if answer:
             documents.add(answer["document_id"])
         assert set(context["fixed_scope"]["archived_public_ids"]) == documents
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
-        if not outputs:
+        old_discussions = [row["research"] for row in outputs if row.get("research")]
+        reads = [row for row in outputs if row.get("evidence")]
+        if review.get("review_origin") and not old_discussions:
+            name, args = "read_research_history", {"step_id": review["review_origin"]["step_id"]}
+        elif not reads:
+            if old_discussions:
+                old = old_discussions[0]
+                assert "尚未验证语义效果" in old["user_reported_answer"]
+                assert not old["learning_notes_then"][0]["use_for_research"]
+                assert old["retrieval_review_then"]["task_id"] != review["task_id"]
             name, args = "read_archived_documents", {"reads": [
                 {"document_id": self.artifact, "start": review["runs"][0][
                     "diagnostic_read_start"
@@ -44,13 +58,13 @@ class RetrievalReviewModel(ModelClient):
                 {"document_id": self.document, "start": 0},
                 *([{"document_id": answer["document_id"], "start": 0}] if answer else []),
             ]}
-        elif len(outputs) == 1:
-            assert any("missing_source_checks" in row["quote"] for row in outputs[0]["evidence"])
+        elif len(reads) == 1:
+            assert any("missing_source_checks" in row["quote"] for row in reads[0]["evidence"])
             name, args = "read_historical_job", {
                 "job_id": self.job, "as_of": review["as_of"], "start": 0,
             }
         else:
-            evidence = outputs[0]["evidence"] + outputs[1]["evidence"]
+            evidence = reads[0]["evidence"] + reads[1]["evidence"]
             name, args = "finish_research", {
                 "claims": [{"category": "business", "basis": "direct",
                             "requirement": "unspecified", "text": row["quote"],
@@ -171,6 +185,63 @@ def test_run_review_keeps_original_corpus_and_reads_diagnostics_and_historical_j
         assert feedback["job_ids"] == jobs[:1]
         answered = run(feedback)
         assert answered["insight_id"] == note["id"] and answered["understanding_check"]
+        calls = len(model.contexts)
+        rerun_inputs = {**inputs, "previous_task_id": task_id,
+                        "review_step_id": answered["step_id"], "top_k": 1}
+        rerun = client.post(base + "/experiments/retrieval", headers=auth, json=rerun_inputs)
+        assert rerun.status_code == 201, rerun.text
+        child_task = next(row for row in rerun.json()["career"]["tasks"]
+                          if row["id"] == rerun.json()["task_id"])
+        assert child_task["previous_task_id"] == task_id
+        assert child_task["retrieval_review_step_id"] == answered["step_id"]
+        assert child_task.get("source_step_id") == task.get("source_step_id")
+        assert child_task["question_id"] == task["question_id"]
+        assert rerun.json()["experiment"]["review_origin"] == {
+            "step_id": answered["step_id"], "kind": "answer", "question_id": task["question_id"],
+            "insight_id": note["id"], "answer_document_id": answered["answer_document_id"],
+        }
+        assert rerun.json()["experiment"]["input"] == {
+            **saved.json()["experiment"]["input"], "top_k": 1,
+        }
+        loaded = client.get(base + "/tasks/" + child_task["id"] + "/retrieval-inputs")
+        assert loaded.json()["previous"]["review_step_id"] == answered["step_id"]
+        continued = client.post(base + "/experiments/retrieval", headers=auth, json={
+            **rerun_inputs, "previous_task_id": child_task["id"], "save": False,
+        })
+        assert continued.status_code == 200, continued.text
+        reviewed_child = prepare("reflect", keep=True, task_id=child_task["id"])
+        assert reviewed_child["career_retrieval_review"]["review_origin"] == rerun.json()[
+            "experiment"
+        ]["review_origin"]
+        history_project = client.get("/api/projects/" + goal).json()
+        history_project["career"]["insights"][-1]["current_view"] = (
+            "模拟后来的编辑，不应替换旧认识。"
+        )
+        history_store = ResearchStore(tmp_path / "checkpoints.db",
+                                      namespace=str((tmp_path / "adaptive.db").resolve()))
+        try:
+            old = LearningNotebook(lambda: history_project, history_store).read_research_history(
+                answered["step_id"],
+            )["research"]
+            assert old["user_reported_answer"] == answered["answer"]
+            assert old["learning_notes_then"][0]["current_user_view"] == note["current_view"]
+            assert not old["learning_notes_then"][0]["use_for_research"]
+            assert old["retrieval_review_then"]["task_id"] == task_id
+            assert "source_passages" not in old["learning_notes_then"][0]
+        finally:
+            history_store.close()
+        for invalid in ({"review_step_id": quiz_result["step_id"] + "0"},
+                        {"previous_task_id": None}, {"review_step_id": "0" * 32}):
+            rejected = client.post(base + "/experiments/retrieval", headers=auth,
+                                   json={**rerun_inputs, **invalid})
+            assert rejected.status_code == 422, rejected.text
+        assert len(model.contexts) == calls  # Actual reruns use local retrieval only.
+        model.artifact, model.parent_artifact = child_task["artifact_document_id"], artifact
+        child_review_result = run(reviewed_child)["result"]
+        assert any(row["tool"] == "read_research_history" for row in child_review_result["trace"])
+        assert {row["public_document_id"] for row in child_review_result["evidence"]
+                if row.get("public_document_id")} == {document, model.artifact}
+        model.artifact, model.parent_artifact = artifact, None
         followup = prepare("followup", keep=True, task_id=None, source_step_id=answered["step_id"])
         assert followup["job_ids"] == jobs[:1]
         run(followup)

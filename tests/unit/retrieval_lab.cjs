@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalReviewRecall,retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalReturnComparison,retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -50,3 +50,24 @@ console.log('Local retrieval inputs, explicit corpus and labels, undefined denom
 
 const carried=api.retrievalReviewRecall({model_calls:2,career_learning_context:{retrieval_review:{task_id:'run',artifact_document_id:'record',available:true,input:{job_ids:['job'],document_ids:['doc']},runs:[{name:'原表达',query:{terms:['<img>'],required_terms:['记忆']},missing_source_checks:[{detail:'正文没有该表达'}]}]}}},'goal');
 assert.match(carried,/不表示本轮重新执行检索/);assert.match(carried,/原实验选定 1 个岗位和 1 份资料/);assert.match(carried,/#career\/goal\/task\/run/);assert.match(carried,/正文没有该表达/);assert.match(carried,/&lt;img&gt;/);assert.doesNotMatch(carried,/<img>/);
+
+const fromReview=api.retrievalReplayDraft({input:values,previous:{task_id:'prior',source_step_id:'original-answer',question_id:'original-question',hypothesis:'原预期'}},'review-feedback');
+assert.equal(fromReview.previous_task_id,'prior');assert.equal(fromReview.source_step_id,'original-answer');assert.equal(fromReview.review_step_id,'review-feedback');assert.equal(fromReview.question_id,'original-question');
+assert.deepEqual(Array.from(fromReview.expected_document_ids),Array.from(values.expected_document_ids));
+const ready={...values,open:true,saved_task_id:'saved',result:{input:values}};
+const current={tasks:[{id:'saved',hypothesis:values.hypothesis}]};
+assert.equal(api.retrievalHasDraftChanges(ready,current),false);
+assert.equal(api.retrievalHasDraftChanges({...ready,candidate:{terms:['未保存的新查询']}},current),true);
+assert.equal(api.retrievalHasDraftChanges({...ready,hypothesis:'未保存的新解释'},current),true);
+assert.equal(api.retrievalHasDraftChanges({...ready,saved_task_id:null},current),true);
+assert.equal(api.retrievalHasDraftChanges({...ready,open:false},current),false);
+const reviewData={...data,results:[{step_id:'review-feedback',kind:'answer',interview_question:'为什么没有找到？',answer:'<img>完整回答的末尾：仍未做语义验证',result:{career_learning_context:{retrieval_review:{available:true,task_id:'prior'},selected_note:{current_user_view:'保留当时认识，不用后来修改的内容',open_question:'条件仍未知'}}}}]};
+const origin=api.retrievalReviewOrigin('review-feedback',reviewData);
+assert.match(origin,/完整回答的末尾：仍未做语义验证/);assert.match(origin,/保留当时认识/);assert.match(origin,/#career\/goal\/discussion\/review-feedback/);assert.doesNotMatch(origin,/<img>/);
+api.setup(reviewData);api.setLab(fromReview);
+assert.match(api.retrievalLab(reviewData),/name="review_step_id" value="review-feedback"/);
+elements.review_step_id={value:'review-feedback'};assert.equal(api.retrievalLabValues(fixture).review_step_id,'review-feedback');
+(async()=>{const route=await api.testFeedbackRoute('review-feedback');assert.deepEqual(Array.from(route),['prior','review-feedback']);console.log('Feedback resumes the original query and labels with separate review provenance, without overwriting unsaved input.');})().catch(error=>{console.error(error);process.exitCode=1;});
+
+const transitions=api.retrievalReturnComparison([{name:'改写表达',before_query:{terms:['泛词']},after_query:{terms:['具体工作']},before_expectation:'sources',after_expectation:'none',sources:[{title:'<script>移出的原文</script>',content_changed:false,before:{in_corpus:true,expected:true,returned:true},after:{in_corpus:false,expected:false,returned:false}},{title:'正文更新的原文',content_changed:true,before:{in_corpus:true,expected:false,returned:false},after:{in_corpus:true,expected:false,returned:true}}]}]);
+assert.match(transitions,/逐份对照两次实际返回/);assert.match(transitions,/未纳入这次对照/);assert.match(transitions,/标记相关/);assert.match(transitions,/预期不应命中/);assert.match(transitions,/两次原始记录不同/);assert.doesNotMatch(transitions,/<script>/);

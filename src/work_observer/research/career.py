@@ -3000,6 +3000,8 @@ class CareerService:
                     question += (
                         "本次选中的检索练习另有retrieval_review：先读取artifact_document_id的运行记录，"
                         "可按各查询diagnostic_read_start直达漏回说明，再回查本轮可用的JD或工作原文。"
+                        "若有review_origin，可用read_research_history按step_id取回本次复验承接的"
+                        "完整反馈与当时认识；旧句子仅作线索，不能直接充当本轮引用或已证实的解释。"
                         "保留两组查询、使用者标签和实际返回；单份复查候选不能补进原列表或抬高指标。"
                         "需要核对当时JD时，可按as_of用read_historical_job回读，不把当前新正文冒充旧输入。"
                         "原文缺失或已移出范围时明确无法核对，不改用工作区其他来源替代，"
@@ -3427,13 +3429,15 @@ class CareerService:
             "hypothesis": task.get("hypothesis", ""), "sources": record["sources"],
             "comparison_rows": record["comparison_rows"],
             "question_id": task.get("question_id"), "source_step_id": task.get("source_step_id"),
+            "review_step_id": task.get("retrieval_review_step_id"),
         }}
 
     def retrieval_experiment(
         self, identity, *, question_id=None, source_step_id=None, hypothesis="",
-        previous_task_id=None, save=False, **inputs,
+        previous_task_id=None, review_step_id=None, save=False, **inputs,
     ):
         from work_observer.research.retrieval_experiment import (
+            compare_returns,
             comparison_changes,
             record_text,
             run_retrieval_comparison,
@@ -3447,6 +3451,23 @@ class CareerService:
                     or question_id and question_id != previous.get("question_id")):
                 raise ValueError("请保留上次检索练习的原回答与调查关联，或另开一次独立对照。")
             question_id = previous.get("question_id")
+        review_origin = None
+        if review_step_id:
+            review = next((row for row in self.get(identity)["results"]
+                           if row["step_id"] == review_step_id
+                           and (row.get("result") or {}).get("status") == "completed"
+                           and row["state"] != "abandoned"), None)
+            recalled = ((review or {}).get("result") or {}).get(
+                "career_learning_context", {},
+            ).get("retrieval_review") or {}
+            if (not previous or not recalled.get("available")
+                    or recalled.get("task_id") != previous_task_id
+                    and previous.get("retrieval_review_step_id") != review_step_id):
+                raise ValueError("请从已回查这项检索实验的完整反馈继续，原实验与调查关联仍保留。")
+            review_origin = {"step_id": review_step_id, "kind": review["kind"],
+                             "question_id": review.get("question_id"),
+                             "insight_id": review.get("insight_id"),
+                             "answer_document_id": review.get("answer_document_id")}
         if source_step_id and previous is None:
             source = next((row for row in self.get(identity)["results"]
                            if row["step_id"] == source_step_id and row["kind"] == "answer"
@@ -3470,9 +3491,13 @@ class CareerService:
                 "task_id": previous["id"], "title": previous["title"],
                 "as_of": previous_record.get("as_of"), "changed_conditions": changes,
                 "comparison_rows": previous_record["comparison_rows"],
+                "return_comparison": compare_returns(previous_record, result),
                 "notice": "分别保留两次实际运行；查询、标签、范围、原文或配置改变都可能影响结果，"
                 "不能只凭指标变化断言改写更好或已具备岗位能力。",
             }
+        if review_origin:
+            result["review_origin"] = review_origin
+        if previous or review_origin:
             result["artifact_text"] = record_text(result)
         if not save:
             return {"experiment": result}
@@ -3490,6 +3515,7 @@ class CareerService:
             **({"source_step_id": source_step_id} if source_step_id and not previous else {}),
             "purpose": "understanding_check",
             "local_experiment": "retrieval",
+            **({"retrieval_review_step_id": review_step_id} if review_origin else {}),
         })
         task_id = saved["tasks"][-1]["id"]
         saved = self.update_task(

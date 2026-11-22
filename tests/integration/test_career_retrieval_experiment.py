@@ -206,6 +206,12 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
         child_result = child.json()["experiment"]
         assert child_result["previous_comparison"]["changed_conditions"] == ["片段上限"]
         assert child_result["runs"][1]["metrics"]["source_recall"] == 0.5
+        compared = child_result["previous_comparison"]["return_comparison"][1]["sources"]
+        dropped = [row for row in compared if row["before"]["returned"]
+                   and not row["after"]["returned"]]
+        assert len(dropped) == 1
+        assert dropped[0]["before"]["in_corpus"] and dropped[0]["after"]["in_corpus"]
+        assert dropped[0]["before"]["expected"] and dropped[0]["after"]["expected"]
         checks = child_result["runs"][1]["missing_source_checks"]
         assert len(checks) == 1 and checks[0]["reason"] == "outside_returned_limit"
         assert checks[0]["evidence"]["quote"] and not checks[0]["counted_in_metrics"]
@@ -237,6 +243,11 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
         }).json()["experiment"]
         assert relabel["previous_comparison"]["changed_conditions"] == ["预期相关标签"]
         assert relabel["runs"][1]["metrics"]["source_precision"] == 0.5
+        relabelled = next(row for row in relabel["previous_comparison"]["return_comparison"][1][
+            "sources"
+        ] if row["source_key"] == "job:" + jobs[1])
+        assert relabelled["before"]["expected"] and not relabelled["after"]["expected"]
+        assert relabelled["before"]["returned"] and relabelled["after"]["returned"]
         updated = client.post("/api/import", headers=auth, json={
             "title": "合成检索样本1", "company": "合成公司1", "external_id": "retrieval-original-1",
             "description": texts[1] + "新增业务条件：同步策略待验证。", "data_kind": "synthetic",
@@ -246,6 +257,9 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
             **inputs, "previous_task_id": parent_id,
         }).json()["experiment"]
         assert newer_source["previous_comparison"]["changed_conditions"] == ["原文内容"]
+        assert next(row for row in newer_source["previous_comparison"]["return_comparison"][1][
+            "sources"
+        ] if row["source_key"] == "job:" + jobs[1])["content_changed"]
         document_id = inputs["document_ids"][0]
         assert client.delete(base + "/materials/" + document_id, headers=auth).status_code == 200
         missing = client.get(base + "/tasks/" + parent_id + "/retrieval-inputs")
@@ -262,6 +276,10 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
         assert {"对照资料", "预期相关标签"} <= set(narrowed.json()["experiment"][
             "previous_comparison"
         ]["changed_conditions"])
+        removed_source = next(row for row in narrowed.json()["experiment"]["previous_comparison"][
+            "return_comparison"
+        ][1]["sources"] if row["source_key"] == "document:" + document_id)
+        assert removed_source["before"]["in_corpus"] and not removed_source["after"]["in_corpus"]
         assert client.get(base).json()["usage"]["calls"] == 0
         other = client.post("/api/career", headers=auth, json={
             "title": "合成另一个目标", "goal": "不混入其他目标的实验记录",

@@ -123,6 +123,10 @@ def review_context(repository, project, task):
                 "unavailable_reason": str(exc), "runs": [], "sources": []}
     context.update(available=True, input=record["input"], as_of=record.get("as_of"),
                    sources=record["sources"], runs=[])
+    if isinstance(record.get("review_origin"), dict):
+        context["review_origin"] = {key: record["review_origin"].get(key) for key in (
+            "step_id", "kind", "question_id", "insight_id", "answer_document_id",
+        )}
     cursor = 0
     for run in record["runs"][:2]:
         if not isinstance(run, dict):
@@ -173,6 +177,41 @@ def comparison_changes(previous, current):
     if excluded(previous) != excluded(current):
         changes.append("原文完整性排除")
     return changes
+
+
+def compare_returns(previous, current):
+    """Show recorded source transitions, keeping corpus and expected-label changes visible."""
+    manifests = [{row["key"]: row for row in record["sources"]}
+                 for record in (previous, current)]
+    corpora, expected = [], []
+    for record in (previous, current):
+        values = record["input"]
+        corpora.append({"job:" + key for key in values["job_ids"]}
+                       | {"document:" + key for key in values["document_ids"]})
+        expected.append({"job:" + key for key in values["expected_job_ids"]}
+                        | {"document:" + key for key in values["expected_document_ids"]})
+    comparisons = []
+    for before, after in zip(previous["runs"][:2], current["runs"][:2], strict=False):
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            continue
+        returned = [set(run.get("returned_source_keys", [])) for run in (before, after)]
+        rows = []
+        for key in sorted(corpora[0] | corpora[1]):
+            source = manifests[1].get(key) or manifests[0].get(key) or {}
+            hashes = [manifest.get(key, {}).get("content_sha256") for manifest in manifests]
+            rows.append({
+                "source_key": key, "title": source.get("title") or key,
+                "content_changed": bool(all(hashes) and hashes[0] != hashes[1]),
+                "before": {"in_corpus": key in corpora[0], "expected": key in expected[0],
+                           "returned": key in returned[0]},
+                "after": {"in_corpus": key in corpora[1], "expected": key in expected[1],
+                          "returned": key in returned[1]},
+            })
+        comparisons.append({"name": after.get("name"), "before_query": before.get("query"),
+                            "after_query": after.get("query"), "sources": rows,
+                            "before_expectation": previous["input"]["expectation"],
+                            "after_expectation": current["input"]["expectation"]})
+    return comparisons
 
 
 def source_key(item):
