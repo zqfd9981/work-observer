@@ -332,6 +332,10 @@ class LearningNotebook:
                     fields[f"passage_{index}"] = "\n".join(passage.get(key, "") for key in (
                         "title", "quote", "user_note", "target_view",
                     ))
+                    if note := passage.get("conversation_note"):
+                        fields[f"conversation_{index}"] = "\n".join(note.get(key, "") for key in (
+                            "asked_question", "speaker", "context", "said_when", "limits",
+                        )) + "\n" + (note.get("target_job") or {}).get("label", "")
             hits = [term for term in terms
                     if any(match_text(term) in match_text(value) for value in fields.values())]
             if terms and not hits:

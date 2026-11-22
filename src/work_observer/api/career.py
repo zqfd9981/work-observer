@@ -206,6 +206,8 @@ class ConversationNoteInput(BaseModel):
     context: str = Field(default="", max_length=700)
     said_when: str = Field(default="", max_length=200)
     limits: str = Field(default="", max_length=1500)
+    target_job_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    checklist_key: str = Field(default="", max_length=300)
 
 
 class ResearchQuestionInput(BaseModel):

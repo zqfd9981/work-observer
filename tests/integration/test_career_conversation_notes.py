@@ -9,6 +9,8 @@ from test_career_workspace import run_stage
 from work_observer.api.web import create_app
 from work_observer.config import Settings
 from work_observer.research.agent import ModelClient
+from work_observer.research.learning import LearningNotebook
+from work_observer.research.store import ResearchStore
 from work_observer.storage.database import upgrade
 
 
@@ -20,6 +22,10 @@ class ConversationModel(ModelClient):
         context = json.loads(history[1]["content"])
         self.contexts.append(context)
         inquiry = context["project_context"]["career_evidence"]["selected_inquiry"]
+        note = inquiry["evidence_passages"][-1]["conversation_note"]
+        assert note["target_job"]["label"] == "合成沟通查证岗位 · 合成团队"
+        assert note["asked_question"] == "谁负责验收与上线？"
+        assert note["checklist_key"] == "synthetic-interview-question"
         document_id = inquiry["evidence_passages"][-1]["public_document_id"]
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
@@ -91,7 +97,8 @@ def test_long_reported_reply_is_complete_and_available_after_newer_materials(tmp
                 "wording": "paraphrased", "speaker": "合成招聘同事（虚构）",
                 "context": "虚构访谈练习，不是真实企业反馈。",
                 "said_when": "只知道是上周，确切日期未知",
-                "limits": "仅是团队说明，需进一步确认个人分工和适用时间。"}
+                "limits": "仅是团队说明，需进一步确认个人分工和适用时间。",
+                "target_job_id": job, "checklist_key": "synthetic-interview-question"}
         saved = post(base + "/questions/" + question["id"] + "/conversation-notes", note)
         assert not model.contexts and saved["questions"][0]["conclusion"] == conclusion
         passage = saved["questions"][0]["evidence_passages"][0]
@@ -103,6 +110,19 @@ def test_long_reported_reply_is_complete_and_available_after_newer_materials(tmp
         assert passage["quote"] == answer[-2000:]
         assert text[passage["start"]:passage["end"]] == passage["quote"]
         assert passage["relation"] == "unclassified" and "完整记录" in passage["user_note"]
+        metadata = passage["conversation_note"]
+        assert metadata["target_job"]["id"] == job
+        assert "计划核实岗位（用户选择，不代表答复已适用于该岗位）" in text
+        assert text[metadata["answer_start"]:metadata["answer_end"]] == answer
+        assert metadata["limits"] == note["limits"] and metadata["said_when"] == note["said_when"]
+        assert "job_id" not in passage  # The reply stays work material, not a JD citation.
+        found = client.get("/api/career/search", params={"q": note["speaker"]}).json()
+        assert any(row["id"] == question["id"] for row in found["records"])
+        record = client.get("/api/projects/" + identity).json()
+        notebook = LearningNotebook(lambda: record, ResearchStore(
+            tmp_path / "checkpoints.db", namespace=str(database.resolve()),
+        ))
+        assert notebook.search_inquiries([note["speaker"]])["inquiries"][0]["id"] == question["id"]
         for index in range(21):
             post(base + "/materials", {"title": f"合成无关补充{index}", "text": "只作库存占位。"})
         researched = run_stage(client, identity, auth, "ask", question=question["question"],
@@ -118,6 +138,10 @@ def test_long_reported_reply_is_complete_and_available_after_newer_materials(tmp
                               headers=auth, json=note)
         assert invalid.status_code == 422
         assert len(client.get(base).json()["materials"]) == 22
+        wrong_target = client.post(base + "/questions/" + question["id"] + "/conversation-notes",
+                                   headers=auth, json={**note, "target_job_id": "f" * 32})
+        assert wrong_target.status_code == 422
+        assert len(client.get(base).json()["materials"]) == 22
         quoted = post(base + "/questions/" + question["id"] + "/conversation-notes", {
             "asked_question": "个人分工是否已确认？",
             "answer": "合成原话：暂未确认，仍需进一步问清。",
@@ -127,5 +151,6 @@ def test_long_reported_reply_is_complete_and_available_after_newer_materials(tmp
         quoted_text = quoted_source["text"]
         assert "用户记录的原话（系统未独立核实）" in quoted_text
         assert "发生时间（用户填写，未核实）：未说明" in quoted_text
+        assert quoted["conversation_note"]["target_job"] is None
         unchanged = client.get("/api/public-documents/" + passage["public_document_id"]).json()
         assert unchanged["text"] == text

@@ -543,6 +543,12 @@ class CareerService:
                         "\n".join(item.get(key, "") for key in (
                             "title", "quote", "user_note", "target_view",
                         ))
+                        + "\n" + "\n".join((item.get("conversation_note") or {}).get(key, "")
+                                             for key in ("asked_question", "speaker", "context",
+                                                         "said_when", "limits"))
+                        + "\n" + (
+                            (item.get("conversation_note") or {}).get("target_job") or {}
+                        ).get("label", "")
                         for item in row.get("evidence_passages", [])
                     ),
                     "requirements",
@@ -1763,12 +1769,27 @@ class CareerService:
                 raise ValueError("请选择当前目标中的调查问题，再记录沟通回复。")
             if any(step["state"] == "running" for step in project["steps"]):
                 raise ValueError("请等本轮研究结束后再保存沟通回复，输入仍保留。")
+            target = None
+            if target_id := data.get("target_job_id"):
+                if target_id not in project["job_ids"]:
+                    raise ValueError("请在当前目标的岗位中选择计划核实对象，或留空。")
+                job = self.repository.job(target_id)["current"]
+                target = {"id": target_id, "label": " · ".join(
+                    value for value in (
+                        job.get("title"), job.get("company_name_raw") or job.get("company"),
+                    ) if value
+                )}
             wording = ("用户记录的原话（系统未独立核实）" if data["wording"] == "quoted"
                        else "用户自己的转述（不是逐字原话）")
+            target_line = (
+                f"计划核实岗位（用户选择，不代表答复已适用于该岗位）：{target['label']}\n"
+                if target else ""
+            )
             prefix = (
                 "用户提供的沟通或访谈记录，系统未参与或独立核实。"
                 "这不是正式招聘原文、组织承诺或用户能力的证明。\n\n"
                 f"关联调查问题：{question['question']}\n"
+                f"{target_line}"
                 f"沟通对象（用户填写）：{data['speaker'] or '未说明'}\n"
                 f"沟通场景：{data['context'] or '未说明'}\n"
                 f"发生时间（用户填写，未核实）：{data['said_when'] or '未说明'}\n"
@@ -1796,6 +1817,13 @@ class CareerService:
             })
             question.setdefault("evidence_passages", []).append({
                 "id": uuid4().hex, **passage, "relation": "unclassified",
+                "conversation_note": {
+                    **{key: data[key] for key in (
+                        "asked_question", "wording", "speaker", "context", "said_when", "limits",
+                    )},
+                    "target_job": target, "checklist_key": data.get("checklist_key", ""),
+                    "answer_start": len(prefix), "answer_end": end,
+                },
                 "user_note": "用户提供的沟通记录，" + wording + "。"
                 + ("答复较长，这里仅定位末尾2000字；" if len(answer) > 2000 else "")
                 + "完整记录含提问、场景与保留条件，后续需回读全文，不能把回复直接当成岗位事实。",
