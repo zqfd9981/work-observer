@@ -898,6 +898,10 @@ def learning_record(row, record, store):
                        if item["id"] == row.get("task_id")), None)
     if experiment:
         note["linked_experiment"] = deepcopy(experiment)
+        prior = experiment.get("retrieval_note_origin") or {}
+        if (prior.get("id") and row.get("replaces_insight_id") == prior["id"]
+                and prior.get("source_case")):
+            note["source_retrieval_case"] = deepcopy(prior["source_case"])
         for key, origin in {
             "claim_to_verify": experiment_claim_origin(record, experiment, store),
             "relation_to_verify": experiment_relation_origin(record, experiment, store),
@@ -935,6 +939,8 @@ def learning_record(row, record, store):
         result = (run or {}).get("result") or {}
         if (run or {}).get("state") == "invalidated":
             result = {}
+        if case := result.get("career_learning_context", {}).get("retrieval_case"):
+            note["source_retrieval_case"] = deepcopy(case)
         if focus := result.get("career_learning_context", {}).get("claim_to_review"):
             note["source_claim_review"] = deepcopy(focus)
         if comparison := result.get("career_learning_context", {}).get("understanding_comparison"):

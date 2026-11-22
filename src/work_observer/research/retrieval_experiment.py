@@ -141,6 +141,8 @@ def review_context(repository, project, task):
             "id", "task_id", "question_id", "previous_view", "observation", "current_view",
             "open_question", "use_for_research", "recorded_at",
         )}
+        if record["note_origin"].get("source_case"):
+            context["note_origin"]["source_case"] = deepcopy(record["note_origin"]["source_case"])
     cursor = 0
     run_limit = 8 if record.get("record_kind") == "retrieval_suite" else 2
     for run in record["runs"][:run_limit]:
