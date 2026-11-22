@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_observer.collection.contracts import now
+from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.connectors.public_documents import PublicDocumentService
 from work_observer.connectors.public_models import PublicDocument
 from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.enhanced import RetrievalService
@@ -90,6 +92,53 @@ def read_record(text):
         return record
     except (ValueError, TypeError, KeyError) as exc:
         raise ValueError("这份检索记录的输入不完整，原练习仍保留；可另开一次对照。") from exc
+
+
+def is_retrieval_task(task):
+    return task.get("local_experiment") == "retrieval" or task.get("artifact_title", "").startswith(
+        "本地检索对照",
+    )
+
+
+def task_record(repository, project, task):
+    identity = (task or {}).get("artifact_document_id")
+    if not identity or identity not in project["public_document_ids"]:
+        raise ValueError("这项练习的检索运行记录未在当前目标中，请选择可读取的记录。")
+    document = PublicDocumentService(repository, ".").document(identity)
+    if document["integrity"] != "verified":
+        raise ValueError("这份运行记录暂不可完整读取，原输入未改变。")
+    return document, read_record(document["text"])
+
+
+def review_context(repository, project, task):
+    """Prepare source-limited leads; saved quotes never become this turn's evidence."""
+    context = {"task_id": task["id"], "artifact_document_id": task.get("artifact_document_id"),
+               "notice": "这是既有本地词面检索记录的线索，本轮尚未重新执行。相关标签是使用者预期，"
+               "不是独立事实；限定来源的复查候选未计入原指标。须读取运行记录与原文后解释，"
+               "不把词面指标当作语义准确率、企业验收或个人能力证明。"}
+    try:
+        document, record = task_record(repository, project, task)
+    except (ValueError, ProbeError, OSError) as exc:
+        return {**context, "available": False, "input": {"job_ids": [], "document_ids": []},
+                "unavailable_reason": str(exc), "runs": [], "sources": []}
+    context.update(available=True, input=record["input"], as_of=record.get("as_of"),
+                   sources=record["sources"], runs=[])
+    cursor = 0
+    for run in record["runs"][:2]:
+        if not isinstance(run, dict):
+            continue
+        position = document["text"].find('"missing_source_checks":', cursor)
+        cursor = position + 1 if position >= 0 else cursor
+        context["runs"].append({
+            "name": run.get("name"), "query": run.get("query"), "metrics": run.get("metrics"),
+            "missing_expected_source_keys": run.get("missing_expected_source_keys", []),
+            "unexpected_source_keys": run.get("unexpected_source_keys", []),
+            "missing_source_checks": [{key: check.get(key) for key in (
+                "source_key", "reason", "detail", "missing_required_terms", "counted_in_metrics",
+            )} for check in run.get("missing_source_checks", [])[:6] if isinstance(check, dict)],
+            "diagnostic_read_start": position if position >= 0 else None,
+        })
+    return context
 
 
 def comparison_changes(previous, current):

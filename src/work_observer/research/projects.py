@@ -1539,6 +1539,10 @@ class ProjectService:
                     "proposed_check": row["completion_check"],
                     "origin": row.get("origin", "research"),
                     "purpose": row.get("purpose"),
+                    "retrieval_review": deepcopy(step["career_retrieval_review"])
+                    if full and (step.get("career_retrieval_review") or {}).get("task_id")
+                    == row["id"]
+                    else None,
                     "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
                     "state": row["state"],
                     "reported_observation": row["outcome"] if full else row["outcome"][:500],
@@ -1566,8 +1570,10 @@ class ProjectService:
                         "title": row["artifact_title"],
                         "available_in_goal": row["artifact_document_id"]
                         in record.get("public_document_ids", []),
-                        "notice": "用户提供的练习产物或运行记录，"
-                        "未独立执行验证；可读取归档全文。",
+                        "notice": "本机词面检索的既有运行记录，须回读正文与原输入核对；"
+                        "不代表语义效果或个人胜任。"
+                        if (step.get("career_retrieval_review") or {}).get("task_id") == row["id"]
+                        else "用户提供的练习产物或运行记录，未独立执行验证；可读取归档全文。",
                     }
                     if row.get("artifact_document_id")
                     else None,
@@ -2144,6 +2150,10 @@ class ProjectService:
             context["career_evidence"]["source_document_ids"] = [
                 key for key in record.get("public_document_ids", []) if key not in private
             ]
+            if "career_source_document_ids" in step:
+                context["career_evidence"]["source_document_ids"] = step[
+                    "career_source_document_ids"
+                ][:]
         return context
 
 

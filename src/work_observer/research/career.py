@@ -2122,6 +2122,7 @@ class CareerService:
             sources = None
             source_job_ids = []
             assessment_job_ids, interview_task_origin = None, None
+            retrieval_review, retrieval_job_ids, retrieval_document_ids = None, None, None
             synthesis_sources = []
             if kind == "ask" and source_step_id:
                 sources = [
@@ -2954,6 +2955,46 @@ class CareerService:
                     "不能从业务/技术说明补造具体招聘资格或个人职责，也不能推定用户经历与能力。"
                     "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
                 )
+            if task_id and kind in {"reflect", "ask", "challenge", "plan", "interview",
+                                   "answer", "followup"}:
+                from work_observer.research.retrieval_experiment import (
+                    is_retrieval_task,
+                    review_context,
+                )
+
+                local_task = next((row for row in project["career"]["tasks"]
+                                   if row["id"] == task_id), None)
+                if local_task and is_retrieval_task(local_task):
+                    retrieval_review = review_context(self.repository, project, local_task)
+                    if inherit_focus:
+                        retrieval_job_ids = selected_job_ids if selected_job_ids is not None else [
+                            key for key in retrieval_review["input"]["job_ids"]
+                            if key in project["job_ids"]
+                        ]
+                        selected_job_ids = retrieval_job_ids
+                        previous_task = next((
+                            row for row in project["career"]["tasks"]
+                            if row["id"] == local_task.get("previous_task_id")
+                        ), {})
+                        answer_source = next((
+                            row for row in project["career"]["runs"]
+                            if row["step_id"] == local_task.get("source_step_id")
+                        ), {})
+                        retrieval_document_ids = list(dict.fromkeys(key for key in [
+                            *retrieval_review["input"]["document_ids"],
+                            local_task.get("artifact_document_id"),
+                            previous_task.get("artifact_document_id"),
+                            answer_source.get("answer_document_id"),
+                            *material_ids, material_id, focused_document_id, answer_document_id,
+                        ] if key in project["public_document_ids"]))
+                    question += (
+                        "本次选中的检索练习另有retrieval_review：先读取artifact_document_id的运行记录，"
+                        "可按各查询diagnostic_read_start直达漏回说明，再回查本轮可用的JD或工作原文。"
+                        "保留两组查询、使用者标签和实际返回；单份复查候选不能补进原列表或抬高指标。"
+                        "需要核对当时JD时，可按as_of用read_historical_job回读，不把当前新正文冒充旧输入。"
+                        "原文缺失或已移出范围时明确无法核对，不改用工作区其他来源替代，"
+                        "也不从局部词面结果推断语义效果、企业要求或个人胜任。"
+                    )
             if selected_job_ids is None and assessment_job_ids is not None:
                 selected_job_ids = assessment_job_ids
             if selected_job_ids is None:
@@ -3094,6 +3135,9 @@ class CareerService:
                 project, kind, preferred, repository=self.repository,
                 query="\n".join(value for value in topic if value) or project["goal"],
             )
+            if retrieval_document_ids is not None:
+                documents = retrieval_document_ids
+                omitted = len(set(project["public_document_ids"]) - set(documents))
             if not project["job_ids"] and not documents:
                 raise ValueError("请先导入一份可用于本次研究的工作资料，或选择目标岗位JD。")
             project = self.projects.add(
@@ -3110,8 +3154,12 @@ class CareerService:
                 completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
             )
             project["steps"][-1]["public_document_ids"] = documents
-            if selected_job_ids or assessment_job_ids is not None:
+            if selected_job_ids or assessment_job_ids is not None or retrieval_job_ids is not None:
                 project["steps"][-1]["job_ids"] = selected_job_ids[:]
+            if retrieval_review is not None:
+                project["steps"][-1]["career_retrieval_review"] = retrieval_review
+            if retrieval_document_ids is not None:
+                project["steps"][-1]["career_source_document_ids"] = retrieval_document_ids[:]
             project["steps"][-1]["career_omitted_documents"] = omitted
             if adaptive and not offline:
                 project["steps"][-1]["career_adaptive"] = True
@@ -3355,18 +3403,11 @@ class CareerService:
         return self.get(identity)
 
     def _retrieval_record(self, project, task_id):
-        from work_observer.research.retrieval_experiment import read_record
+        from work_observer.research.retrieval_experiment import task_record
 
         task = next((row for row in project["career"]["tasks"] if row["id"] == task_id), None)
-        document_id = (task or {}).get("artifact_document_id")
-        if not document_id or document_id not in project["public_document_ids"]:
-            raise ValueError("这项练习的检索运行记录未在当前目标中，请选择可读取的记录。")
-        document = PublicDocumentService(self.repository, self.raw_directory / "public").document(
-            document_id,
-        )
-        if document["integrity"] != "verified":
-            raise ValueError("这份运行记录暂不可完整读取，原输入未改变。")
-        return task, read_record(document["text"])
+        _, record = task_record(self.repository, project, task)
+        return task, record
 
     def retrieval_experiment_record(self, identity, task_id):
         project = self._project(identity)
