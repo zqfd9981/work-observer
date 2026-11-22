@@ -56,6 +56,34 @@ def test_alias_retrieval_citations_are_exact_deduplicated_and_context_is_bounded
     assert result["context_characters"] <= result["context_limit"] == 7000
 
 
+def test_specific_requirement_beats_repeated_generic_intro_and_preserves_offsets(store):
+    repo, add = store
+    text = "Agent " * 55 + "。" + "通用业务描述。" * 90 + "任职要求：掌握端云同步记忆。"
+    job = add("specific", text, data_kind="synthetic")
+    add("generic", "Agent开发平台，Agent工具集成，负责通用业务接口。", data_kind="synthetic")
+    service = RetrievalService(repo, alias_groups={})
+    found = service.search(["Agent", "端云同步"], limit=1)
+    item = found["evidence"][0]
+    assert item["job_id"] == job
+    assert "端云同步" in item["quote"]
+    assert item["start"] > 0
+    assert item["quote"] == text[item["start"] : item["end"]]
+    assert found["matching_jobs"] == 2
+    assert service.stats(["端云同步"])["statistics"][0]["literal_jobs"] == 1
+
+
+def test_duplicate_alias_query_terms_do_not_inflate_scores(store):
+    repo, add = store
+    add("a", "构建Agent智能体，维护知识库。", data_kind="synthetic")
+    add("b", "构建智能体与工具。", data_kind="synthetic")
+    service = RetrievalService(repo, alias_groups={"Agent": ["智能体"]})
+    one = service.search(["Agent"])
+    duplicated = service.search(["Agent", "智能体", "AGENT"])
+    assert [(e["id"], e["retrieval"]["score"]) for e in one["evidence"]] == [
+        (e["id"], e["retrieval"]["score"]) for e in duplicated["evidence"]
+    ]
+
+
 def test_historical_scope_uses_old_fields_not_current_fields_or_later_imports(store):
     repo, add = store
     job = add(description="构建智能体", city="上海", salary="20-30K")

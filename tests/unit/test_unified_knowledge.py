@@ -84,6 +84,31 @@ def corpus(tmp_path):
     repository.close()
 
 
+def test_rank_joint_corpus_before_passage_limits(corpus):
+    repository, add_job, add_public = corpus
+    job = add_job("generic", "Agent " * 55, data_kind="synthetic")
+    # The concrete requirement follows more than twenty high-frequency chunks.
+    text = "Agent 平台说明。" * 1500 + "任职要求：掌握端云同步记忆。"
+    document, _ = add_public(text=text)
+    retrieval = UnifiedRetrieval(repository, alias_groups={})
+    found = retrieval.search(
+        ["Agent", "端云同步"], job_ids=[job], public_document_ids=[document],
+        limit=1, include_knowledge=False,
+    )
+    item = found["evidence"][0]
+    assert item.get("public_document_id") == document
+    assert "端云同步" in item["quote"]
+    assert item["quote"] == text[item["start"] : item["end"]]
+    assert found["matching_jobs"] == found["matching_public_documents"] == 1
+    assert found["context_characters"] <= 7000
+    # A second available slot still represents the short JD, not another long-doc chunk.
+    pair = retrieval.search(
+        ["Agent", "端云同步"], job_ids=[job], public_document_ids=[document],
+        limit=2, include_knowledge=False,
+    )
+    assert {e.get("job_id") for e in pair["evidence"]} == {None, job}
+
+
 def test_same_glyph_radicals_match_without_rewriting_citations(corpus):
     repository, add_job, add_public = corpus
     text = "合成资料：处理上下⽂溢出、长⽂档问答和⼯具调用；编号①号。"

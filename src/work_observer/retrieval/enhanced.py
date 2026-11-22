@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.retrieval.catalog import Filters
+from work_observer.retrieval.ranking import query_groups, rank_passages
 from work_observer.storage.models import (
     CollectionRun,
     Job,
@@ -105,14 +106,21 @@ class RetrievalService:
         self.repository = repository
         self.alias_groups = alias_groups
 
-    def _expand(self, terms, aliases):
+    def _alias_config(self, aliases):
         if not aliases:
-            return terms
+            return {}
         groups = self.alias_groups
         if groups is None:
             from work_observer.tracking.evaluation import StrategyService
 
             groups = StrategyService(self.repository).active_config()["aliases"]
+        return groups
+
+    def _expand(self, terms, aliases, *, groups=None):
+        if not aliases:
+            return terms
+        if groups is None:
+            groups = self._alias_config(aliases)
         expanded = list(terms)
         for key, values in groups.items():
             group = [key, *values]
@@ -248,9 +256,17 @@ class RetrievalService:
         )
         if limit is not None and (type(limit) is not int or not 1 <= limit <= 20):
             raise ProbeError("INVALID_RETRIEVAL_LIMIT")
-        expanded = self._expand(terms, aliases)
-        groups = [self._expand([term], aliases) for term in required_terms]
+        alias_config = self._alias_config(aliases)
+        expanded = self._expand(terms, aliases, groups=alias_config)
+        groups = [self._expand([term], aliases, groups=alias_config) for term in required_terms]
         expanded = list(dict.fromkeys([*expanded, *(term for group in groups for term in group)]))
+        concepts = query_groups(
+            [*terms, *required_terms],
+            lambda values: [
+                term for term in self._expand(values, aliases, groups=alias_config)
+                if term in expanded
+            ],
+        )
         stride = 700 - max(100, max(map(len, expanded)))
         records, filters, cutoff = self._records(filters, job_ids, as_of)
         ranked, tag_only, matching_jobs = [], [], set()
@@ -290,23 +306,14 @@ class RetrievalService:
                     chunks.append((0, 0, []))
             if chunks:
                 matching_jobs.add(item["job_id"])
-                chunks.sort(key=lambda chunk: (-chunk[0], chunk[1]))
-                for index, (score, start, matches) in enumerate(chunks):
+                for score, start, matches in chunks:
                     evidence = self._evidence(item, start, score, matches, label_hits)
                     if include_titles:
                         evidence["retrieval"]["match_location"] = "body" if matches else "metadata"
-                    ranked.append(
-                        (
-                            index > 0,
-                            -score,
-                            item["job_id"],
-                            start,
-                            evidence,
-                        )
-                    )
-        ranked.sort(key=lambda row: row[:4])
+                    ranked.append(evidence)
+        ranked = rank_passages(ranked, concepts)
         evidence, seen, characters = [], set(), 0
-        for *_, item in ranked:
+        for item in ranked:
             if item["id"] in seen or limit is not None and characters + len(item["quote"]) > 7000:
                 continue
             seen.add(item["id"])
@@ -319,6 +326,7 @@ class RetrievalService:
             "expanded_terms": expanded,
             "required_terms": required_terms,
             "required_term_groups": groups,
+            "query_term_groups": concepts,
             "aliases": aliases,
             "sample": self._sample(records, filters, cutoff),
             "scope_job_ids": [item["job_id"] for item in records if item["state"] != "excluded"],

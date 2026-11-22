@@ -14,6 +14,7 @@ from work_observer.knowledge.service import DomainKnowledgeService
 from work_observer.memory.service import MemoryService
 from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.enhanced import RetrievalService, normalized_time, validated_terms
+from work_observer.retrieval.ranking import rank_passages
 from work_observer.text_match import match_text
 
 
@@ -71,7 +72,7 @@ class UnifiedRetrieval:
         retrieval = RetrievalService(self.repository, alias_groups=self.alias_groups)
         jobs = retrieval.search(
             terms, filters=filters, job_ids=job_ids, as_of=cutoff,
-            limit=None if browsing else 20, aliases=aliases, include_titles=browsing,
+            limit=None, aliases=aliases, include_titles=browsing,
             required_terms=required_terms,
         )
         expanded = jobs["expanded_terms"]
@@ -79,8 +80,12 @@ class UnifiedRetrieval:
         stride = 700 - max(100, max(map(len, expanded)))
         evidence, excluded_integrity = [], []
         catalog = Catalog(self.repository)
+        integrity = {}
         for item in jobs["evidence"]:
-            if catalog.document(item["document_id"])["integrity"] == "verified":
+            identity = item["document_id"]
+            if identity not in integrity:
+                integrity[identity] = catalog.document(identity)["integrity"]
+            if integrity[identity] == "verified":
                 evidence.append({**item, "evidence_kind": "job_original", "derived": False})
             else:
                 excluded_integrity.append(item["document_id"])
@@ -119,9 +124,9 @@ class UnifiedRetrieval:
                     chunks.append((0, 0, []))
                 if chunks:
                     public_matches.add(row.id)
-                ranked_chunks = sorted(chunks, key=lambda item: (-item[0], item[1]))
-                for score, start, hits in ranked_chunks if browsing else ranked_chunks[:20]:
-                    item = PublicDocumentService._evidence(row)[0]
+                template = PublicDocumentService._evidence(row)[0] if chunks else None
+                for score, start, hits in chunks:
+                    item = dict(template)
                     end = min(start + 700, len(row.text))
                     item.update(
                         id=f"publicdoc:{row.id}:{start}:{end}",
@@ -138,20 +143,14 @@ class UnifiedRetrieval:
                             else "公开材料描述发布者业务，不能据此认定某岗位具体职责。",
                             "retrieval": {
                                 "score": score,
-                                **({"match_location": "body" if hits else "metadata",
-                                    "matched_terms": hits} if browsing else {}),
+                                "matched_terms": hits,
+                                **({"match_location": "body" if hits else "metadata"}
+                                   if browsing else {}),
                             },
                         }
                     )
         scoped_jobs = jobs["scope_job_ids"]
-        evidence.sort(key=lambda item: (-item.get("retrieval", {}).get("score", 0), item["id"]))
-        # 每份原始资料先有一条代表片段，避免长官网正文挤掉短JD。
-        source_seen, diversified = set(), []
-        for item in evidence:
-            source_id = (item.get("job_id"), item.get("public_document_id"))
-            diversified.append((source_id in source_seen, item))
-            source_seen.add(source_id)
-        evidence = [item for _, item in sorted(diversified, key=lambda row: row[0])]
+        evidence = rank_passages(evidence, jobs["query_term_groups"])
         selected, characters = [], 0
         if browsing:
             selected = evidence[offset : offset + limit]
