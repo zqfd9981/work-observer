@@ -14,6 +14,9 @@ assert.ok(html.includes('data-cite="a"')&&html.includes('data-graph-pick="1"'));
 assert.ok(html.includes('关联能力')&&!html.includes('NaN'));
 assert.ok(html.includes('data-graph-node-pick="1"')&&html.includes('data-graph-node-choice'));
 assert.ok(html.includes('data-graph-kind="deliverable"')&&html.includes('data-graph-focus'));
+assert.ok(html.includes('data-graph-basis="inference"')&&html.includes('data-graph-basis="direct"'));
+assert.ok(html.includes('待验证解释 · 1')&&html.includes('原文明示 · 1')&&html.includes('Agent归纳 · 0'));
+assert.ok(html.includes('data-graph-basis-choice')&&html.includes('连线性质由本轮研究标注'));
 assert.equal(JSON.stringify(ctx.result),original);
 assert.equal(vm.runInContext('renderWorkRelationGraph({},()=>"",()=>"",()=>"")',ctx),'');
 const makeItem=dataset=>({dataset,hidden:true,hint:{hidden:true,textContent:''},querySelector(){return this.hint;},classes:new Set(),classList:{toggle(name,on){on?this.owner.classes.add(name):this.owner.classes.delete(name);}}});
@@ -46,3 +49,17 @@ assert.equal(focus.hidden,true);assert.equal(nodeChoice.value,'');assert.ok(node
 nodeChoice.value='';vm.runInContext('selectWorkGraphNode(nodeChoice)',ctx);
 assert.ok(edges.every(edge=>!edge.classes.has('is-dimmed')));
 console.log('Work content exploration: direct relations, original task-linked records, unrelated branch exclusion, qualification hints and relation reset passed.');
+
+const basisChoice={value:'direct',closest:()=>ctx.root},basisSummary={textContent:''},query=ctx.root.querySelector;
+ctx.root.querySelector=selector=>selector==='[data-graph-basis-choice]'?basisChoice:selector==='[data-graph-basis-summary]'?basisSummary:query(selector);
+detail.forEach((row,index)=>row.dataset.graphBasis=['inference','direct','synthesis'][index]);ctx.basisChoice=basisChoice;
+vm.runInContext('selectWorkGraphBasis(basisChoice)',ctx);
+assert.equal(detail[1].hidden,false);assert.equal(detail[0].hidden,true);assert.equal(detail[2].hidden,true);
+assert.ok(edges[0].classes.has('is-dimmed')&&!edges[1].classes.has('is-dimmed'));
+assert.ok(!nodes[0].classes.has('is-dimmed')&&!nodes[2].classes.has('is-dimmed')&&nodes[1].classes.has('is-dimmed'));
+assert.ok(basisSummary.textContent.includes('原文明示 · 突出 1 / 3 条关系'));assert.equal(nodeChoice.value,'');assert.equal(ctx.select.value,'');assert.equal(focus.hidden,true);
+basisChoice.value='unknown';vm.runInContext('selectWorkGraphBasis(basisChoice)',ctx);assert.ok(detail.every(row=>row.hidden)&&edges.every(row=>row.classes.has('is-dimmed')));assert.ok(basisSummary.textContent.includes('这不表示原文或岗位没有相应内容'));
+ctx.select.value='0';vm.runInContext('selectWorkGraphRelation(select)',ctx);assert.equal(basisChoice.value,'');assert.equal(detail[0].hidden,false);assert.ok(basisSummary.textContent.includes('仍需结合说明和原文核对'));
+basisChoice.value='inference';vm.runInContext('selectWorkGraphBasis(basisChoice)',ctx);nodeChoice.value='1';vm.runInContext('selectWorkGraphNode(nodeChoice)',ctx);assert.equal(basisChoice.value,'');assert.equal(detail[0].hidden,false);assert.equal(detail[1].hidden,false);
+basisChoice.value='';vm.runInContext('selectWorkGraphBasis(basisChoice)',ctx);assert.ok(edges.every(row=>!row.classes.has('is-dimmed'))&&nodes.every(row=>!row.classes.has('is-focused')));assert.ok(detail.every(row=>row.hidden));assert.equal(JSON.stringify(ctx.result),original);
+console.log('Relation nature stays explicit in graph labels and legend; filtering shows only its existing explanations, preserves source content, handles empty categories honestly, and resets when a node or relation is chosen.');
