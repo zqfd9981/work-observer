@@ -4087,17 +4087,31 @@ class CareerService:
         return {"experiment": result, "career": saved, "task_id": task_id}
 
     def context_experiment(self, identity, *, cases, data_kind="synthetic", question_id=None,
-                           requirement_key="", hypothesis="", save=False):
+                           requirement_key="", hypothesis="", previous_task_id=None,
+                           design_change="", save=False):
         from work_observer.research.context_experiment import run_context_experiment
 
         project = self._project(identity)
+        previous = next((row for row in project["career"]["tasks"]
+                         if row["id"] == previous_task_id), None)
+        if previous_task_id and (not previous or previous.get("local_experiment") != "context_merge"
+                                 or not previous.get("context_run")):
+            raise ValueError("请选择本目标中已有完整输入的上下文合并练习，再继续计算。")
+        if previous:
+            if question_id and question_id != previous.get("question_id"):
+                raise ValueError("继续计算时请保留原调查关联，其他问题可另开练习。")
+            question_id = previous.get("question_id")
         inquiry = next((row for row in project["career"].get("questions", [])
                         if row["id"] == question_id), None)
         if question_id and not inquiry:
             raise ValueError("请选择本目标中想继续验证的调查问题。")
-        target = self._experiment_requirement(identity, requirement_key) if requirement_key else (
-            deepcopy((inquiry or {}).get("target_requirement"))
-        )
+        if previous:
+            target = deepcopy(previous.get("target_requirement"))
+            if requirement_key and requirement_key != (target or {}).get("key"):
+                raise ValueError("继续计算时请保留原岗位工作，另一项要求可另开练习。")
+        else:
+            target = (self._experiment_requirement(identity, requirement_key) if requirement_key
+                      else deepcopy((inquiry or {}).get("target_requirement")))
         if (requirement_key and (inquiry or {}).get("target_requirement")
                 and inquiry["target_requirement"]["key"] != requirement_key):
             raise ValueError("请沿用这条调查选定的岗位工作，另一项工作可另开练习。")
@@ -4106,6 +4120,13 @@ class CareerService:
         result["artifact_text"] += (
             "\n\n运行前的预期（用户记录，不是计算结果）：\n" + (hypothesis or "未填写")
         )
+        if previous:
+            result["previous_task_id"] = previous_task_id
+            result["design_change"] = design_change
+            result["artifact_text"] += (
+                "\n\n承接的练习：" + previous_task_id + "\n这次条件改动（用户说明）："
+                + (design_change or "未单独说明，不能推定条件相同或只改变了一项。")
+            )
         if target:
             result["target_requirement"] = target
             result["artifact_text"] += (
@@ -4124,7 +4145,10 @@ class CareerService:
             "deliverable": "两端构造快照、逐条来源、合并结果与未解决冲突。",
             "completion_check": "逐条核对副本与冲突，保留删除、时序和真实同步仍未知的条件。",
             "hypothesis": hypothesis, "local_experiment": "context_merge",
-            "purpose": "understanding_check", "previous_task_id": None, "design_change": "",
+            "purpose": "understanding_check", "previous_task_id": previous_task_id,
+            "design_change": design_change,
+            "context_run": deepcopy({key: value for key, value in result.items()
+                                     if key not in {"artifact_text", "target_requirement"}}),
             **({"target_requirement": target} if target else {}),
         })
         task_id = saved["tasks"][-1]["id"]

@@ -377,6 +377,8 @@ class ExperimentInput(BaseModel):
 
 class ContextExperimentInput(ContextCasesInput):
     question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    previous_task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    design_change: str = Field(default="", max_length=1500)
     requirement_key: str = Field(default="", max_length=100)
     hypothesis: str = Field(default="", max_length=1500)
     save: bool = False

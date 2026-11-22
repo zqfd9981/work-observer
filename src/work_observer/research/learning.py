@@ -898,6 +898,7 @@ def learning_record(row, record, store):
                        if item["id"] == row.get("task_id")), None)
     if experiment:
         note["linked_experiment"] = deepcopy(experiment)
+        note["linked_experiment"].pop("context_run", None)
         prior = experiment.get("retrieval_note_origin") or {}
         if (prior.get("id") and row.get("replaces_insight_id") == prior["id"]
                 and prior.get("source_case")):

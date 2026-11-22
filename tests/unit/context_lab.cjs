@@ -4,7 +4,7 @@ const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,
-  'window.contextLabTest={contextRecords,contextLabValues,contextLabResult,contextLab,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});}};})();'),ctx);
+  'window.contextLabTest={contextReplayDraft,contextTaskRun,contextRecords,contextLabValues,contextLabResult,contextLab,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});}};})();'),ctx);
 const api=ctx.window.contextLabTest;
 api.setup({id:'goal',questions:[],requirements:[],results:[]});
 assert.equal(api.contextRecords('m1 | 内容中有 | 分隔符','端侧')[0].value,'内容中有 | 分隔符');
@@ -21,3 +21,14 @@ const output=api.contextLabResult({outcome:'本机构造输入',conditions:'不�
 assert.match(output,/冲突，未自动选择内容/);assert.match(output,/来源：端侧第1条/);assert.match(output,/#career\/goal\/task\/saved/);
 assert.match(output,/&lt;script&gt;/);assert.match(output,/&lt;img&gt;/);assert.doesNotMatch(output,/<script>|<img>/);
 console.log('Context inputs keep explicit identities, excluded cases stay excluded, and outputs preserve conflicts and origins safely.');
+
+const oldRun={hypothesis:'保存时的原预期',data_kind:'synthetic',conditions:'原条件',outcome:'原计算输出',cases:[{name:'原输入组',input:{edge:[{key:'m1',value:'内容里有 | 分隔符'}],cloud:[]},appended:[{key:'m1',value:'内容里有 | 分隔符',side:'edge',position:1}],folded_copies:0,conflicting_keys:[],one_sided_keys:['m1'],merged:[{key:'m1',status:'one_side_only',variants:[{value:'内容里有 | 分隔符',origins:[{side:'edge',position:1}]}]}]}]};
+const savedTask={id:'parent',local_experiment:'context_merge',question_id:'question',target_requirement:{key:'old-run:3'},hypothesis:'后来编辑的预期',context_run:oldRun};
+const replay=api.contextReplayDraft(savedTask);
+assert.equal(replay.previous_task_id,'parent');assert.equal(replay.question_id,'question');assert.equal(replay.requirement_key,'');
+assert.equal(replay.target_requirement.key,'old-run:3');assert.equal(replay.hypothesis,'保存时的原预期');assert.equal(replay.result,null);
+assert.equal(api.contextRecords(replay.cases[0].edge_text,'端侧')[0].value,'内容里有 | 分隔符');
+const savedView=api.contextTaskRun(savedTask,{id:'goal'});
+assert.match(savedView,/保存时的本机计算/);assert.match(savedView,/data-context-load="parent"/);assert.doesNotMatch(savedView,/后来编辑的预期/);
+const multiline=JSON.parse(JSON.stringify(savedTask));multiline.context_run.cases[0].input.edge[0].value='第一行\n第二行';
+assert.throws(()=>api.contextReplayDraft(multiline),/不能自动改写/);
