@@ -26,24 +26,32 @@ class InquiryAnswerModel(ModelClient):
         context = json.loads(history[1]["content"])
         self.contexts.append(context)
         personal = context["project_context"]["career_evidence"]
-        assert context["project_context"]["career_action"] == "answer"
+        pair = personal.get("selected_answer_comparison", [])
+        assert context["project_context"]["career_action"] == ("ask" if pair else "answer")
         assert personal["understanding_check"] and personal["selected_inquiry"]
         assert not personal.get("selected_story") and not personal.get("selected_learning_note")
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
+        if pair:
+            assert [row["user_answer"] for row in pair] == [ANSWER, REVISED]
+            assert all(row["interview_question"] == QUESTION for row in pair)
+            assert all(row["claim_details_to_recheck"] for row in pair)
         if not outputs:
             name, args = "read_archived_documents", {"reads": [
-                {"document_id": personal["selected_answer"]["document_id"], "start": 0},
+                *([] if pair else [
+                    {"document_id": personal["selected_answer"]["document_id"], "start": 0},
+                ]),
                 *[{"document_id": row["document_id"], "start": 0}
                   for row in personal["selected_materials"]],
             ]}
         else:
             evidence = outputs[0]["evidence"]
-            answer = "".join(row["quote"] for row in sorted(
-                (row for row in evidence if row["public_document_id"]
-                 == personal["selected_answer"]["document_id"]), key=lambda row: row["start"]))
-            assert ANSWER in answer or REVISED in answer
-            assert "理解自测问题：" in answer and "用户回答：" in answer
+            if not pair:
+                answer = "".join(row["quote"] for row in sorted(
+                    (row for row in evidence if row["public_document_id"]
+                     == personal["selected_answer"]["document_id"]), key=lambda row: row["start"]))
+                assert ANSWER in answer or REVISED in answer
+                assert "理解自测问题：" in answer and "用户回答：" in answer
             assert any(MATERIAL in row["quote"] for row in evidence)
             name, args = "finish_research", {
                 "claims": [{"category": "task", "basis": "inference", "requirement": "unspecified",
@@ -102,6 +110,19 @@ def test_direct_inquiry_answers_keep_their_original_question_and_independent_fee
                            question_id=q["id"], question=QUESTION, answer=REVISED)["results"][0]
         assert second["result"]["status"] == "completed"
         assert first["step_id"] != second["step_id"]
+        before_comparison = client.get(base).json()
+        comparison = run_stage(
+            client, identity, auth, "ask", question="对照两次完整原回答，重读工作原文。",
+            question_id=q["id"], comparison_step_ids=[first["step_id"], second["step_id"]],
+            inherit_focus=False,
+        )["results"][0]
+        assert comparison["result"]["status"] == "completed", comparison["result"]["stop_reason"]
+        snapshot = comparison["result"]["career_learning_context"]["answer_comparison"]
+        assert [row["user_answer"] for row in snapshot] == [ANSWER, REVISED]
+        assert all(row["interview_question"] == QUESTION for row in snapshot)
+        assert client.get(base).json()["questions"] == before_comparison["questions"]
+        assert all(row["public_document_id"] == values["material_ids"][0]
+                   for row in comparison["result"]["evidence"])
         new_question = "业务对象变化时，需要怎样核对交付与责任的迁移条件？"
         save(base + "/questions/" + q["id"], {**values, "question": new_question}, "patch")
         third = run_stage(client, identity, auth, "answer", inquiry_answer=True,
@@ -109,8 +130,8 @@ def test_direct_inquiry_answers_keep_their_original_question_and_independent_fee
         assert third["result"]["status"] == "completed"
         assert third["interview_question"] == new_question
         retained = client.get(base).json()
-        assert len(retained["results"]) == 3 and all(row["kind"] == "answer"
-                                                     for row in retained["results"])
+        assert len(retained["results"]) == 4
+        assert sum(row["kind"] == "answer" for row in retained["results"]) == 3
         old = next(row for row in retained["results"] if row["step_id"] == first["step_id"])
         assert old["answer"] == ANSWER and old["interview_question"] == QUESTION
         assert old["result"]["evidence"] == first["result"]["evidence"]
@@ -118,6 +139,8 @@ def test_direct_inquiry_answers_keep_their_original_question_and_independent_fee
         assert retained["questions"][0]["conclusion"] == values["conclusion"]
     with TestClient(app(), base_url="http://127.0.0.1") as client:
         reopened = client.get(base).json()
-        assert len(reopened["results"]) == 3
+        assert len(reopened["results"]) == 4
+        assert next(row for row in reopened["results"] if row["step_id"] == comparison["step_id"])[
+            "result"]["career_learning_context"]["answer_comparison"] == snapshot
         assert next(row for row in reopened["results"] if row["step_id"] == first["step_id"])[
             "interview_question"] == QUESTION
