@@ -1859,6 +1859,7 @@ class CareerService:
         identity,
         kind,
         answer="",
+        inquiry_answer=False,
         offline=False,
         question_index=0,
         task_id=None,
@@ -1885,6 +1886,11 @@ class CareerService:
     ):
         if kind not in QUESTIONS and kind not in {"answer", "followup", "ask", "challenge"}:
             raise ValueError("请选择一种研究方式。")
+        if inquiry_answer and (kind != "answer" or not question_id or any((
+            source_step_id, task_id, story_id, insight_id, insight_ids, counter_insight_id,
+            comparison_step_ids, synthesis_question_ids, passage_ids,
+        ))):
+            raise ValueError("直接回答请只选择一个调查问题；其他练习可另行开始。")
         material_focus_supplied = material_id is not None or material_ids is not None
         material_ids = list(material_ids or [])
         if material_ids and (kind not in {"ask", "map", "plan"} or material_id):
@@ -2054,8 +2060,9 @@ class CareerService:
                         )
             if insight_id and kind == "teachback" and inherit_focus:
                 question_id = question_id or insight.get("question_id")
-            understanding_check = kind == "teachback"
-            if kind in {"answer", "followup"} or kind == "plan" and source_step_id:
+            understanding_check = kind == "teachback" or inquiry_answer
+            if (kind in {"answer", "followup"} and not inquiry_answer
+                    or kind == "plan" and source_step_id):
                 if sources is None:
                     sources = [row for row in self.get(identity)["results"]
                                if row["current"] and row["result"]["status"] == "completed"]
@@ -2085,6 +2092,11 @@ class CareerService:
                     "ask", "map", "plan", "reflect", "teachback", "answer", "followup", "challenge"
                 }:
                     raise ValueError("请选择已保存的调查问题，再继续提问、设计验证或反思。")
+                if inquiry_answer:
+                    if question.strip() and question.strip() != saved_question["question"]:
+                        raise ValueError("调查问题已修改，请核对当前题目后再提交回答。")
+                    material_ids = [key for key in saved_question.get("material_ids", [])
+                                    if key in project["public_document_ids"]]
                 parent_question = next(
                     (row for row in project["career"].get("questions", [])
                      if row["id"] == saved_question.get("parent_question_id")), None
@@ -2343,6 +2355,13 @@ class CareerService:
                     "claims只列有引用的岗位依据或回答中的自述依据，不生成行动计划，不安排额外调查。"
                 )
                 reply = previous["step_id"]
+            elif kind == "answer" and inquiry_answer:
+                if not answer.strip():
+                    raise ValueError("请先用自己的话回答这个调查问题，可以明确保留未知。")
+                questions, question_index = [saved_question["question"]], 0
+                question = "直接回答调查问题：" + questions[0]
+                reply = None
+                answer_record = {"interview_question": questions[0], "answer": answer}
             elif kind == "answer":
                 if not answer.strip():
                     raise ValueError("请先写下你的真实回答。")
@@ -2851,7 +2870,8 @@ class CareerService:
                     "hypothesis_a": hypothesis_a.strip() if kind == "challenge" else "",
                     "hypothesis_b": hypothesis_b.strip() if kind == "challenge" else "",
                     "material_id": material_id if kind == "ask" else None,
-                    "material_ids": material_ids if kind in {"ask", "map", "plan"} else [],
+                    "material_ids": material_ids if kind in {"ask", "map", "plan"}
+                    or inquiry_answer else [],
                     "story_id": story_id if kind in {"pitch", "ask"} | interview_kinds else None,
                     "insight_id": insight_id
                     if kind in {"ask", "challenge"} or understanding_check else None,
@@ -2865,6 +2885,7 @@ class CareerService:
                     "autonomous_rounds": 3 if autonomous else 0,
                     "materials_only": not bool(project["job_ids"]),
                     "understanding_check": understanding_check,
+                    "inquiry_answer": inquiry_answer,
                     "requirement_key": requirement_key if selected_requirement else "",
                     "requirement_text": selected_requirement["text"]
                     if selected_requirement
@@ -2909,6 +2930,9 @@ class CareerService:
             if kind == "ask" and material_id:
                 project["steps"][-1]["career_material_id"] = material_id
             if kind in {"ask", "map", "plan"} and material_ids:
+                project["steps"][-1]["career_material_ids"] = material_ids[:]
+            if inquiry_answer:
+                project["steps"][-1]["career_inquiry_answer"] = True
                 project["steps"][-1]["career_material_ids"] = material_ids[:]
             if story_id and kind in {"pitch", "ask"} | interview_kinds:
                 project["steps"][-1]["career_story_id"] = story_id

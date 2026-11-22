@@ -250,6 +250,7 @@ class CareerResearchInput(BaseModel):
         "evidence",
     ]
     answer: str = Field(default="", max_length=2500)
+    inquiry_answer: bool = False
     offline: bool = False
     allow_public: bool = False
     question_index: int = Field(default=0, ge=0, le=20)
