@@ -1539,10 +1539,6 @@ class ProjectService:
                     "proposed_check": row["completion_check"],
                     "origin": row.get("origin", "research"),
                     "purpose": row.get("purpose"),
-                    "retrieval_review": deepcopy(step["career_retrieval_review"])
-                    if full and (step.get("career_retrieval_review") or {}).get("task_id")
-                    == row["id"]
-                    else None,
                     "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
                     "state": row["state"],
                     "reported_observation": row["outcome"] if full else row["outcome"][:500],
@@ -1935,6 +1931,7 @@ class ProjectService:
                 "selected_map_comparison": selected_maps,
                 "selected_answer_comparison": selected_answers,
                 "selected_learning_note": learning_note(selected_note) if selected_note else None,
+                "retrieval_review": deepcopy(step.get("career_retrieval_review")),
                 "selected_learning_notes": [learning_note(row)
                                             for key in step.get("career_insight_ids", [])
                                             for row in notes if row["id"] == key],

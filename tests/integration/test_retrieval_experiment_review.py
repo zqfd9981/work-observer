@@ -17,16 +17,23 @@ class RetrievalReviewModel(ModelClient):
         context = json.loads(history[1]["content"])
         self.contexts.append(context)
         personal = context["project_context"]["career_evidence"]
-        experiment = next(row for row in personal["experiments"]
-                          if row["id"] == personal["selected_experiment_id"])
-        review = experiment["retrieval_review"]
+        review = personal["retrieval_review"]
+        if personal["selected_experiment_id"]:
+            assert review["task_id"] == personal["selected_experiment_id"]
+        else:
+            note = personal["selected_learning_note"]
+            assert note["task_id"] == review["task_id"] and not note["use_for_research"]
         assert review["available"] and review["input"]["job_ids"] == [self.job]
         assert review["runs"][0]["metrics"]["source_recall"] == 0
         checks = review["runs"][0]["missing_source_checks"]
         assert {row["reason"] for row in checks} == {"query_expression_missing"}
         assert all("evidence" not in row for row in checks)
         assert {row["id"] for row in context["fixed_scope"]["jobs"]} == {self.job}
-        assert set(context["fixed_scope"]["archived_public_ids"]) == {self.document, self.artifact}
+        answer = personal.get("selected_answer")
+        documents = {self.document, self.artifact}
+        if answer:
+            documents.add(answer["document_id"])
+        assert set(context["fixed_scope"]["archived_public_ids"]) == documents
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
         if not outputs:
@@ -35,6 +42,7 @@ class RetrievalReviewModel(ModelClient):
                     "diagnostic_read_start"
                 ]},
                 {"document_id": self.document, "start": 0},
+                *([{"document_id": answer["document_id"], "start": 0}] if answer else []),
             ]}
         elif len(outputs) == 1:
             assert any("missing_source_checks" in row["quote"] for row in outputs[0]["evidence"])
@@ -49,6 +57,8 @@ class RetrievalReviewModel(ModelClient):
                             "evidence_ids": [row["citation_key"]]} for row in evidence],
                 "gaps": ["本机词面检索的局部观察，不能证明语义效果或个人胜任。"],
             }
+            if context["project_context"]["career_action"] in {"teachback", "followup"}:
+                args["gaps"] = ["为何一次没找到端云同步，不能直接证明该岗位没有这项工作？"]
             finish = next(tool for tool in self.tools if tool["name"] == name)["parameters"]
             if "revisions" in finish["properties"]:
                 args["revisions"] = []
@@ -126,6 +136,55 @@ def test_run_review_keeps_original_corpus_and_reads_diagnostics_and_historical_j
             assert set(pending["public_document_ids"]) == {document, artifact}
         explicit = prepare("ask", question="只对读这份工作资料", selected_job_ids=[])
         assert explicit["job_ids"] == []
+
+        noted = client.post(base + "/insights", headers=auth, json={
+            "task_id": task_id, "question_id": created["focus_question_id"],
+            "previous_view": "只要使用RAG这个泛词，就能找到同步说明。",
+            "observation": "RAG未找到预期来源；端云同步找到了两份资料。",
+            "current_view": "词面表达会影响这个小样本的返回，尚不清楚语义效果。",
+            "open_question": "换掉主题表达后，能否区分查询缺词和片段数量限制？",
+        })
+        assert noted.status_code == 201, noted.text
+        note = noted.json()["insights"][-1]
+        held = client.post(base + "/insights/" + note["id"] + "/use", headers=auth,
+                           json={"use_for_research": False})
+        assert held.status_code == 200, held.text
+        quiz = prepare("teachback", keep=True, task_id=None, insight_id=note["id"])
+        assert quiz["job_ids"] == jobs[:1]
+        assert set(quiz["public_document_ids"]) == {document, artifact}
+
+        def run(step):
+            response = client.post("/api/projects/" + goal + "/run", headers=auth,
+                                   json={"step_id": step["id"]})
+            assert response.status_code == 202, response.text
+            row = settled(client, base)["results"][0]
+            assert row["result"]["status"] == "completed", row["result"].get("stop_reason")
+            assert row["result"]["career_learning_context"]["retrieval_review"] == step[
+                "career_retrieval_review"
+            ]
+            return row
+
+        quiz_result = run(quiz)
+        feedback = prepare("answer", keep=True, task_id=None, source_step_id=quiz_result["step_id"],
+                           answer="只观察到词面漏回，不能证明岗位没有这项工作。尚未验证语义效果。",
+                           question_index=0)
+        assert feedback["job_ids"] == jobs[:1]
+        answered = run(feedback)
+        assert answered["insight_id"] == note["id"] and answered["understanding_check"]
+        followup = prepare("followup", keep=True, task_id=None, source_step_id=answered["step_id"])
+        assert followup["job_ids"] == jobs[:1]
+        run(followup)
+        follow = client.post(base + "/questions", headers=auth, json={
+            "question": note["open_question"], "source_insight_id": note["id"],
+            "parent_question_id": created["focus_question_id"], "material_ids": [artifact],
+        })
+        assert follow.status_code == 201, follow.text
+        child_question = follow.json()["questions"][-1]
+        child = prepare("ask", task_id=None, question_id=child_question["id"],
+                        question="沿着这个未知回查检索记录")
+        assert child["job_ids"] == jobs[:1]
+        assert set(child["public_document_ids"]) == {document, artifact}
+        assert not client.get(base).json()["insights"][-1]["use_for_research"]
 
         removed = client.delete(base + "/materials/" + document, headers=auth)
         assert removed.status_code == 200, removed.text

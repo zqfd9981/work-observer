@@ -2955,15 +2955,25 @@ class CareerService:
                     "不能从业务/技术说明补造具体招聘资格或个人职责，也不能推定用户经历与能力。"
                     "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
                 )
-            if task_id and kind in {"reflect", "ask", "challenge", "plan", "interview",
-                                   "answer", "followup"}:
+            if kind in {"reflect", "ask", "challenge", "plan", "interview", "teachback",
+                        "answer", "followup"} and (
+                task_id or inherit_focus and (insight_id or question_id)
+            ):
                 from work_observer.research.retrieval_experiment import (
                     is_retrieval_task,
                     review_context,
                 )
 
+                retrieval_task_id = task_id
+                if not retrieval_task_id and inherit_focus and not story_id:
+                    origin_id = insight_id or (
+                        saved_question.get("source_insight_id") if question_id else None
+                    )
+                    origin_note = next((row for row in project["career"].get("insights", [])
+                                        if row["id"] == origin_id), {})
+                    retrieval_task_id = origin_note.get("task_id")
                 local_task = next((row for row in project["career"]["tasks"]
-                                   if row["id"] == task_id), None)
+                                   if row["id"] == retrieval_task_id), None)
                 if local_task and is_retrieval_task(local_task):
                     retrieval_review = review_context(self.repository, project, local_task)
                     if inherit_focus:

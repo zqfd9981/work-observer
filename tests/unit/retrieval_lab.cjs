@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalReviewRecall,retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -47,3 +47,6 @@ assert.equal(api.retrievalMatchLabel({retrieval:{matched_terms:['端云同步']}
 assert.equal(api.retrievalMatchLabel({retrieval:{matched_terms:[],source_label_hits:['Agent']}}),'来源标签：Agent');
 assert.equal(api.retrievalMatchLabel({}),'未记录具体表达');
 console.log('Local retrieval inputs, explicit corpus and labels, undefined denominators, safe text, and saved-record links render.');
+
+const carried=api.retrievalReviewRecall({model_calls:2,career_learning_context:{retrieval_review:{task_id:'run',artifact_document_id:'record',available:true,input:{job_ids:['job'],document_ids:['doc']},runs:[{name:'原表达',query:{terms:['<img>'],required_terms:['记忆']},missing_source_checks:[{detail:'正文没有该表达'}]}]}}},'goal');
+assert.match(carried,/不表示本轮重新执行检索/);assert.match(carried,/原实验选定 1 个岗位和 1 份资料/);assert.match(carried,/#career\/goal\/task\/run/);assert.match(carried,/正文没有该表达/);assert.match(carried,/&lt;img&gt;/);assert.doesNotMatch(carried,/<img>/);
