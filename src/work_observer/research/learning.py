@@ -124,6 +124,7 @@ class LearningNotebook:
                 ("insight", notebook.search, "notes", "id"),
                 ("research", notebook.search_research_history, "research", "step_id"),
                 ("experiment", notebook.search_experiments, "experiments", "id"),
+                ("inquiry", notebook.search_inquiries, "inquiries", "id"),
             ):
                 page_offset = 0
                 while True:
@@ -145,7 +146,7 @@ class LearningNotebook:
         return {
             "memories": ranked[offset:offset + 6], "matching_count": total, "offset": offset,
             "next_offset": offset + 6 if offset + 6 < total else None,
-            "notice": "其他求职目标中选用的认识、已完成研究和保存的实验，只是关键词召回预览。"
+            "notice": "其他求职目标中选用的认识、已完成研究、实验和调查笔记的关键词预览。"
                       "新旧顺序不表示正确性，需read_other_goal_memory读完整内容与原场景。"
                       "实验计划、预期和实际观察分别保留；失败或完成状态都不证明个人能力。"
                       "不改变选用状态，不复制记录，不把其他目标的原文加入本轮范围。",
@@ -153,13 +154,15 @@ class LearningNotebook:
 
     def read_other_goal_memory(self, project_id, kind, record_id):
         project = next((row for row in self._other_goals() if row["id"] == project_id), None)
-        if not project or kind not in {"insight", "research", "experiment"}:
+        if not project or kind not in {"insight", "research", "experiment", "inquiry"}:
             raise ProbeError("OTHER_GOAL_MEMORY_NOT_AVAILABLE")
         notebook = LearningNotebook(lambda: project, self.store)
         if kind == "insight":
             memory = notebook.read(record_id)["note"]
         elif kind == "experiment":
             memory = notebook.read_experiments([record_id])["experiments"][0]
+        elif kind == "inquiry":
+            memory = notebook.read_inquiry(record_id)["inquiry"]
         else:
             memory = notebook.read_research_history(record_id)["research"]
         return {

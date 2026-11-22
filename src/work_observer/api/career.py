@@ -102,6 +102,7 @@ class ReuseInput(BaseModel):
     source_project_id: str = Field(pattern="^[a-f0-9]{32}$")
     kind: Literal["story", "task", "insight", "question", "discussion"]
     record_id: str = Field(pattern="^[a-f0-9]{32}$")
+    source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 class CareerMaterialInput(BaseModel):

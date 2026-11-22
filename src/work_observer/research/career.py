@@ -1337,7 +1337,7 @@ class CareerService:
             self.projects._write(project)
         return self.get(identity)
 
-    def reuse(self, identity, *, source_project_id, kind, record_id):
+    def reuse(self, identity, *, source_project_id, kind, record_id, source_step_id=None):
         with self.store.lock, self.store.db:
             project = self._project(identity)
             source = self._project(source_project_id)
@@ -1359,6 +1359,20 @@ class CareerService:
             )
             if not original:
                 raise ValueError("原目标中已找不到这份记录，请重新选择。")
+            if source_step_id:
+                study = next((row for row in self.get(identity)["results"]
+                              if row["step_id"] == source_step_id
+                              and (row.get("result") or {}).get("status") == "completed"
+                              and row["state"] != "abandoned"), None)
+                reads = (study or {}).get("result", {}).get(
+                    "career_learning_context", {},
+                ).get("read_other_goals", [])
+                recalled = next((row for row in reads if row["kind"] == "inquiry"
+                                 and row["project_id"] == source_project_id
+                                 and row["record_id"] == record_id), None)
+                if kind != "question" or not recalled:
+                    raise ValueError("请从本轮实际读取过的其他目标调查中选择，再带入当前目标。")
+                original = recalled["memory"]
             understanding = kind in {"insight", "question", "discussion"}
             records = project["career"].setdefault("questions" if understanding else collection, [])
             provenance = {
@@ -1444,8 +1458,11 @@ class CareerService:
                         else "",
                         "state": "open",
                         "conclusion": "",
-                        "source_step_id": None,
+                        "source_step_id": source_step_id,
                         "conclusion_step_id": None,
+                        **({"hypothesis_a": "", "hypothesis_b": "", "material_ids": [],
+                            "selected_job_ids": [], "evidence_passages": []}
+                           if source_step_id else {}),
                         "origin": "user",
                         "reused_from": provenance,
                         "created_at": now(),
@@ -1466,6 +1483,12 @@ class CareerService:
                             if kind == "insight"
                             else carried.get("was_in_use"),
                             "record_state": original.get("state"),
+                            **({"inquiry": {key: deepcopy(original.get(key)) for key in (
+                                "id", "question", "why_matters", "next_evidence", "state",
+                                "conclusion", "hypothesis_a", "hypothesis_b", "source_passage",
+                                "evidence_passages", "selected_job_ids", "material_ids",
+                                "created_at", "updated_at", "origin_learning_note",
+                            )}} if kind == "question" and source_step_id else {}),
                             "recorded_at": original.get("updated_at") or original.get("created_at"),
                             "notice": "来自其他目标的个人理解与观察，仅作待验证起点，"
                             "不是当前岗位事实或独立证据。",
@@ -2551,6 +2574,9 @@ class CareerService:
                     "work_map是原分析的工作关系，保留关系理由、迁移边界和未知，不当作新证据。"
                     "source_jobs是原研究范围，source_references仅供定位，并未自动带入当前资料。"
                     "结合当前目标重新核对；来源不可读就明确无法重核，不把旧分析当作个人能力或新证据。"
+                    "carried_understanding.inquiry若存在，是本轮明确取回的其他目标调查快照，"
+                    "含旧问题、A/B解释和摘录标注；它们未自动变成当前假设、结论或可读资料。"
+                    "先核对旧场景与当前范围，再按可用原文查证，不用标注关系代替证据。"
                     "明确哪些已经有材料支持、哪些还不能回答，并给出下一步最有价值的查证方向。"
                     "不因为本轮生成回答而宣称问题已解决。"
                     "若含followup_to_recheck，这是用户点选带回的直接后续问题及当次答复。"

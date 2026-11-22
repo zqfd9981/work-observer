@@ -338,3 +338,5 @@
 .career-understanding-update,.career-understanding-inputs{padding:16px;border:1px solid var(--line);border-radius:10px;margin:16px 0}.career-understanding-update label{display:grid;gap:8px;margin:14px 0}.career-understanding-update p,.career-understanding-inputs p,.career-understanding-update-origin p{white-space:pre-wrap;overflow-wrap:anywhere}.career-understanding-inputs article{padding:14px 0;border-top:1px solid var(--line)}.career-understanding-update-origin{padding:16px;border-left:3px solid var(--line);margin:14px 0}
 
 .career-experiment-design-origin{padding:16px;border-left:3px solid var(--line);background:var(--green-soft);margin:14px 0}.career-experiment-design-origin p{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.career-carried-inquiry{padding:16px;border-left:3px solid var(--line);margin:16px 0;background:var(--green-soft)}.career-carried-inquiry p,.career-carried-inquiry blockquote{white-space:pre-wrap;overflow-wrap:anywhere}
