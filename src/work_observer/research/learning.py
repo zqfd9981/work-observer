@@ -80,6 +80,28 @@ def experiment_claim_origin(project, task, store):
     }
 
 
+def experiment_relation_origin(project, task, store):
+    index = task.get("source_relation_index")
+    if index is None:
+        return None
+    step = next((row for row in project.get("steps", [])
+                 if row["id"] == task.get("source_step_id")), {})
+    run = store.get(step["run_id"]) if step.get("run_id") else {}
+    result = (run or {}).get("result") or {}
+    relations = (result.get("work_map") or {}).get("work_relations", [])
+    if not run or run.get("state") == "invalidated" or not 0 <= index < len(relations):
+        return None
+    study = next((row for row in project.get("career", {}).get("runs", [])
+                  if row["step_id"] == task.get("source_step_id")), None)
+    if not study:
+        return None
+    return {
+        **work_relation_record(project, study, result, index, False),
+        "notice": "实验所针对的历史工作关系及当时引用；连接理由和迁移限制保留完整。"
+                  "它是待验证解释，不是本次观察或新证据，仍需回查原文与实际条件。",
+    }
+
+
 def experiment_template_origin(project, task, store):
     if not task.get("source_experiment_id"):
         return None
@@ -321,6 +343,7 @@ class LearningNotebook:
                 continue
             original_answer = experiment_answer_origin(career, row) or {}
             original_claim = experiment_claim_origin(project, row, self.store) or {}
+            original_relation = experiment_relation_origin(project, row, self.store) or {}
             text = match_text("\n".join(row.get(key, "") for key in (
                 "title", "task_or_ability", "deliverable", "completion_check",
                 "hypothesis", "outcome", "design_change", "artifact", "comparison_conditions",
@@ -328,7 +351,8 @@ class LearningNotebook:
                 value for case in row.get("comparison_rows", []) for value in case.values()
             ) + "\n" + (original_answer.get("original_question") or "")
                 + "\n" + (original_answer.get("user_answer") or "")
-                + "\n" + original_claim.get("claim", {}).get("text", ""))
+                + "\n" + original_claim.get("claim", {}).get("text", "")
+                + "\n" + json.dumps(original_relation, ensure_ascii=False))
             hits = [term for term in terms if match_text(term) in text]
             if hits or not terms:
                 ranked.append((len(hits), row.get("updated_at") or row["created_at"],
@@ -467,6 +491,7 @@ class LearningNotebook:
                 "target_requirement": row.get("target_requirement"),
                 "answer_to_verify": experiment_answer_origin(career, row),
                 "claim_to_verify": experiment_claim_origin(project, row, self.store),
+                "relation_to_verify": experiment_relation_origin(project, row, self.store),
                 "template_origin": experiment_template_origin(project, row, self.store),
                 "origin": row.get("origin", "research"),
                 "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
@@ -752,6 +777,7 @@ def learning_record(row, record, store):
         note["linked_experiment"] = deepcopy(experiment)
         for key, origin in {
             "claim_to_verify": experiment_claim_origin(record, experiment, store),
+            "relation_to_verify": experiment_relation_origin(record, experiment, store),
             "template_origin": experiment_template_origin(record, experiment, store),
         }.items():
             if origin:

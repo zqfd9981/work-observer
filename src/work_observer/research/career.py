@@ -21,6 +21,7 @@ from work_observer.research.applications import background as application_backgr
 from work_observer.research.archived_sources import catalog as archive_catalog
 from work_observer.research.learning import (
     calculation_records,
+    experiment_relation_origin,
     learning_record,
     work_relation_record,
 )
@@ -497,6 +498,10 @@ class CareerService:
                             "outcome",
                             "design_change",
                         )
+                    ) + "\n" + row.get("comparison_conditions", "")
+                    + "\n" + json.dumps(row.get("comparison_rows", []), ensure_ascii=False)
+                    + "\n" + json.dumps(
+                        experiment_relation_origin(owner, row, self.store), ensure_ascii=False,
                     ),
                     "experiments",
                 )
@@ -742,6 +747,11 @@ class CareerService:
                           and note.get("source_relation_index") == index]
         if personal_notes:
             row["personal_notes"] = personal_notes
+        tasks = [deepcopy(task) for task in owner.get("career", owner).get("tasks", [])
+                 if task.get("source_step_id") == study["step_id"]
+                 and task.get("source_relation_index") == index]
+        if tasks:
+            row["verification_tasks"] = tasks
         return row
 
     def relation_inquiry(self, *, relations, question, title="", include_sources=True):
@@ -3264,7 +3274,10 @@ class CareerService:
                 }}
             if data.get("source_experiment_id") and not data.get("source_step_id"):
                 raise ValueError("请从本轮已读取的旧实验中选择设计，再准备复验。")
-            if data.get("source_claim_index") is not None and (
+            relation_index = data.get("source_relation_index")
+            if relation_index is not None and data.get("source_claim_index") is not None:
+                raise ValueError("请选择一条工作关系或一条判断作为实验起点。")
+            if (data.get("source_claim_index") is not None or relation_index is not None) and (
                 not data.get("source_step_id") or data.get("source_experiment_id")
             ):
                 raise ValueError("请从一份研究中的具体判断准备验证。")
@@ -3286,6 +3299,11 @@ class CareerService:
                         raise ValueError(
                             "请说明本次场景、对象或条件与旧设计的异同，再保存复验计划。"
                         )
+                    data = {**data, "purpose": "understanding_check"}
+                elif relation_index is not None:
+                    relations = (source["result"].get("work_map") or {}).get("work_relations", [])
+                    if relation_index >= len(relations):
+                        raise ValueError("所选研究中没有这条工作关系，请重新选择。")
                     data = {**data, "purpose": "understanding_check"}
                 elif data.get("source_claim_index") is not None:
                     if data["source_claim_index"] >= len(source["result"].get("claims", [])):
@@ -3315,7 +3333,8 @@ class CareerService:
                     **({"source_step_id": previous.get("source_step_id"),
                         "purpose": "understanding_check",
                         "source_experiment_id": previous.get("source_experiment_id"),
-                        "source_claim_index": previous.get("source_claim_index")}
+                        "source_claim_index": previous.get("source_claim_index"),
+                        "source_relation_index": previous.get("source_relation_index")}
                        if previous.get("purpose") == "understanding_check" else {}),
                 }
             task_id = uuid4().hex

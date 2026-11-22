@@ -1511,6 +1511,7 @@ class ProjectService:
             from work_observer.research.learning import (
                 experiment_answer_origin,
                 experiment_claim_origin,
+                experiment_relation_origin,
                 experiment_template_origin,
                 learning_record,
                 recall_learning_notes,
@@ -1542,6 +1543,8 @@ class ProjectService:
                     "previous_task_id": row.get("previous_task_id"),
                     "source_step_id": row.get("source_step_id"),
                     "answer_to_verify": experiment_answer_origin(career, row) if full else None,
+                    "relation_to_verify": experiment_relation_origin(record, row, self.store)
+                    if full else None,
                     "claim_to_verify": experiment_claim_origin(record, row, self.store)
                     if full else None,
                     "template_origin": experiment_template_origin(record, row, self.store)

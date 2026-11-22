@@ -324,6 +324,8 @@ LEARNING_TOOLS = [
         "read_experiments",
         "按ID一次读1至6条完整实验设计、预期、用户观察、前次实验和产物定位；"
         "claim_to_verify保留待检验的历史Agent判断及当时引用，不是本轮新证据。"
+        "relation_to_verify保留原工作关系、连接理由、完整迁移限制和引用；"
+        "实验观察不自动证明关系成立，需区分原条件、反例和仍未知之处。"
         "只读记录，不执行实验。本目标仍保留的关联日志会提供可读document_id，"
         "再用原文工具核对；不加入其他目标的资料，不恢复已移除的产物。",
         {"experiment_ids": {"type": "array", "items": {"type": "string"},
