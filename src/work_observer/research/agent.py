@@ -1548,6 +1548,13 @@ async def _research(
         "continued_discussion"
     ) or {}).get("selected_claim_to_recheck"):
         result["career_learning_context"] = {"claim_to_review": deepcopy(claim_focus)}
+    if notes := ((conversation_context or {}).get("career_evidence", {}).get(
+        "selected_inquiry"
+    ) or {}).get("carried_understanding", {}):
+        if notes.get("learning_notes"):
+            result.setdefault("career_learning_context", {})["understanding_comparison"] = deepcopy(
+                notes,
+            )
     if scope["truncated"]:
         result["gaps"].append(
             "候选超过 20 个，仅研究本页；SQL 总数包含全部符合范围的记录。请收窄条件。"

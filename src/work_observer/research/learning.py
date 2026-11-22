@@ -391,6 +391,15 @@ class LearningNotebook:
                 "question", "why_matters", "next_evidence", "conclusion",
                 "hypothesis_a", "hypothesis_b",
             )}
+            for index, origin in enumerate((row.get("carried_understanding") or {}).get(
+                "learning_notes", [],
+            )):
+                fields[f"starting_note_{index}"] = "\n".join(
+                    origin["note"].get(key, "") for key in (
+                        "previous_view", "reported_observation", "current_user_view",
+                        "open_question",
+                    )
+                )
             for index, passage in enumerate([
                 row.get("source_passage"), *row.get("evidence_passages", []),
             ]):
@@ -646,6 +655,8 @@ class LearningNotebook:
             record["local_calculation_notice"] = CALCULATION_NOTICE
         if focus := result.get("career_learning_context", {}).get("claim_to_review"):
             record["claim_to_review"] = deepcopy(focus)
+        if comparison := result.get("career_learning_context", {}).get("understanding_comparison"):
+            record["understanding_comparison"] = deepcopy(comparison)
         current_notes = [deepcopy(row) for row in self.project_reader().get("career", {}).get(
             "insights", [],
         ) if row.get("source_step_id") == step_id and row.get("source_relation_index") is not None
@@ -795,6 +806,8 @@ def learning_record(row, record, store):
     if inquiry:
         note["inquiry_question"] = inquiry["question"]
         note["inquiry_notice"] = "关联问题的当前表述，只供定位；不改变这份认识的原话或采用状态。"
+        if (inquiry.get("carried_understanding") or {}).get("learning_notes"):
+            note["source_understanding_comparison"] = deepcopy(inquiry["carried_understanding"])
     links = learning_inquiry_links(record.get("career", {}), row)
     note["inquiry_links"] = links
     if links:
@@ -817,6 +830,8 @@ def learning_record(row, record, store):
             result = {}
         if focus := result.get("career_learning_context", {}).get("claim_to_review"):
             note["source_claim_review"] = deepcopy(focus)
+        if comparison := result.get("career_learning_context", {}).get("understanding_comparison"):
+            note["source_understanding_comparison"] = deepcopy(comparison)
         claims = result.get("claims", [])
         selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
             claims if (links or row.get("source_step_id")) and index is None else []
@@ -902,6 +917,8 @@ def learning_record(row, record, store):
                         "job_id",
                         "public_document_id",
                         "snapshot_id",
+                        "document_id",
+                        "historical_cutoffs",
                         "start",
                         "end",
                         "quote",

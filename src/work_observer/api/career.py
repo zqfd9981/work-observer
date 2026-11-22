@@ -81,6 +81,22 @@ class WorkRelationInquiryInput(BaseModel):
     include_sources: bool = True
 
 
+class UnderstandingReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str = Field(pattern="^[a-f0-9]{32}$")
+    note_id: str = Field(pattern="^[a-f0-9]{32}$")
+
+
+class UnderstandingInquiryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(default="", max_length=150)
+    question: str = Field(min_length=1, max_length=1500)
+    why_matters: str = Field(default="", max_length=1000)
+    next_evidence: str = Field(default="", max_length=1500)
+    notes: list[UnderstandingReference] = Field(min_length=2, max_length=2)
+    include_sources: bool = True
+
+
 class StoryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     title: str = Field(min_length=1, max_length=150)
@@ -446,6 +462,10 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         data = WorkRelationInquiryInput.model_validate(await read_json(request))
         return change(lambda: service().relation_inquiry(**data.model_dump()), 201)
 
+    async def understanding_inquiry(request):
+        data = UnderstandingInquiryInput.model_validate(await read_json(request))
+        return change(lambda: service().understanding_inquiry(**data.model_dump()), 201)
+
     async def capture_passage(request):
         data = CapturePassageInput.model_validate(await read_json(request))
         return change(lambda: service().capture_passage(**data.model_dump()), 201)
@@ -672,6 +692,7 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/review", review),
         Route("/api/career/work-relations", work_relations),
         Route("/api/career/work-relations/inquiry", relation_inquiry, methods=["POST"]),
+        Route("/api/career/understanding/inquiry", understanding_inquiry, methods=["POST"]),
         Route("/api/career/search", search),
         Route("/api/career/capture-passage", capture_passage, methods=["POST"]),
         Route("/api/career", create, methods=["POST"]),

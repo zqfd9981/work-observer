@@ -310,6 +310,8 @@ class Catalog:
                     {
                         "job_id": observation.job_id,
                         "snapshot_id": observation.snapshot_id,
+                        "observed_at": observation.observed_at,
+                        "processed_at": observation.processed_at,
                         "kind": observation.kind,
                         "payload": session.get(JobSnapshot, observation.snapshot_id).payload,
                     }

@@ -245,6 +245,22 @@ def _cascade(
     related = workflows.related_runs(pending_runs, pending_memories, affected_projects)
     pending_runs.update(related["affected_run_ids"])
     affected_projects.update(related["affected_project_ids"])
+    # A saved two-note inquiry already carries personal text before its first run.
+    copied_projects = projects.list(all_records=True)
+    while True:
+        copies = [project for project in copied_projects
+                  if project["id"] not in affected_projects and any(
+                      origin["project_id"] in affected_projects
+                      for inquiry in (project.get("career") or {}).get("questions", [])
+                      for origin in (inquiry.get("carried_understanding") or {}).get(
+                          "learning_notes", [],
+                      )
+                  )]
+        if not copies:
+            break
+        affected_projects.update(project["id"] for project in copies)
+        pending_runs.update(step["run_id"] for project in copies
+                            for step in project.get("steps", []) if step.get("run_id"))
     _journal(
         store,
         operation_id,

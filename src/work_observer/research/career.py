@@ -555,6 +555,12 @@ class CareerService:
                         carried.get(key, "")
                         for key in ("understanding", "observation", "previous_view")
                     )
+                    + "\n" + "\n".join(
+                        origin["note"].get(key, "")
+                        for origin in carried.get("learning_notes", [])
+                        for key in ("previous_view", "reported_observation", "current_user_view",
+                                    "open_question")
+                    )
                     + "\n" + passage.get("title", "") + "\n" + passage.get("quote", "")
                     + "\n" + "\n".join(
                         "\n".join(item.get(key, "") for key in (
@@ -757,6 +763,54 @@ class CareerService:
             row["verification_tasks"] = tasks
         return row
 
+    def _comparison_sources(self, origins, include_sources):
+        documents, jobs, skipped, references = [], [], [], []
+        public = PublicDocumentService(self.repository, self.raw_directory / "public")
+        for origin in origins:
+            for source in origin["evidence"]:
+                reference = {key: source.get(key) for key in (
+                    "job_id", "public_document_id", "document_id", "snapshot_id", "title",
+                    "evidence_kind", "start", "end", "historical_cutoffs",
+                )}
+                source["available_for_recheck"] = False
+                if include_sources:
+                    try:
+                        if source.get("public_document_id"):
+                            document = public.document(source["public_document_id"])
+                            if document["integrity"] != "verified":
+                                raise ValueError("原文文件缺失或已变化")
+                            documents.append(source["public_document_id"])
+                        elif source.get("document_id"):
+                            document = Catalog(self.repository).document(source["document_id"])
+                            if document["integrity"] != "verified":
+                                raise ValueError("旧岗位原文缺失或已变化")
+                            version = next((row for row in document["versions"]
+                                            if row["snapshot_id"] == source.get("snapshot_id")
+                                            and row["kind"] == "detail"), None)
+                            if not version or source.get("job_id") not in {None, version["job_id"]}:
+                                raise ValueError("这份引用的岗位正文已无法定位")
+                            source["job_id"] = reference["job_id"] = version["job_id"]
+                            self.repository.job(version["job_id"])
+                            jobs.append(version["job_id"])
+                            reference["as_of"] = (source.get("historical_cutoffs") or [
+                                max(version["observed_at"], version["processed_at"],
+                                    key=lambda value: datetime.fromisoformat(value.replace(
+                                        "Z", "+00:00",
+                                    ))),
+                            ])[0]
+                        else:
+                            raise ValueError("这段引用没有可带入的归档正文定位")
+                    except (ProbeError, ValueError) as error:
+                        skipped.append({"title": source["title"], "reason": (
+                            "原文暂不可读，引用保留供回查。" if isinstance(error, ProbeError)
+                            else str(error)
+                        )})
+                    else:
+                        source["available_for_recheck"] = True
+                references.append(reference)
+        documents, jobs = list(dict.fromkeys(documents)), list(dict.fromkeys(jobs))
+        return documents, jobs, skipped, references
+
     def relation_inquiry(self, *, relations, question, title="", include_sources=True):
         keys = {(row["project_id"], row["step_id"], row["relation_index"]) for row in relations}
         if len(keys) != 2:
@@ -782,42 +836,7 @@ class CareerService:
             for source in snapshot["evidence"]:
                 source.pop("id", None)
             origins.append(snapshot)
-        documents, jobs, skipped, references = [], [], [], []
-        public = PublicDocumentService(self.repository, self.raw_directory / "public")
-        for origin in origins:
-            for source in origin["evidence"]:
-                reference = {key: source.get(key) for key in (
-                    "job_id", "public_document_id", "document_id", "snapshot_id", "title",
-                    "evidence_kind", "start", "end", "historical_cutoffs",
-                )}
-                source["available_for_recheck"] = False
-                if include_sources:
-                    try:
-                        if source.get("public_document_id"):
-                            document = public.document(source["public_document_id"])
-                            if document["integrity"] != "verified":
-                                raise ValueError("原文文件缺失或已变化")
-                            documents.append(source["public_document_id"])
-                        elif source.get("job_id") and source.get("document_id"):
-                            document = Catalog(self.repository).document(source["document_id"])
-                            if document["integrity"] != "verified":
-                                raise ValueError("旧岗位原文缺失或已变化")
-                            self.repository.job(source["job_id"])
-                            jobs.append(source["job_id"])
-                            reference["as_of"] = (source.get("historical_cutoffs") or [
-                                origin["research_cutoff"],
-                            ])[0]
-                        else:
-                            raise ValueError("这段引用没有可带入的归档正文定位")
-                    except (ProbeError, ValueError) as error:
-                        skipped.append({"title": source["title"], "reason": (
-                            "原文暂不可读，引用保留供回查。" if isinstance(error, ProbeError)
-                            else str(error)
-                        )})
-                    else:
-                        source["available_for_recheck"] = True
-                references.append(reference)
-        documents, jobs = list(dict.fromkeys(documents)), list(dict.fromkeys(jobs))
+        documents, jobs, skipped, references = self._comparison_sources(origins, include_sources)
         if len(jobs) > 6:
             raise ValueError("两条关系涉及超过6个岗位，请选择范围更集中的关系。")
         saved = self.create(title=title or question[:150], goal=question[:1000],
@@ -835,6 +854,55 @@ class CareerService:
             "selected_job_ids": jobs, "material_ids": documents if len(documents) <= 6 else [],
             "carried_understanding": {"work_relations": origins,
                                       "source_references": references,
+                                      "skipped_sources": skipped,
+                                      "include_sources": include_sources},
+        })
+        return self.focus_question(identity, saved["questions"][-1]["id"])
+
+    def understanding_inquiry(self, *, notes, question, title="", why_matters="",
+                              next_evidence="", include_sources=True):
+        if len({(row["project_id"], row["note_id"]) for row in notes}) != 2:
+            raise ValueError("请选择两份不同的认识，再建立共同待查的问题。")
+        origins, sources, owners = [], [], {}
+        for reference in notes:
+            identity = reference["project_id"]
+            if identity not in owners:
+                owners[identity] = self._project(identity)
+            owner = owners[identity]
+            original = next((row for row in owner["career"].get("insights", [])
+                             if row["id"] == reference["note_id"]), None)
+            if not original:
+                raise ValueError("有一份认识已无法读取，请回到原目标重新选择。")
+            memory = learning_record(original, owner, self.store)
+            locators = memory["source_locators"]
+            if artifact := (memory.get("linked_experiment") or {}).get("artifact_document_id"):
+                locators.append({"public_document_id": artifact,
+                                 "title": memory["linked_experiment"].get("artifact_title")
+                                 or memory["linked_experiment"]["title"],
+                                 "evidence_kind": "work_material"})
+            usable = [row for row in locators if row.get("evidence_kind") not in {
+                "search_answer", "search_excerpt", "list_summary",
+            }]
+            sources.append({"evidence": usable})
+            origins.append({"project_id": identity, "project_title": owner["title"],
+                            "project_goal": owner["goal"], "note_id": original["id"],
+                            "note": memory})
+        documents, jobs, skipped, references = self._comparison_sources(sources, include_sources)
+        if len(jobs) > 6:
+            raise ValueError("两份认识涉及超过6个岗位，请选择范围更集中的记录。")
+        saved = self.create(title=title or question[:150], goal=question[:1000],
+                            background="", constraints="", job_ids=jobs)
+        identity = saved["id"]
+        with self.store.lock, self.store.db:
+            project = self._project(identity)
+            project["public_document_ids"] = documents
+            self.projects._write(project)
+        saved = self.save_question(identity, {
+            "question": question, "why_matters": why_matters, "next_evidence": next_evidence,
+            "state": "open", "conclusion": "", "hypothesis_a": "", "hypothesis_b": "",
+            "source_step_id": None, "conclusion_step_id": None, "parent_question_id": None,
+            "selected_job_ids": jobs, "material_ids": documents if len(documents) <= 6 else [],
+            "carried_understanding": {"learning_notes": origins, "source_references": references,
                                       "skipped_sources": skipped,
                                       "include_sources": include_sources},
         })
@@ -2656,6 +2724,9 @@ class CareerService:
                     "保存的实验设计、计数与观察，只说明记录内容，不能单凭完成状态证明能力或因果。"
                     "原始产物仍需按本轮目录回读，未在范围内则保留无法重核；不自动改写用户认识。"
                     "若含carried_understanding，它是另一个目标下保存的理解，先核对当前岗位的适用条件；"
+                    "其中learning_notes若存在，是用户点选的两份个人认识快照，分别保留原目标、观察、"
+                    "未知与搁置状态。共同问题尚未形成结论；逐份核对条件与来源，不将旧认识视为"
+                    "当前事实，不按措辞相近判定相同、矛盾或进步，也不恢复原记录的选用状态。"
                     "其中work_relations若存在，是用户选定的两条历史工作关系及完整理由、限定、"
                     "当时范围和引用位置；分别核对两侧，不因同词或同工具就合并工作或推定迁移。"
                     "source_references提供原文定位；JD按historical_cutoffs或as_of使用"
