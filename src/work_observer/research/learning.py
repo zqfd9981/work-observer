@@ -653,17 +653,30 @@ def learning_record(row, record, store):
             claims if (links or row.get("source_step_id")) and index is None else []
         )
         if selected:
-            inputs = result.get("career_learning_context", {}).get("selected_notes", [])
+            context = result.get("career_learning_context", {})
+            inputs = [
+                *context.get("notes", []),
+                *[item for item in (context.get("selected_note"), context.get("counter_note"),
+                                   context.get("origin_learning_note")) if item],
+                *context.get("selected_notes", []), *context.get("read_notes", []),
+                *[{**item["memory"], "origin_project_id": item["project_id"],
+                   "origin_project_title": item["project_title"]}
+                  for item in context.get("read_other_goals", []) if item["kind"] == "insight"],
+            ]
             if inputs:
                 note["source_personal_inputs"] = [
                     {key: item.get(key) for key in (
                         "id", "previous_view", "reported_observation", "current_user_view",
                         "open_question", "use_for_research", "source_step_id", "question_id",
-                    )} for item in inputs
+                        "origin_project_id", "origin_project_title",
+                    )} for item in {
+                        (item.get("origin_project_id"), item["id"]): item for item in inputs
+                    }.values()
                 ]
                 note["source_personal_inputs_notice"] = (
-                    "当时综合讨论选定的个人观点与限定，不是新证据；"
-                    "保留当时内容和选用状态，不自动采用或恢复搁置记录。"
+                    "当时来源讨论带入或读取的个人观点与限定，不是新证据，"
+                    "也不表示本份认识逐字继承全部观点。保留当时内容和选用状态，"
+                    "不自动采用或恢复搁置记录，其他目标的认识需核对原场景。"
                 )
             note["source_scope"] = result.get("scope")
             note["source_work_map"] = result.get("work_map")
