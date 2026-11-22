@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from work_observer.collection.contracts import now
 from work_observer.connectors.public_models import PublicDocument
+from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.enhanced import RetrievalService
-from work_observer.retrieval.unified import UnifiedRetrieval
+from work_observer.retrieval.unified import UnifiedRetrieval, intact
+from work_observer.text_match import match_text
 from work_observer.tracking.evaluation import StrategyService
 
 Term = Annotated[str, Field(min_length=1, max_length=100)]
@@ -129,25 +131,116 @@ def source_key(item):
             else "document:" + item["public_document_id"])
 
 
+def evidence_record(item):
+    return {key: item.get(key) for key in (
+        "id", "job_id", "public_document_id", "document_id", "snapshot_id", "title",
+        "quote", "start", "end", "content_sha256", "document_sha256", "evidence_kind",
+        "source", "observed_at", "data_kind", "retrieval",
+    )}
+
+
+def check_missing_sources(retrieval, lexical, query, found, sources, bodies, missing, cutoff):
+    """Check labelled misses without adding scoped rechecks to the evaluated result."""
+    indexed = {source["key"]: source for source in sources}
+    required = [(term, lexical._expand([term], True)) for term in query.required_terms]
+    checks = []
+    for key in sorted(missing):
+        source, body = indexed.get(key), bodies.get(key)
+        check = {"source_key": key, "source": source, "evidence": None,
+                 "missing_required_terms": [], "counted_in_metrics": False}
+        if source is None or body is None:
+            reason = "source_unavailable"
+            detail = "这个读取时点没有可用的原文记录，不能据此判断不相关。"
+        elif not body:
+            reason, detail = "body_missing", "这份记录没有完整正文；标题或列表字段不能替代JD原文。"
+        elif (source["integrity"] != "verified"
+              or source.get("document_id") in found["excluded_integrity_ids"]
+              or source.get("public_document_id") in found["excluded_integrity_ids"]):
+            reason = "integrity_unavailable"
+            detail = "原始记录缺失或内容校验不通过，本次不以它提供引用。"
+        else:
+            kind, identity = key.split(":", 1)
+            probe = retrieval.search(
+                query.terms, required_terms=query.required_terms,
+                job_ids=[identity] if kind == "job" else [],
+                public_document_ids=[identity] if kind == "document" else [],
+                as_of=cutoff, limit=1, include_knowledge=False,
+            )
+            if probe["evidence"]:
+                candidate = probe["evidence"][0]
+                check["evidence"] = evidence_record(candidate)
+                check["evidence"].pop("retrieval", None)
+                matched = candidate.get("retrieval", {})
+                check["recheck_match_channel"] = (
+                    "source_labels" if not matched.get("matched_terms")
+                    and matched.get("source_label_hits") else "body"
+                )
+                reason = "outside_returned_limit"
+                detail = (
+                    "限定这份资料、使用相同查询可以返回片段；原查询的排序与返回数量没有选入它。"
+                    "下面是单份复查的候选，不计入原列表或指标。"
+                )
+            elif probe["excluded_integrity_ids"]:
+                reason = "integrity_unavailable"
+                detail = "单份复查时原始记录未通过内容校验，未提供引用。"
+            else:
+                folded = match_text(body)
+                check["missing_required_terms"] = [
+                    term for term, group in required
+                    if not any(match_text(t) in folded for t in group)
+                ]
+                if check["missing_required_terms"]:
+                    reason = "required_topic_missing"
+                    detail = (
+                        "正文没有出现列出的须包含主题及其配置别名；不自动删除这些主题来制造命中。"
+                    )
+                elif not any(match_text(term) in folded for term in found["expanded_terms"]):
+                    reason = "query_expression_missing"
+                    detail = (
+                        "正文未出现本组展开的查询表达；可先读原文用词，不把词面未命中当作不相关。"
+                    )
+                else:
+                    reason = "no_matching_window"
+                    detail = (
+                        "正文中有查询表达，但没有一个700字片段同时满足本组条件。"
+                        "请核对片段边界、主题位置及是否来自不同工作线。"
+                    )
+        checks.append({**check, "reason": reason, "detail": detail})
+    return checks
+
+
 def run_retrieval_comparison(repository, raw):
     data = RetrievalComparisonInput.model_validate(raw)
     cutoff = now()
     aliases = StrategyService(repository).active_config()["aliases"]
     retrieval = UnifiedRetrieval(repository, alias_groups=aliases)
-    records, _, _ = RetrievalService(repository)._records(None, data.job_ids, cutoff)
-    sources = []
+    lexical = RetrievalService(repository, alias_groups=aliases)
+    records, _, _ = lexical._records(None, data.job_ids, cutoff)
+    sources, bodies, catalog = [], {}, Catalog(repository)
     for item in records:
         snapshot = item["row"][1] if item["row"] else None
-        sources.append({"key": "job:" + item["job_id"], "title": item["record"].get("title"),
+        document_id = item["row"][2].id if item["row"] else None
+        key = "job:" + item["job_id"]
+        bodies[key] = item["record"].get("description_text") or ""
+        sources.append({"key": key, "job_id": item["job_id"],
+                        "title": item["record"].get("title"), "document_id": document_id,
+                        "integrity": catalog.document(document_id)["integrity"]
+                        if document_id else "body_missing",
                         "snapshot_id": snapshot.id if snapshot else None,
                         "content_sha256": snapshot.content_sha256 if snapshot else None,
                         "full_text_length": len(item["record"].get("description_text") or "")})
     with Session(repository.engine) as session:
-        sources.extend({"key": "document:" + row.id, "title": row.title,
-                        "content_sha256": row.text_sha256, "document_sha256": row.sha256,
-                        "full_text_length": len(row.text)} for row in session.scalars(
-                            select(PublicDocument).where(PublicDocument.id.in_(data.document_ids)),
-                        ))
+        for row in session.scalars(
+            select(PublicDocument).where(
+                PublicDocument.id.in_(data.document_ids), PublicDocument.observed_at <= cutoff,
+            ),
+        ):
+            key = "document:" + row.id
+            bodies[key] = row.text
+            sources.append({"key": key, "title": row.title, "public_document_id": row.id,
+                            "integrity": "verified" if intact(row) else "missing_or_changed",
+                            "content_sha256": row.text_sha256, "document_sha256": row.sha256,
+                            "full_text_length": len(row.text)})
     expected = {*("job:" + key for key in data.expected_job_ids),
                 *("document:" + key for key in data.expected_document_ids)}
     runs, rows = [], []
@@ -157,11 +250,7 @@ def run_retrieval_comparison(repository, raw):
             public_document_ids=data.document_ids, as_of=cutoff, limit=data.top_k,
             include_knowledge=False,
         )
-        evidence = [{key: item.get(key) for key in (
-            "id", "job_id", "public_document_id", "document_id", "snapshot_id", "title",
-            "quote", "start", "end", "content_sha256", "document_sha256", "evidence_kind",
-            "source", "observed_at", "data_kind", "retrieval",
-        )} for item in found["evidence"]]
+        evidence = [evidence_record(item) for item in found["evidence"]]
         returned = list(dict.fromkeys(source_key(item) for item in evidence))
         matched = sorted(expected & set(returned))
         metrics = {
@@ -177,6 +266,9 @@ def run_retrieval_comparison(repository, raw):
             "missing_expected_source_keys": sorted(expected - set(returned)),
             "unexpected_source_keys": sorted(set(returned) - expected),
             "excluded_integrity_ids": found["excluded_integrity_ids"], "evidence": evidence,
+            "missing_source_checks": check_missing_sources(
+                retrieval, lexical, query, found, sources, bodies, expected - set(returned), cutoff,
+            ),
         })
         rows.append({
             "condition": name, "input": " / ".join(query.terms),

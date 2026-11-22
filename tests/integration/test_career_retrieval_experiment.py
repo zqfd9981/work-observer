@@ -142,6 +142,10 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
         assert first["metrics"]["source_recall"] == first["metrics"]["source_precision"] == 0
         assert second["metrics"]["source_recall"] == second["metrics"]["source_precision"] == 1
         assert len(second["evidence"]) == 3 and second["metrics"]["returned_sources"] == 2
+        assert {check["reason"] for check in first["missing_source_checks"]} == {
+            "query_expression_missing",
+        }
+        assert not second["missing_source_checks"]
         for evidence in second["evidence"]:
             original = document_text if evidence["public_document_id"] else texts[1]
             assert evidence["quote"] == original[evidence["start"] : evidence["end"]]
@@ -202,6 +206,11 @@ def test_local_queries_compare_sources_and_save_real_output_without_model(tmp_pa
         child_result = child.json()["experiment"]
         assert child_result["previous_comparison"]["changed_conditions"] == ["片段上限"]
         assert child_result["runs"][1]["metrics"]["source_recall"] == 0.5
+        checks = child_result["runs"][1]["missing_source_checks"]
+        assert len(checks) == 1 and checks[0]["reason"] == "outside_returned_limit"
+        assert checks[0]["evidence"]["quote"] and not checks[0]["counted_in_metrics"]
+        assert checks[0]["source_key"] not in child_result["runs"][1]["returned_source_keys"]
+        assert len(child_result["runs"][1]["evidence"]) == 1
         child_task = next(row for row in child.json()["career"]["tasks"]
                           if row["id"] == child.json()["task_id"])
         assert child_task["previous_task_id"] == parent_id

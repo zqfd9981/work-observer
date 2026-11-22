@@ -1,11 +1,16 @@
 """仅在隔离模拟资料上检查历史RAG、统计、评测与显式策略切换。"""
 
+from pathlib import Path
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_observer.connectors.manual import ManualJD, import_jd
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.connectors.public_documents import PublicDocumentService
+from work_observer.connectors.public_models import PublicDocument
+from work_observer.research.retrieval_experiment import run_retrieval_comparison
 from work_observer.retrieval.enhanced import DEFAULT_ALIASES, RetrievalService
 from work_observer.storage.archive import RawArchive
 from work_observer.storage.database import upgrade
@@ -144,6 +149,74 @@ def test_missing_details_remain_in_sample_without_becoming_requirements(store):
     assert result["evidence"] == []
     assert result["tag_only_hits"][0]["labels"] == ["Agent"]
     assert RetrievalService(repo).stats(["Agent"])["statistics"][0]["ratio"] is None
+
+
+def test_labelled_misses_distinguish_body_topic_expression_and_passage(
+    store, tmp_path, monkeypatch,
+):
+    repo, add = store
+    monkeypatch.setattr(StrategyService, "active_config", lambda self: {
+        "aliases": {"端云同步": ["跨端存储"]},
+    })
+    matching = add("matching", "负责智能体规划与端云同步记忆。", data_kind="synthetic")
+    no_topic = add("no-topic", "负责智能体规划与端侧查询。", data_kind="synthetic")
+    separated = add("separated", "规划能力。\n" + "工作说明。" * 300 + "跨端存储。",
+                    data_kind="synthetic")
+    list_only = add("list-only", "仅作为合成夹具初始化。", data_kind="synthetic")
+    with Session(repo.engine) as session, session.begin():
+        observation = session.scalar(
+            select(JobObservation).where(JobObservation.job_id == list_only),
+        )
+        snapshot = session.get(JobSnapshot, observation.snapshot_id)
+        observation.kind = snapshot.kind = "list"
+        snapshot.payload = {"title": "合成列表字段", "company": "合成公司", "skills": ["Agent"]}
+    document = PublicDocumentService(repo, tmp_path / "public").archive_text(
+        "合成工作说明", "端云同步记忆需要保留条件。", "隔离合成夹具，不代表实际工作。",
+    )["document"]["id"]
+    result = run_retrieval_comparison(repo, {
+        "job_ids": [matching, no_topic, separated, list_only], "document_ids": [document],
+        "expected_job_ids": [matching, no_topic, separated, list_only],
+        "expected_document_ids": [document], "top_k": 5,
+        "baseline": {"terms": ["端云同步"]},
+        "candidate": {"terms": ["规划", "端云同步"], "required_terms": ["规划", "端云同步"]},
+    })
+    first = {row["source_key"]: row for row in result["runs"][0]["missing_source_checks"]}
+    assert first["job:" + no_topic]["reason"] == "query_expression_missing"
+    assert first["job:" + list_only]["reason"] == "body_missing"
+    second = {row["source_key"]: row for row in result["runs"][1]["missing_source_checks"]}
+    assert second["job:" + no_topic]["reason"] == "required_topic_missing"
+    assert second["job:" + no_topic]["missing_required_terms"] == ["端云同步"]
+    assert second["job:" + separated]["reason"] == "no_matching_window"
+    assert second["job:" + list_only]["reason"] == "body_missing"
+    assert second["document:" + document]["missing_required_terms"] == ["规划"]
+    assert result["runs"][1]["returned_source_keys"] == ["job:" + matching]
+    assert result["runs"][1]["metrics"]["source_recall"] == 1 / 5
+    assert all(not row["evidence"] for row in second.values())
+
+
+def test_corrupt_and_future_originals_do_not_become_diagnostic_quotes(store, tmp_path):
+    repo, _ = store
+    text = "不能引用的合成正文：端云同步记忆必须带业务条件。"
+    document = PublicDocumentService(repo, tmp_path / "public").archive_text(
+        "合成原文", text, "隔离合成夹具。",
+    )["document"]["id"]
+    with Session(repo.engine) as session:
+        row = session.get(PublicDocument, document)
+        path = Path(row.path)
+    assert path.resolve().is_relative_to(tmp_path.resolve())
+    path.write_bytes(b"changed synthetic original")
+    inputs = {"document_ids": [document], "expected_document_ids": [document],
+              "baseline": {"terms": ["端云同步"]}, "candidate": {"terms": ["无此表达"]}}
+    result = run_retrieval_comparison(repo, inputs)
+    assert all(run["missing_source_checks"][0]["reason"] == "integrity_unavailable"
+               for run in result["runs"])
+    assert text not in str(result) and all(not run["evidence"] for run in result["runs"])
+    with Session(repo.engine) as session, session.begin():
+        session.get(PublicDocument, document).observed_at = "2999-01-01T00:00:00+00:00"
+    future = run_retrieval_comparison(repo, inputs)
+    assert not future["sources"]
+    assert all(run["missing_source_checks"][0]["reason"] == "source_unavailable"
+               for run in future["runs"])
 
 
 @pytest.mark.parametrize("as_of", ["2026-11-18", "bad", 123])

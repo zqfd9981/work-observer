@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -40,4 +40,10 @@ assert.match(replayHtml,/目前未在目标资料中，仍保留原选择/);asse
 assert.match(replayHtml,/value="job:removed"[^>]*checked/);assert.doesNotMatch(replayHtml,/<script>/);
 const changed=api.retrievalChangeNote({previous_comparison:{task_id:'old-task',changed_conditions:['预期相关标签'],notice:'标签变化不能证明改写更好'}},'goal');
 assert.match(changed,/本次变化：预期相关标签/);assert.match(changed,/不能证明改写更好/);
+const diagnostic=api.retrievalMissingChecks({missing_source_checks:[{source_key:'job:missing',source:{title:'<script>没有入选</script>'},reason:'outside_returned_limit',detail:'限定来源能匹配，不计入原结果',evidence:{quote:'<img>复查原文',start:600,end:700,document_id:'archived'}},{source_key:'job:topic',source:{title:'主题未出现',document_id:'topic-original'},reason:'required_topic_missing',detail:'保留主题条件',missing_required_terms:['<script>限定</script>']}]});
+assert.match(diagnostic,/有可匹配片段，但未进入原返回列表/);assert.match(diagnostic,/单份复查候选 · 不计入指标/);
+assert.match(diagnostic,/&lt;img&gt;复查原文/);assert.match(diagnostic,/未出现的主题表达/);assert.doesNotMatch(diagnostic,/<script>|<img>/);
+assert.equal(api.retrievalMatchLabel({retrieval:{matched_terms:['端云同步']}}),'端云同步');
+assert.equal(api.retrievalMatchLabel({retrieval:{matched_terms:[],source_label_hits:['Agent']}}),'来源标签：Agent');
+assert.equal(api.retrievalMatchLabel({}),'未记录具体表达');
 console.log('Local retrieval inputs, explicit corpus and labels, undefined denominators, safe text, and saved-record links render.');
