@@ -1383,12 +1383,27 @@ class CareerService:
                 )
             ):
                 raise ValueError("请选择本目标中已记录实际观察的练习，再整理经历。")
+            retrieval_source = deepcopy(previous.get("retrieval_source")) if (
+                previous and previous.get("source_task_id") == data.get("source_task_id")
+            ) else None
+            if source_task:
+                from work_observer.research.retrieval_experiment import (
+                    is_retrieval_task,
+                    review_context,
+                )
+
+                if retrieval_source is None and is_retrieval_task(source_task):
+                    retrieval_source = review_context(self.repository, project, source_task)
+                    retrieval_source.update(source_project_id=identity,
+                                            source_project_title=project["title"])
             text = "\n".join(
                 [
                     "用户自述经历，尚未独立核实。",
                     *(["由个人练习整理，不代表企业工作经历或生产效果。",
-                       "来源练习：" + source_task["title"]]
-                      if source_task else []),
+                       "来源练习：" + ((source_task or {}).get("title") or "本地检索对照记录")]
+                      if source_task or retrieval_source else []),
+                    *(["来源是本机词面检索对照；标签为当次使用者预期，"
+                       "不是独立评测、真实生产效果或个人能力认证。"] if retrieval_source else []),
                     "项目/工作：" + data["title"],
                     "目标和场景：" + data["situation"],
                     "我亲自负责：" + data["action"],
@@ -1409,6 +1424,7 @@ class CareerService:
                 "document_id": document["id"],
                 "created_at": previous["created_at"] if previous else now(),
                 "updated_at": now(),
+                **({"retrieval_source": retrieval_source} if retrieval_source else {}),
                 **(
                     {"reused_from": previous["reused_from"]}
                     if previous and previous.get("reused_from")
@@ -2955,9 +2971,9 @@ class CareerService:
                     "不能从业务/技术说明补造具体招聘资格或个人职责，也不能推定用户经历与能力。"
                     "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
                 )
-            if kind in {"reflect", "ask", "challenge", "plan", "interview", "teachback",
+            if kind in {"reflect", "ask", "challenge", "plan", "interview", "teachback", "pitch",
                         "answer", "followup"} and (
-                task_id or inherit_focus and (insight_id or question_id)
+                task_id or inherit_focus and (insight_id or question_id or story_id)
             ):
                 from work_observer.research.retrieval_experiment import (
                     is_retrieval_task,
@@ -2972,12 +2988,40 @@ class CareerService:
                     origin_note = next((row for row in project["career"].get("insights", [])
                                         if row["id"] == origin_id), {})
                     retrieval_task_id = self._retrieval_note_task_id(identity, origin_note)
-                local_task = next((row for row in project["career"]["tasks"]
-                                   if row["id"] == retrieval_task_id), None)
+                focused_story = next((row for row in project["career"]["stories"]
+                                      if row["id"] == story_id), {})
+                story_source = focused_story.get("retrieval_source") if inherit_focus else None
+                if story_source and not task_id:
+                    retrieval_review = deepcopy(story_source)
+                    if focused_story.get("reused_from"):
+                        retrieval_review["source_scope_only"] = True
+                        question += (
+                            "这份经历沿用自另一目标，retrieval_review只保留旧实验起点。"
+                            "本轮目标岗位以fixed_scope为准，读取当前目标JD核对迁移条件；"
+                            "旧岗位要求与旧实验结果不能替代新岗位依据，不自动加入其他目标原文。"
+                        )
+                    if retrieval_review.get("artifact_document_id") not in project[
+                        "public_document_ids"
+                    ]:
+                        retrieval_review.update(
+                            available=False,
+                            unavailable_reason="这份经历对应的运行记录已不在当前目标中；"
+                            "本轮只能回查经历与仍可读原文，不自动恢复旧记录。",
+                        )
+                    local_task = {}
+                else:
+                    local_task = next((row for row in project["career"]["tasks"]
+                                       if row["id"] == retrieval_task_id), {})
                 if local_task and is_retrieval_task(local_task):
                     retrieval_review = review_context(self.repository, project, local_task)
+                if retrieval_review is not None:
                     if inherit_focus:
-                        retrieval_job_ids = selected_job_ids if selected_job_ids is not None else [
+                        explicit_scope = selected_job_ids if selected_job_ids is not None else (
+                            assessment_job_ids
+                        )
+                        if explicit_scope is None and retrieval_review.get("source_scope_only"):
+                            explicit_scope = project["job_ids"][:]
+                        retrieval_job_ids = explicit_scope if explicit_scope is not None else [
                             key for key in retrieval_review["input"]["job_ids"]
                             if key in project["job_ids"]
                         ]
@@ -2992,13 +3036,15 @@ class CareerService:
                         ), {})
                         retrieval_document_ids = list(dict.fromkeys(key for key in [
                             *retrieval_review["input"]["document_ids"],
-                            local_task.get("artifact_document_id"),
+                            retrieval_review.get("artifact_document_id"),
                             previous_task.get("artifact_document_id"),
                             answer_source.get("answer_document_id"),
                             *material_ids, material_id, focused_document_id, answer_document_id,
+                            focused_story.get("document_id"),
                         ] if key in project["public_document_ids"]))
                     question += (
-                        "本次选中的检索练习另有retrieval_review：先读取artifact_document_id的运行记录，"
+                        "本次练习或经历来源另有retrieval_review：available为真且在fixed_scope内时，"
+                        "先读取artifact_document_id的运行记录；不可读时说明无法重核，不换用新实验。"
                         "可按各查询diagnostic_read_start直达漏回说明，再回查本轮可用的JD或工作原文。"
                         "若有review_origin，可用read_research_history按step_id取回本次复验承接的"
                         "完整反馈与当时认识；旧句子仅作线索，不能直接充当本轮引用或已证实的解释。"

@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -93,3 +93,16 @@ assert.match(runs,/这份认识的检索复验记录 · 1 份/);assert.match(run
 const reviewed={step_id:'note-review',created_at:'2026-11-23',result:{model_calls:3,career_learning_context:{retrieval_review:{note_origin:thought}}}};
 assert.equal(api.learningInputs(reviewed.result)[0].channel,'检索运行起点');assert.equal(api.learningInputs(reviewed.result)[0].note.current_user_view,thought.current_view);
 assert.equal(api.learningImpactRecords('thought',{...noteData,results:[reviewed]})[0].row.step_id,'note-review');
+
+const frozenStory={id:'retrieval-story',retrieval_source:{artifact_document_id:'frozen-run',as_of:'2026-11-23',input:{job_ids:['job'],document_ids:['doc']},note_origin:thought,runs:[{name:'原查询',query:{terms:['<img>旧表达'],required_terms:['记忆']}}]}};
+const storyProof=api.storyRetrievalSource(frozenStory,{id:'goal',document_ids:['frozen-run']});
+assert.match(storyProof,/data-public-source="frozen-run"/);assert.match(storyProof,/后来编辑练习不会替换/);assert.match(storyProof,/末尾：尚未验证语义效果/);assert.doesNotMatch(storyProof,/<img>/);
+const missingStoryProof=api.storyRetrievalSource(frozenStory,{id:'goal',document_ids:['new-run']});
+assert.match(missingStoryProof,/不在目标资料中/);assert.doesNotMatch(missingStoryProof,/data-public-source="new-run"/);
+const practiceStory=api.taskStoryDraft({...runTask,title:'查询练习',task_or_ability:'检查原文返回',comparison_conditions:'固定同一资料'}, {questions:[]});
+assert.match(practiceStory.limits,/只核对词面返回/);assert.match(practiceStory.limits,/未验证语义效果/);assert.match(practiceStory.action,/自己实际执行/);
+
+const reusedProof=api.storyRetrievalSource({...frozenStory,reused_from:{project_id:'old-goal'},retrieval_source:{...frozenStory.retrieval_source,source_project_id:'old-goal'}},{id:'new-goal',document_ids:[]});
+assert.match(reusedProof,/#career\/old-goal\/understanding\/thought/);assert.doesNotMatch(reusedProof,/#career\/new-goal\/understanding\/thought/);
+const carriedReview={step_id:'new-goal-interview',result:{status:'completed',model_calls:3,career_learning_context:{retrieval_review:{note_origin:thought,source_project_id:'old-goal',source_project_title:'旧目标'}}}};
+const carriedCandidates=api.understandingUpdateCandidates(carriedReview,{id:'new-goal'});assert.equal(carriedCandidates[0].project_id,'old-goal');assert.equal(carriedCandidates[0].note.current_user_view,thought.current_view);
