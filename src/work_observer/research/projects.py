@@ -1485,6 +1485,10 @@ class ProjectService:
             observations = [row for row in career.get("tasks", []) if row.get("outcome")]
             if selected_task := step.get("career_task_id"):
                 observations = [row for row in career["tasks"] if row["id"] == selected_task]
+            compared_experiment_ids = step.get("career_experiment_ids", [])
+            if compared_experiment_ids:
+                by_id = {row["id"]: row for row in career["tasks"]}
+                observations = [by_id[key] for key in compared_experiment_ids if key in by_id]
             selected_story = next(
                 (row for row in stories if row["id"] == step.get("career_story_id")), None
             )
@@ -1550,6 +1554,8 @@ class ProjectService:
                     "artifact_document": {
                         "document_id": row["artifact_document_id"],
                         "title": row["artifact_title"],
+                        "available_in_goal": row["artifact_document_id"]
+                        in record.get("public_document_ids", []),
                         "notice": "用户提供的练习产物或运行记录，"
                         "未独立执行验证；可读取归档全文。",
                     }
@@ -1941,6 +1947,7 @@ class ProjectService:
                 "notice": "以下是用户自述和个人练习记录，不是招聘原文、独立评测或能力认证。"
                 "摘要仅供定位；项目经历全文可按document_id读取本轮归档。",
                 "selected_experiment_id": step.get("career_task_id"),
+                "selected_experiment_ids": compared_experiment_ids,
                 "previous_experiment": experiment_record(previous_experiment, full=True)
                 if previous_experiment
                 else None,
@@ -1957,10 +1964,12 @@ class ProjectService:
                     for row in stories[-3:]
                 ],
                 "experiments": [
-                    experiment_record(row, full=bool(selected_task)) for row in observations[-3:]
+                    experiment_record(row, full=bool(selected_task or compared_experiment_ids))
+                    for row in (observations if compared_experiment_ids else observations[-3:])
                 ],
                 "omitted_stories": max(0, len(stories) - 3),
-                "omitted_experiments": max(0, len(observations) - 3),
+                "omitted_experiments": 0 if compared_experiment_ids
+                else max(0, len(observations) - 3),
                 "experiment_history_notice": (
                     "开头只展示部分实验。可用search_experiments查找本目标较早的设计与观察，"
                     "再read_experiments读取完整记录；前后条件可能不同，记录不是独立验证。"

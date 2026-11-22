@@ -1781,6 +1781,8 @@ async def _research(
                                 personal.get("previous_experiment")]
                 if row and row.get("comparison_rows")
             ],
+            "selected_experiments": personal.get("experiments", [])
+            if personal.get("selected_experiment_ids") else [],
             "notice": personal["learning_selection_notice"],
         }
     # 冻结候选正文池：重启后仍引用启动时版本，不把新版本混进旧研究。

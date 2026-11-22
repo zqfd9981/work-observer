@@ -1897,6 +1897,7 @@ class CareerService:
         question_index=0,
         task_id=None,
         source_step_id=None,
+        experiment_ids=None,
         question="",
         section="requirements",
         hypothesis_a="",
@@ -1921,7 +1922,7 @@ class CareerService:
             raise ValueError("请选择一种研究方式。")
         if inquiry_answer and (kind != "answer" or not question_id or any((
             source_step_id, task_id, story_id, insight_id, insight_ids, counter_insight_id,
-            comparison_step_ids, synthesis_question_ids, passage_ids,
+            comparison_step_ids, synthesis_question_ids, passage_ids, experiment_ids,
         ))):
             raise ValueError("直接回答请只选择一个调查问题；其他练习可另行开始。")
         material_focus_supplied = material_id is not None or material_ids is not None
@@ -1956,6 +1957,8 @@ class CareerService:
                     synthesis_sources = source.get("synthesis_sources", [])
                 if (inherit_focus and not insight_ids
                         and (not question_id or question_id == source.get("question_id"))):
+                    if experiment_ids is None:
+                        experiment_ids = list(source.get("experiment_ids") or [])
                     if insight_ids is None:
                         insight_ids = list(source.get("insight_ids") or [])
                     source_job_ids = source.get("selected_job_ids", [])
@@ -2215,6 +2218,23 @@ class CareerService:
                     raise ValueError("请选择当前目标中已保存的经历，再继续研究。")
                 if story["document_id"] not in (project.get("public_document_ids") or []):
                     raise ValueError("这份经历原文已移出研究资料，请先重新加入原文。")
+            experiment_ids = list(experiment_ids or [])
+            compared_experiments = []
+            if experiment_ids:
+                if (kind != "ask" or not 2 <= len(experiment_ids) <= 4
+                        or len(set(experiment_ids)) != len(experiment_ids)
+                        or any((task_id, story_id, insight_id, insight_ids, counter_insight_id,
+                                comparison_step_ids, synthesis_question_ids, passage_ids))):
+                    raise ValueError("请单独选择2至4项不同实验进行对照，再编辑本次提问。")
+                by_id = {row["id"]: row for row in project["career"]["tasks"]}
+                if any(key not in by_id for key in experiment_ids):
+                    raise ValueError("所选实验已不在当前目标中，请重新选择。")
+                compared_experiments = [by_id[key] for key in experiment_ids]
+                if question_id and any(row.get("question_id") != question_id
+                                       for row in compared_experiments):
+                    raise ValueError(
+                        "实验来自不同调查，请作为独立对照提问，或选择同一问题的实验。"
+                    )
             answer_document_id, answer_record = None, None
             if material_id and material_id not in (project.get("public_document_ids") or []):
                 raise ValueError("这份资料已不在当前目标中，请重新选择或先加入资料。")
@@ -2342,6 +2362,15 @@ class CareerService:
                         "一侧的条件不能覆盖其他资料。未读部分保留未知，不凑齐比较项或选胜者。"
                         "重点选择不表示资料来自独立来源；用户笔记和业务说明保留来源性质，"
                         "涉及岗位个人责任或招聘要求时仍需该岗位原文支持。"
+                    )
+                if compared_experiments:
+                    question += (
+                        "本轮用户明确对照career_evidence.selected_experiment_ids对应的完整实验。"
+                        "experiments保留它们的预期、设计、条件、用户观察和产物定位。"
+                        "分别核对原先预期与实际记录，识别改变了什么、控制了什么以及缺失条件；"
+                        "未执行的计划与已记录观察分开，不把done、成功次数或较新记录当作更正确。"
+                        "需要核对日志时按本轮范围读取各自原文，未重读就明确尚未核实。"
+                        "只在可比较的条件下讨论解释的支持、挑战和未知，不从相关差异推定因果。"
                     )
                 if synthesis_sources:
                     question += (
@@ -2769,6 +2798,7 @@ class CareerService:
             )
             preferred.extend(row.get("artifact_document_id") for row in project["career"]["tasks"]
                              if row["id"] in {task_id, chosen_task.get("previous_task_id")})
+            preferred.extend(row.get("artifact_document_id") for row in compared_experiments)
             topic.extend((chosen_task.get("title"), chosen_task.get("task_or_ability")))
             if question_id:
                 for inquiry in [saved_question, *([parent_question] if parent_question else [])]:
@@ -2930,11 +2960,14 @@ class CareerService:
                     else "",
                     "interview_question": questions[question_index] if kind == "answer" else "",
                     "task_id": task_id if has_task else None,
+                    "experiment_ids": experiment_ids,
                     "created_at": now(),
                 }
             )
             if has_task:
                 project["steps"][-1]["career_task_id"] = task_id
+            if experiment_ids:
+                project["steps"][-1]["career_experiment_ids"] = experiment_ids[:]
             if insight_id and (kind in {"ask", "challenge"} or understanding_check):
                 project["steps"][-1]["career_insight_id"] = insight_id
             if insight_ids:

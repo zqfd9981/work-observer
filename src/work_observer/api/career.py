@@ -259,6 +259,9 @@ class CareerResearchInput(BaseModel):
     question_index: int = Field(default=0, ge=0, le=20)
     task_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    experiment_ids: list[Annotated[str, Field(pattern="^[a-f0-9]{32}$")]] | None = Field(
+        default=None, max_length=4
+    )
     inherit_focus: bool = True
     autonomous: bool = False
     question: str = Field(default="", max_length=1500)
