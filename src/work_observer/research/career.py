@@ -23,6 +23,7 @@ from work_observer.research.learning import (
     calculation_records,
     experiment_relation_origin,
     learning_record,
+    relation_learning_notes,
     work_relation_record,
 )
 from work_observer.research.projects import ProjectService, step_continuation
@@ -759,9 +760,9 @@ class CareerService:
     @staticmethod
     def _relation_record(owner, study, result, index, current):
         row = work_relation_record(owner, study, result, index, current)
-        personal_notes = [deepcopy(note) for note in owner.get("career", owner).get("insights", [])
-                          if note.get("source_step_id") == study["step_id"]
-                          and note.get("source_relation_index") == index]
+        personal_notes = relation_learning_notes(
+            owner.get("career", owner).get("insights", []), study["step_id"], index,
+        )
         if personal_notes:
             row["personal_notes"] = personal_notes
         tasks = [deepcopy(task) for task in owner.get("career", owner).get("tasks", [])

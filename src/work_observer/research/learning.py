@@ -22,6 +22,27 @@ def calculation_records(result):
     return {key: deepcopy(context[key]) for key in CALCULATION_FIELDS if context.get(key)}
 
 
+def relation_learning_notes(notes, step_id, index=None, *, active_only=False):
+    related = {
+        row["id"]: {row["source_relation_index"]} for row in notes
+        if row.get("source_step_id") == step_id
+        and type(row.get("source_relation_index")) is int
+        and (index is None or row["source_relation_index"] == index)
+    }
+    changed = True
+    while changed:
+        changed = False
+        for row in notes:
+            previous = related.get(row.get("replaces_insight_id"), set())
+            combined = related.get(row["id"], set()) | previous
+            if combined and combined != related.get(row["id"]):
+                related[row["id"]] = combined
+                changed = True
+    return [{**deepcopy(row), "related_relation_indices": sorted(related[row["id"]])}
+            for row in notes if row["id"] in related
+            and (not active_only or row.get("use_for_research", True))]
+
+
 def inquiry_children(career, question_id):
     return [{
         **{key: deepcopy(row.get(key)) for key in (
@@ -686,10 +707,10 @@ class LearningNotebook:
             record["claim_to_review"] = deepcopy(focus)
         if comparison := result.get("career_learning_context", {}).get("understanding_comparison"):
             record["understanding_comparison"] = deepcopy(comparison)
-        current_notes = [deepcopy(row) for row in self.project_reader().get("career", {}).get(
-            "insights", [],
-        ) if row.get("source_step_id") == step_id and row.get("source_relation_index") is not None
-                        and row.get("use_for_research", True)]
+        current_notes = relation_learning_notes(
+            self.project_reader().get("career", {}).get("insights", []), step_id,
+            active_only=True,
+        )
         if current_notes:
             record["current_relation_notes"] = current_notes
         return {
@@ -698,6 +719,9 @@ class LearningNotebook:
             "旧来源仅用于定位，不提供旧引用ID，须本轮读取原文后再引用。"
             "JD定位保留historical_cutoffs和as_of，用read_historical_job读取并核对snapshot_id；"
             "当前JD不能代替旧版本。当前范围以fixed_scope为准，已移出或其他目标的资料不自动恢复。"
+            "current_relation_notes列当前选用的用户认识，包括明确接替原关系笔记的新理解；"
+            "related_relation_indices是本地图work_relations从0开始的序号。"
+            "接替记录可能参考其他资料，保留各自来源，不表示原图已修改或新解释已证实。"
             "计划不等于实际结果，旧研究不能证明当前事实或个人能力，不修改原记录。",
         }
 

@@ -177,3 +177,31 @@ def test_relation_zero_keeps_original_limits_and_current_user_notes_separate(tmp
             not in notebook.read_research_history(source["step_id"])["research"]
         )
         assert notebook.search(["合成新理解"])["matching_count"] == 0
+        successor_values = {
+            "question_id": qid, "replaces_insight_id": note["id"],
+            "previous_view": values["current_view"],
+            "observation": "合成新观察：另一条件并未记录验收权。",
+            "current_view": "合成接替理解：保留任务产出的局部关系，个人权限仍未知。",
+            "open_question": "其他条件与责任边界仍待回查。",
+        }
+        successor = save(base + "/insights", successor_values)["insights"][-1]
+        assert successor.get("source_step_id") is None
+        page = client.get("/api/career/work-relations", params={"goal_id": goal["id"]}).json()
+        relation = next(row for row in page["relations"] if row["relation_index"] == 0)
+        assert successor["id"] in {row["id"] for row in relation["personal_notes"]}
+        project = client.get("/api/projects/" + goal["id"]).json()
+        current = notebook.read_research_history(source["step_id"])["research"]
+        assert [row["id"] for row in current["current_relation_notes"]] == [successor["id"]]
+        assert current["current_relation_notes"][0]["related_relation_indices"] == [0]
+        assert current["work_map_then"] == original
+        assert current["current_relation_notes"][0]["current_view"] == (
+            successor_values["current_view"]
+        )
+        assert "personal_notes" not in next(
+            row for row in page["relations"] if row["relation_index"] == 1
+        )
+        save(base + "/insights/" + successor["id"] + "/use", {"use_for_research": False})
+        project = client.get("/api/projects/" + goal["id"]).json()
+        assert "current_relation_notes" not in notebook.read_research_history(source["step_id"])[
+            "research"
+        ]
