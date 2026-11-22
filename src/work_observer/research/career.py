@@ -3206,6 +3206,40 @@ class CareerService:
         )
         return {"experiment": result, "career": saved, "task_id": task_id}
 
+    def threshold_experiment(self, identity, *, cases, thresholds, signal, conditions, data_kind,
+                             false_positive_cost, false_negative_cost, review_cost,
+                             question_id=None, hypothesis="", save=False):
+        from work_observer.research.threshold_experiment import run_threshold_experiment
+
+        project = self._project(identity)
+        if question_id and not any(q["id"] == question_id
+                                   for q in project["career"].get("questions", [])):
+            raise ValueError("请选择这个目标中想验证的调查问题。")
+        result = run_threshold_experiment(
+            cases=cases, thresholds=thresholds, signal=signal, conditions=conditions,
+            data_kind=data_kind, false_positive_cost=false_positive_cost,
+            false_negative_cost=false_negative_cost, review_cost=review_cost, hypothesis=hypothesis,
+        )
+        if not save:
+            return {"experiment": result}
+        if any(step["state"] == "running" for step in project["steps"]):
+            raise ValueError("本轮研究结束后可保存计算记录；仍可先在本地计算。")
+        saved = self.add_experiment(identity, {
+            "title": "本地筛选对照：误报、漏报与处理代价", "question_id": question_id,
+            "task_or_ability": "比较正确率、筛选工作量与给定错误代价的取舍。",
+            "deliverable": "完整案例、参照标签、阈值、代价设置和逐阈值错误定位。",
+            "completion_check": "同一批案例逐项核对，不把样本内计算当作真实业务验证。",
+            "hypothesis": hypothesis, "previous_task_id": None, "design_change": "",
+        })
+        task_id = saved["tasks"][-1]["id"]
+        saved = self.update_task(
+            identity, task_id, state="done", outcome=result["outcome"], artifact="",
+            artifact_title="筛选阈值与代价 · 完整输入与本机计算结果",
+            artifact_text=result["artifact_text"], comparison_conditions=conditions,
+            comparison_rows=result["comparison_rows"],
+        )
+        return {"experiment": result, "career": saved, "task_id": task_id}
+
     def add_experiment(self, identity, data):
         with self.store.lock, self.store.db:
             project = self._project(identity)

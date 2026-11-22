@@ -19,6 +19,10 @@ from work_observer.evidence import redact
 from work_observer.research import requirements as qualification
 from work_observer.research.cohort_experiment import CohortProbeInput, run_cohort_experiment
 from work_observer.research.retry_experiment import RetryProbeInput, run_retry_experiment
+from work_observer.research.threshold_experiment import (
+    ThresholdProbeInput,
+    run_threshold_experiment,
+)
 from work_observer.retrieval.catalog import Catalog, Filters
 from work_observer.text_match import match_text
 
@@ -248,6 +252,14 @@ LEARNING_TOOLS = [
          "record_id": {"type": "string"}},
         ["project_id", "kind", "record_id"],
     ),
+    {
+        "type": "function", "name": "run_threshold_comparison", "strict": True,
+        "description": "先写可检验预期，再在同一批1至40条带参照标签的业务案例上比较2至6个阈值。"
+        "分数大于等于阈值进入处理；本机计算正确率、误报、漏报、处理量与指定单位代价。"
+        "填写正例信号、条件和数据性质，构造样例标synthetic。案例标签和分数不是已核实事实。"
+        "不调用模型、不连接业务服务、不保存练习、不提供原文证据ID，也不评估求职者匹配度。",
+        "parameters": ThresholdProbeInput.model_json_schema(),
+    },
     {
         "type": "function", "name": "run_cohort_comparison", "strict": True,
         "description": "先写可检验的预期，再给出1至6个分群的A/B总数与达到指标数。"
@@ -1648,6 +1660,8 @@ async def _research(
             "报告时把原文、运行前预期、本地观察和仍未知的条件分开；工具记录不是可引用原文。"
             "仍需读取当前原文，不能因跑了模拟就把调查标为已解决。"
             "\n涉及产品或运营指标解释时，可用run_cohort_comparison检验具体计数下的判断。"
+            "\n涉及筛选规则、误报漏报和处理量时，可用run_threshold_comparison比较给定阈值与代价。"
+            "构造案例仅检验解释边界，不能当作招聘原文、真实业务样本或求职者匹配评分。"
             "先说明预期、指标口径和条件；自主构造的输入标为synthetic，不冒充真实业务数据。"
             "比较总体、各分群和固定原占比后的结果；分母为0保留无法计算，不能补成0。"
             "重算只说明这些计数的数学关系，不证明因果、统计显著性、产品改进或用户能力。"
@@ -2097,7 +2111,7 @@ async def _research(
                               "search_inquiries", "read_inquiry",
                               "search_research_history", "read_research_history",
                               "search_experiments", "read_experiments", "run_retry_experiment",
-                              "run_cohort_comparison"}:
+                              "run_cohort_comparison", "run_threshold_comparison"}:
                     if not learning_enabled:
                         raise ProbeError("RESEARCH_TOOL_DENIED")
                     learning = result.setdefault("career_learning_context", {})
@@ -2127,6 +2141,22 @@ async def _research(
                                 len(case.requests) for case in probe.cases
                             ))
                             learning.setdefault("local_experiments", []).append(data)
+                    elif name == "run_threshold_comparison":
+                        try:
+                            probe = ThresholdProbeInput.model_validate(arguments)
+                            observed = run_threshold_experiment(**probe.model_dump())
+                            data = {key: value for key, value in observed.items()
+                                    if key not in {"comparison_rows", "artifact_text"}}
+                        except ValidationError as exc:
+                            data = {"error": "INVALID_THRESHOLD_EXPERIMENT_INPUT",
+                                    "notice": "未运行或保存实验，请修正案例、阈值与代价。",
+                                    "details": exc.errors(include_url=False, include_input=False,
+                                                          include_context=False)}
+                            entry["validation"] = data["error"]
+                        else:
+                            entry.update(case_count=len(probe.cases),
+                                         threshold_count=len(probe.thresholds), signal=probe.signal)
+                            learning.setdefault("threshold_experiments", []).append(data)
                     elif name == "run_cohort_comparison":
                         try:
                             probe = CohortProbeInput.model_validate(arguments)

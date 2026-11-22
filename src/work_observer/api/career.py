@@ -9,6 +9,7 @@ from starlette.routing import Route
 from work_observer.research.career import CareerService
 from work_observer.research.cohort_experiment import CohortCasesInput
 from work_observer.research.retry_experiment import RetryCasesInput
+from work_observer.research.threshold_experiment import ThresholdCasesInput
 
 
 class CareerGoalInput(BaseModel):
@@ -351,6 +352,12 @@ class CohortExperimentInput(CohortCasesInput):
     save: bool = False
 
 
+class ThresholdExperimentInput(ThresholdCasesInput):
+    question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    hypothesis: str = Field(default="", max_length=1500)
+    save: bool = False
+
+
 class TaskUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, min_length=1, max_length=150)
@@ -639,6 +646,13 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             201 if data.save else 200,
         )
 
+    async def threshold_experiment(request):
+        data = ThresholdExperimentInput.model_validate(await read_json(request))
+        return change(
+            lambda: service().threshold_experiment(request.path_params["id"], **data.model_dump()),
+            201 if data.save else 200,
+        )
+
     async def update_task(request):
         data = TaskUpdate.model_validate(await read_json(request))
         if data.artifact_text.strip() and busy():
@@ -692,5 +706,6 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
         Route("/api/career/{id}/experiments", experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/retry", retry_experiment, methods=["POST"]),
         Route("/api/career/{id}/experiments/cohorts", cohort_experiment, methods=["POST"]),
+        Route("/api/career/{id}/experiments/thresholds", threshold_experiment, methods=["POST"]),
         Route("/api/career/{id}/tasks/{task_id}", update_task, methods=["PATCH"]),
     ]
