@@ -140,6 +140,17 @@ def validate_map(answer, evidence):
         if any(i < 0 or i >= len(claims) for i in indices):
             raise ValueError("关系必须引用本轮实际存在的判断")
         source, target = [claims[i] for i in indices]
+        source_jobs, target_jobs = [
+            {evidence[key]["job_id"] for key in claim["evidence_ids"]
+             if key in evidence and evidence[key].get("job_id")}
+            for claim in (source, target)
+        ]
+        if (item["predicate"] in {"produces", "requires"} and source_jobs and target_jobs
+                and source_jobs.isdisjoint(target_jobs)):
+            raise ValueError(
+                "产出或需要关系的两端只引用了不同岗位，不能拼成同一条工作线；"
+                "请先分别保留各岗关系，再用comparisons解释共同点与迁移条件。",
+            )
         relations.append(
             {
                 **item,

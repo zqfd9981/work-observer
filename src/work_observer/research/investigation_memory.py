@@ -64,7 +64,7 @@ def research_context(result):
         "missing_context", "scope_unknown_job_ids", "scope_excluded_job_ids",
     )}
     context["tasks"] = [{key: deepcopy(task.get(key)) for key in (
-        "intent", "question", "completion", "source_job_ids", "source_document_ids",
+        "intent", "output", "question", "completion", "source_job_ids", "source_document_ids",
         "required_source_keys", "source_coverage", "missing_source_keys", "retrieval_status",
     )} for task in investigation.get("tasks", [])]
     return context

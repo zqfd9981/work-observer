@@ -1623,9 +1623,9 @@ async def _research(
     )
     system = SYSTEM
     if adaptive:
-        from work_observer.research import orchestration
+        from work_observer.research import investigation_maps, orchestration
 
-        system += orchestration.POLICY
+        system += orchestration.POLICY + investigation_maps.POLICY
     if budget_policy:
         # The frozen workflow below replaces these mandatory preparation steps.
         # Keep SYSTEM itself intact so existing method hashes remain reproducible.
@@ -2120,7 +2120,10 @@ async def _research(
                     if not result.get("investigation"):
                         model.tools = [orchestration.planning_tool()]
                     else:
-                        model.tools = [definition for definition in execution_tools
+                        output_tools = investigation_maps.tools(
+                            execution_tools, result["investigation"],
+                        )
+                        model.tools = [definition for definition in output_tools
                                        if definition["name"] != "plan_investigation"
                                        or len(result.get("investigation_history", [])) < 1
                                        and max_calls - result["model_calls"] > 1]
@@ -2984,6 +2987,10 @@ async def _research(
                     data = candidate["evaluation"]
                 elif name == "finish_research":
                     task_outcomes = arguments.pop("task_outcomes", []) if adaptive else None
+                    adaptive_map = adaptive and investigation_maps.requested(
+                        result.get("investigation"),
+                    )
+                    raw_work_map = arguments.pop("work_map", None) if adaptive_map else None
                     if recall() != result["memory_used"]:
                         raise ProbeError("RESEARCH_MEMORY_CHANGED_RESTART")
                     check_knowledge()
@@ -3093,6 +3100,14 @@ async def _research(
                             work_map = validate_map(answer, evidence)
                             cognition_revisions = validate_revisions(
                                 answer, evidence, conversation_context
+                            )
+                        except ValueError as exc:
+                            map_error = str(exc)
+                    elif adaptive_map:
+                        try:
+                            work_map = investigation_maps.validate(
+                                raw_work_map, result["investigation"], task_outcomes,
+                                answer.claims, evidence,
                             )
                         except ValueError as exc:
                             map_error = str(exc)

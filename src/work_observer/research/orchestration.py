@@ -25,6 +25,7 @@ class Query(BaseModel):
 class InvestigationTask(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     intent: Literal["understand", "compare", "verify", "practice", "interview"]
+    output: Literal["explanation", "work_map"] = "explanation"
     question: str = Field(min_length=1, max_length=600)
     completion: str = Field(min_length=1, max_length=300)
     queries: list[Query] = Field(min_length=1, max_length=2)
@@ -54,7 +55,7 @@ class TaskOutcome(BaseModel):
 def execution_tools(definitions):
     from copy import deepcopy
 
-    definitions = deepcopy(definitions)
+    definitions = [deepcopy(row) for row in definitions if row["name"] != "plan_research"]
     for definition in definitions:
         if definition["name"] == "finish_research":
             schema = definition["parameters"]
@@ -119,6 +120,7 @@ def planning_tool():
     for definition in schema["$defs"].values():
         if definition.get("properties"):
             definition["required"] = list(definition["properties"])
+    schema["$defs"]["InvestigationTask"]["properties"]["output"].pop("default", None)
     # Keep query validation in both the provider contract and local validation.
     schema["$defs"]["Query"]["properties"]["terms"]["items"].update(
         minLength=1, maxLength=100,
@@ -215,10 +217,11 @@ def investigate(repository, brief, *, original_question, scope, project_id, as_o
                 aliases, personal_document_ids=(), previous=None, inherited_constraints=()):
     """No network/model work here. All branches share the same immutable SQL scope."""
     brief = InvestigationBrief.model_validate(brief)
-    if previous and [(task.intent, task.question) for task in brief.tasks] != [
-        (task["intent"], task["question"]) for task in previous["tasks"]
+    if previous and [(task.intent, task.output, task.question) for task in brief.tasks] != [
+        (task["intent"], task.get("output") or "explanation", task["question"])
+        for task in previous["tasks"]
     ]:
-        raise ValueError("补查时保留已识别的全部问题与意图，只调整查询和完成条件。")
+        raise ValueError("补查时保留已识别的问题、意图和输出形式，只调整查询和完成条件。")
     allowed_jobs = {job["id"] for job in scope["jobs"]}
     allowed_documents = set(scope["archived_public_ids"])
     for task in brief.tasks:
@@ -252,7 +255,9 @@ def investigate(repository, brief, *, original_question, scope, project_id, as_o
 
     def targets(task):
         job_ids, document_ids = task["source_job_ids"], task["source_document_ids"]
-        if task["intent"] == "compare" and not job_ids and not document_ids:
+        if (task["intent"] == "compare" or task.get("output") == "work_map") and (
+            not job_ids and not document_ids
+        ):
             if 1 < len(effective_jobs) <= 6:
                 job_ids = sorted(effective_jobs)
             elif not allowed_jobs and 1 < len(set(effective_documents) - personal_ids) <= 6:

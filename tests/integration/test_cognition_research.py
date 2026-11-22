@@ -117,7 +117,7 @@ def test_map_engine_saves_original_references_and_repairs_within_budget(
     assert result["work_map"]["version"] == VERSION
     assert result["tool_budget_policy"] == TOOL_BUDGET_POLICY
     assert result["research_method_sha256"] == method_fingerprint(
-        "work_map", tool_budget_policy=TOOL_BUDGET_POLICY
+        "work_map", tool_budget_policy=TOOL_BUDGET_POLICY, historical_sources=True
     )
     assert store.get(result["run_id"])["input"]["approach"] == "work_map"
     assert store.load_checkpoint(result["run_id"])["result"]["work_map"] == result["work_map"]
