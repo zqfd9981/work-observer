@@ -195,6 +195,7 @@ class InsightInput(BaseModel):
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_claim_index: int | None = Field(default=None, ge=0)
     source_relation_index: int | None = Field(default=None, strict=True, ge=0)
+    source_task_index: int | None = Field(default=None, strict=True, ge=0, le=2)
     replaces_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
     source_passage: SourcePassageInput | None = None
@@ -360,6 +361,7 @@ class ExperimentInput(BaseModel):
     source_experiment_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_claim_index: int | None = Field(default=None, strict=True, ge=0)
     source_relation_index: int | None = Field(default=None, strict=True, ge=0)
+    source_task_index: int | None = Field(default=None, strict=True, ge=0, le=2)
     requirement_key: str = Field(default="", max_length=100)
     design_change: str = Field(default="", max_length=1500)
     comparison_conditions: str = Field(default="", max_length=1000)

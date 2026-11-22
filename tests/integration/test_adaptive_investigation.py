@@ -30,11 +30,12 @@ def brief(tasks=None, missing=None):
 
 
 class ScriptedPlanner(ModelClient):
-    def __init__(self, plan, *, replan=None, pause=False, omit_once=False):
+    def __init__(self, plan, *, replan=None, pause=False, omit_once=False, produce_plan=False):
         self.plan, self.replan, self.pause = plan, replan, pause
         self.contexts, self.tools_seen = [], []
         self.last_usage = {}
         self.omit_once = omit_once
+        self.produce_plan = produce_plan
 
     async def turn(self, history):
         self.contexts.append(json.loads(history[1]["content"]))
@@ -67,6 +68,28 @@ class ScriptedPlanner(ModelClient):
             finish = next(tool for tool in self.tools if tool["name"] == "finish_research")
             if "application_plan" in finish["parameters"]["properties"]:
                 arguments["application_plan"] = None
+                if self.produce_plan and evidence:
+                    arguments["application_plan"] = {
+                        "background_memory_id": self.contexts[-1]["application_background"][
+                            "memory_id"
+                        ],
+                        "actions": [{
+                            "title": "用两组构造输入检查接口失败处理",
+                            "task_or_ability": "接口测试",
+                            "deliverable": "两组输入与观察记录",
+                            "completion_check": "逐组记录差异和失败。",
+                            "hypothesis": "输入变化可能影响处理，尚未验证。",
+                            "evidence_ids": [evidence[0]["citation_key"]],
+                            "assumptions": ["只用构造资料，不依赖企业权限。"],
+                            "comparison_conditions": "保持处理逻辑一致，只改变输入。",
+                            "comparison_rows": [
+                                {"condition": "原条件", "input": "合成请求A",
+                                 "expected": "待检验：仅处理一次"},
+                                {"condition": "改变输入", "input": "合成请求B",
+                                 "expected": "待检验：可能失败"},
+                            ],
+                        }], "open_questions": ["个人环境与时间未提供。"],
+                    }
             name = "finish_research"
             if self.omit_once:
                 arguments["task_outcomes"] = []

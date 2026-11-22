@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from work_observer.collection.contracts import now
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.research.investigation_memory import record_task_context
 
 
 def step_reservation(step):
@@ -1546,6 +1547,8 @@ class ProjectService:
                     else row.get("hypothesis", "")[:400],
                     "previous_task_id": row.get("previous_task_id"),
                     "source_step_id": row.get("source_step_id"),
+                    "task_to_verify": record_task_context(record, row, self.store)
+                    if full else None,
                     "answer_to_verify": experiment_answer_origin(career, row) if full else None,
                     "relation_to_verify": experiment_relation_origin(record, row, self.store)
                     if full else None,

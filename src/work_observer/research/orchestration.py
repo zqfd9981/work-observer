@@ -69,14 +69,18 @@ def execution_tools(definitions):
     return [*definitions, planning_tool()]
 
 
-def outcomes(values, investigation, claims, evidence):
+def outcomes(values, investigation, claims, evidence, *, application_plan=None):
     rows = [TaskOutcome.model_validate(value) for value in values]
     if sorted(row.task_index for row in rows) != list(range(len(investigation["tasks"]))):
         raise ValueError("请逐项回应当前调查任务，不遗漏或重复。")
     effective = investigation.get("effective_scope")
     if effective:
-        for claim in claims:
-            for key in claim.evidence_ids:
+        references = [claim.evidence_ids for claim in claims]
+        references.extend(action["evidence_ids"] for action in (
+            application_plan or {}
+        ).get("actions", []))
+        for keys in references:
+            for key in keys:
                 item = evidence.get(key, {})
                 if ((item.get("job_id") and item["job_id"] not in effective["job_ids"])
                         or (item.get("public_document_id") and item["public_document_id"]
@@ -165,6 +169,9 @@ continued_discussion.investigation中的约束默认沿用；本次明确换城�
 最终逐项回应所有意图：比较给两侧引用；验证分支持/挑战/未知；练习写预期、产物、检查方式，
 不声称已执行；面试只能重组已读事实，区分工作理解与本人经历。无证据的建议和待补背景放gaps，
 有个人应用计划工具时可提出一个最小练习，由用户决定是否保存。不要替用户执行或自动采用认识。
+用户要求练习或进一步验证时，使用现有application_plan给可保存的最小设计，不只把练习写成文字。
+没有个人背景时只设计理解验证，列出构造输入、待检验预期、产物、检查方式与未控制条件，
+不据此判断个人适配；有背景也不虚构经验。没有练习或验证意图时application_plan填null。
 finish_research用task_outcomes逐项回答当前任务，task_index和claim_indices均从0开始。
 answer给该项可阅读的解释、对比、验证设计或面试问题；事实关联本次claims，推断标明推断。
 questions只在interview任务填写最多3道完整面试题，其他任务填[]；题目会进入现有作答反馈流程。

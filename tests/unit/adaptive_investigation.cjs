@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.adaptiveTest={investigationPanel,researchActivityItems,isInterviewSource,interviewQuestions};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.adaptiveTest={investigationPanel,researchActivityItems,isInterviewSource,interviewQuestions,investigationRecordDraft,investigationTaskSource,conclusionDraft};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.adaptiveTest;
 assert.equal(api.investigationPanel({result:{claims:[]}}),'');
@@ -33,3 +33,11 @@ row.result.project_id='goal';row.result.investigation.memory_recall={records:[{k
 const memory=api.investigationPanel(row);
 assert.match(memory,/本次问题找回的旧线索/);assert.match(memory,/#career\/goal\/insight\/old-note/);
 assert.match(memory,/&lt;script&gt;旧理解/);assert.doesNotMatch(memory,/<script>/);
+row.step_id='study';row.state='completed';row.current=true;row.result.status='completed';row.result.claims=[];row.result.evidence=[];row.result.gaps=['仍需另一侧原文。'];
+const note=api.investigationRecordDraft(row,0,'note'),experiment=api.investigationRecordDraft(row,0,'experiment');
+assert.equal(note.source_task_index,0);assert.equal(note.source_step_id,'study');assert.equal(note.current_view,'');assert.equal(note.observation,'');
+assert.equal(experiment.source_task_index,0);assert.equal(experiment.hypothesis,'');assert.equal(experiment.comparison_rows.length,2);assert.ok(experiment.comparison_rows.every(item=>item.observed===''));
+const origin=api.investigationTaskSource(note,{id:'goal',results:[row]},true);
+assert.match(origin,/两份工作差在哪/);assert.match(origin,/部分回答/);assert.match(origin,/资料只支持一侧/);assert.match(origin,/只看上海/);
+const conclusion=api.conclusionDraft(row);assert.match(conclusion,/两份工作差在哪/);assert.match(conclusion,/资料只支持一侧/);assert.match(conclusion,/只看上海/);assert.match(conclusion,/仍需另一侧原文/);
+const actions=api.investigationPanel(row);assert.match(actions,/data-career-investigation-note="study:0"/);assert.match(actions,/data-career-investigation-experiment="study:0"/);

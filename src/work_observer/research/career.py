@@ -19,6 +19,7 @@ from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.archived_sources import catalog as archive_catalog
+from work_observer.research.investigation_memory import task_context
 from work_observer.research.learning import (
     calculation_records,
     experiment_relation_origin,
@@ -1670,9 +1671,10 @@ class CareerService:
                 raise ValueError("未找到这次讨论，请重新选择来源。")
             claim_index = data.get("source_claim_index")
             relation_index = data.get("source_relation_index")
-            if claim_index is not None and relation_index is not None:
-                raise ValueError("请选择一条判断或一条工作关系作为认识起点，不同时关联两者。")
-            if claim_index is not None or relation_index is not None:
+            task_index = data.get("source_task_index")
+            if sum(value is not None for value in (claim_index, relation_index, task_index)) > 1:
+                raise ValueError("请只选择一条判断、工作关系或分项解释作为认识起点。")
+            if claim_index is not None or relation_index is not None or task_index is not None:
                 source_step = next(
                     (
                         row for row in project["steps"]
@@ -1686,12 +1688,20 @@ class CareerService:
                     else None
                 )
                 result = (run or {}).get("result") or {}
-                items = (result.get("work_map") or {}).get("work_relations", []) if (
+                if task_index is not None:
+                    if not run or run.get("state") == "invalidated":
+                        raise ValueError("原分项解释已不可用，请重新选择来源。")
+                    task_context(result, task_index)
+                items = (result.get("investigation") or {}).get("tasks", []) if (
+                    task_index is not None
+                ) else (result.get("work_map") or {}).get("work_relations", []) if (
                     relation_index is not None
                 ) else result.get("claims", [])
-                chosen_index = relation_index if relation_index is not None else claim_index
+                chosen_index = task_index if task_index is not None else (
+                    relation_index if relation_index is not None else claim_index
+                )
                 if result.get("status") != "completed" or not 0 <= chosen_index < len(items):
-                    raise ValueError("请选择这次完整分析中的一条判断或工作关系，再记录认识。")
+                    raise ValueError("请选择这次完整分析中的一条判断、工作关系或分项解释。")
             replacement = next(
                 (row for row in notes if row["id"] == data.get("replaces_insight_id")), None
             )
@@ -3283,6 +3293,9 @@ class CareerService:
                 key = f"{step['run_id']}:{index}"
                 if any(row["source_key"] == key for row in tasks):
                     continue
+                practice_indices = [n for n, task in enumerate(
+                    (result.get("investigation") or {}).get("tasks", []),
+                ) if task["intent"] == "practice"]
                 tasks.append(
                     {
                         "id": uuid4().hex,
@@ -3290,8 +3303,10 @@ class CareerService:
                         "origin": "research",
                         "question_id": source.get("question_id"),
                         "previous_task_id": source.get("task_id"),
-                        **({"source_step_id": step_id,
-                            "target_requirement": step["career_requirement"]}
+                        "source_step_id": step_id,
+                        **({"source_task_index": practice_indices[0]}
+                           if len(practice_indices) == 1 else {}),
+                        **({"target_requirement": step["career_requirement"]}
                            if step.get("career_requirement") else {}),
                         "design_change": "",
                         **action,
@@ -3424,9 +3439,13 @@ class CareerService:
             if data.get("source_experiment_id") and not data.get("source_step_id"):
                 raise ValueError("请从本轮已读取的旧实验中选择设计，再准备复验。")
             relation_index = data.get("source_relation_index")
-            if relation_index is not None and data.get("source_claim_index") is not None:
-                raise ValueError("请选择一条工作关系或一条判断作为实验起点。")
-            if (data.get("source_claim_index") is not None or relation_index is not None) and (
+            task_index = data.get("source_task_index")
+            if sum(value is not None for value in (
+                relation_index, data.get("source_claim_index"), task_index,
+            )) > 1:
+                raise ValueError("请只选择一条判断、工作关系或分项解释准备验证。")
+            if (data.get("source_claim_index") is not None
+                    or relation_index is not None or task_index is not None) and (
                 not data.get("source_step_id") or data.get("source_experiment_id")
             ):
                 raise ValueError("请从一份研究中的具体判断准备验证。")
@@ -3448,6 +3467,9 @@ class CareerService:
                         raise ValueError(
                             "请说明本次场景、对象或条件与旧设计的异同，再保存复验计划。"
                         )
+                    data = {**data, "purpose": "understanding_check"}
+                elif task_index is not None:
+                    task_context(source["result"], task_index)
                     data = {**data, "purpose": "understanding_check"}
                 elif relation_index is not None:
                     relations = (source["result"].get("work_map") or {}).get("work_relations", [])
@@ -3483,6 +3505,7 @@ class CareerService:
                         "purpose": "understanding_check",
                         "source_experiment_id": previous.get("source_experiment_id"),
                         "source_claim_index": previous.get("source_claim_index"),
+                        "source_task_index": previous.get("source_task_index"),
                         "source_relation_index": previous.get("source_relation_index")}
                        if previous.get("purpose") == "understanding_check" else {}),
                 }

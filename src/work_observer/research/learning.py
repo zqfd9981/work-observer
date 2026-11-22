@@ -6,7 +6,7 @@ from copy import deepcopy
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.memory.service import _tokens
 from work_observer.reports.cognition import work_map_search_parts
-from work_observer.research.investigation_memory import research_context
+from work_observer.research.investigation_memory import record_task_context, research_context
 from work_observer.retrieval.enhanced import validated_terms
 from work_observer.text_match import match_text
 
@@ -553,6 +553,7 @@ class LearningNotebook:
                 "answer_to_verify": experiment_answer_origin(career, row),
                 "claim_to_verify": experiment_claim_origin(project, row, self.store),
                 "relation_to_verify": experiment_relation_origin(project, row, self.store),
+                "task_to_verify": record_task_context(project, row, self.store),
                 "template_origin": experiment_template_origin(project, row, self.store),
                 "origin": row.get("origin", "research"),
                 "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
@@ -837,6 +838,8 @@ def learning_record(row, record, store):
         "task_id": row.get("task_id"),
         "question_id": row.get("question_id"),
         "source_step_id": row.get("source_step_id"),
+        "source_task_index": row.get("source_task_index"),
+        "source_investigation_task": record_task_context(record, row, store),
         "previous_view": row["previous_view"],
         "source_passage": deepcopy(row.get("source_passage")),
         "source_passages": deepcopy(row.get("source_passages", [])),
@@ -859,6 +862,7 @@ def learning_record(row, record, store):
         for key, origin in {
             "claim_to_verify": experiment_claim_origin(record, experiment, store),
             "relation_to_verify": experiment_relation_origin(record, experiment, store),
+            "task_to_verify": record_task_context(record, experiment, store),
             "template_origin": experiment_template_origin(record, experiment, store),
         }.items():
             if origin:
@@ -916,6 +920,9 @@ def learning_record(row, record, store):
                 )
                 selected = [claims[n] for n in relations[relation_index]["claim_indices"]
                             if 0 <= n < len(claims)]
+        if task := note.get("source_investigation_task"):
+            selected = task["claims"]
+            note["source_locators"].extend(deepcopy(task["evidence"]))
         if calculations := calculation_records(result):
             note["source_calculations"] = calculations
             note["source_calculation_notice"] = CALCULATION_NOTICE

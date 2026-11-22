@@ -7,6 +7,54 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.text_match import match_text
 
 
+def task_context(result, index):
+    investigation = result.get("investigation") or {}
+    tasks = investigation.get("tasks", [])
+    if result.get("status") != "completed" or type(index) is not int or not 0 <= index < len(tasks):
+        raise ValueError("请选择完整调查中的一个分项解释。")
+    outcome = next((row for row in investigation.get("outcomes", [])
+                    if row["task_index"] == index), None)
+    if not outcome:
+        raise ValueError("这项调查尚没有完整保存的回应。")
+    claims = result.get("claims", [])
+    selected = [{"claim_index": n, **deepcopy(claims[n])} for n in outcome["claim_indices"]
+                if 0 <= n < len(claims)]
+    cited = {key for claim in selected for key in claim.get("evidence_ids", [])}
+    actions = (result.get("application_plan") or {}).get("actions", []) if (
+        tasks[index]["intent"] == "practice"
+        and sum(task["intent"] == "practice" for task in tasks) == 1
+    ) else []
+    cited.update(key for action in actions for key in action.get("evidence_ids", []))
+    return {
+        "task_index": index, "task": deepcopy(tasks[index]), "outcome": deepcopy(outcome),
+        "constraints": deepcopy(investigation.get("constraints", [])),
+        "effective_scope": deepcopy(investigation.get("effective_scope")),
+        "missing_context": deepcopy(investigation.get("missing_context", [])),
+        "claims": selected,
+        "suggested_actions": deepcopy(actions),
+        "evidence": [{**deepcopy(row), **({"as_of": (row.get("historical_cutoffs") or [
+            result.get("created_at"),
+        ])[0]} if row.get("job_id") else {})}
+                     for row in result.get("evidence", []) if row["id"] in cited],
+        "notice": "来源调查中这一项的历史解释、范围与原文，不是用户已经采用的认识或实验结果。",
+    }
+
+
+def record_task_context(project, record, store):
+    index = record.get("source_task_index")
+    if index is None:
+        return None
+    step = next((row for row in project.get("steps", [])
+                 if row["id"] == record.get("source_step_id")), {})
+    run = store.get(step["run_id"]) if step.get("run_id") else {}
+    if not run or run.get("state") == "invalidated":
+        return None
+    try:
+        return task_context(run.get("result") or {}, index)
+    except ValueError:
+        return None
+
+
 def research_context(result):
     investigation = result.get("investigation")
     if not investigation:

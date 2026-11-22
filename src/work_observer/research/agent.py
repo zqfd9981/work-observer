@@ -1494,7 +1494,7 @@ async def _research(
     result["memory_used"] = recall()
     result["project_id"] = project_id
     application_background = applications.background(result["memory_used"], project_id)
-    learning_plan = (conversation_context or {}).get("career_action") == "plan"
+    learning_plan = (conversation_context or {}).get("career_action") == "plan" or adaptive
     if application_background is None and learning_plan:
         application_background = applications.background(
             result["memory_used"], project_id, allow_learning=True
@@ -2994,6 +2994,11 @@ async def _research(
                         arguments = dict(arguments)
                         raw_plan = arguments.pop("application_plan", None)
                         try:
+                            if adaptive and raw_plan is not None and not any(
+                                task["intent"] in {"practice", "verify"}
+                                for task in result["investigation"]["tasks"]
+                            ):
+                                raise ValueError("本次没有练习或验证意图，行动建议请填null。")
                             application_plan = applications.validate(
                                 raw_plan, evidence, result["memory_used"], project_id,
                                 allow_learning=learning_plan,
@@ -3042,6 +3047,7 @@ async def _research(
                         try:
                             task_outcomes = orchestration.outcomes(
                                 task_outcomes, result["investigation"], answer.claims, evidence,
+                                application_plan=application_plan,
                             )
                         except ValueError as exc:
                             reject_investigation_tool(call, entry, exc)
