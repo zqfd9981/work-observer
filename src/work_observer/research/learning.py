@@ -1,5 +1,6 @@
 """Recall personal understanding for the current question without adopting it as fact."""
 
+import json
 from copy import deepcopy
 
 from work_observer.connectors.mcp_probe import ProbeError
@@ -7,6 +8,18 @@ from work_observer.memory.service import _tokens
 from work_observer.reports.cognition import work_map_search_parts
 from work_observer.retrieval.enhanced import validated_terms
 from work_observer.text_match import match_text
+
+CALCULATION_FIELDS = ("local_experiments", "cohort_experiments", "threshold_experiments")
+CALCULATION_NOTICE = (
+    "来源讨论当时运行的完整本地计算输入与输出，不表示本轮已经重新执行。"
+    "构造案例、参照标签与指定代价不等于业务事实；改变条件后须重新计算并核对原文。"
+    "保留整次讨论的计算记录，不表示每项计算都支持本份认识或每条旧判断。"
+)
+
+
+def calculation_records(result):
+    context = result.get("career_learning_context", {})
+    return {key: deepcopy(context[key]) for key in CALCULATION_FIELDS if context.get(key)}
 
 
 def experiment_answer_origin(career, task):
@@ -214,9 +227,15 @@ class LearningNotebook:
             terms = validated_terms(terms)
         if type(offset) is not int or offset < 0:
             raise ProbeError("INVALID_LEARNING_OFFSET")
-        _, notes = self._available()
+        project, notes = self._available()
         ranked = []
         for row in notes:
+            step = next((item for item in project.get("steps", [])
+                         if item["id"] == row.get("source_step_id")), {})
+            run = self.store.get(step["run_id"]) if step.get("run_id") else {}
+            calculations = calculation_records((run or {}).get("result") or {}) if (
+                run or {}
+            ).get("state") != "invalidated" else {}
             text = match_text(
                 "\n".join(
                     row.get(key, "")
@@ -224,6 +243,7 @@ class LearningNotebook:
                 )
                 + "\n" + (row.get("source_passage") or {}).get("title", "")
                 + "\n" + (row.get("source_passage") or {}).get("quote", "")
+                + "\n" + json.dumps(calculations, ensure_ascii=False)
             )
             hits = [term for term in terms if match_text(term) in text]
             if hits or not terms:
@@ -489,9 +509,11 @@ class LearningNotebook:
             question = entry.get("user_question") or entry.get("interview_question") or ""
             claims = result.get("claims", [])
             parts = work_map_search_parts(result.get("work_map") or {})
+            calculations = calculation_records(result)
             text = match_text("\n".join([
                 question, *(row["text"] for row in claims), *result.get("gaps", []),
                 *(value for part in parts for value in part["fields"].values()),
+                json.dumps(calculations, ensure_ascii=False),
             ]))
             hits = [term for term in terms if match_text(term) in text]
             if terms and not hits:
@@ -524,6 +546,8 @@ class LearningNotebook:
                 } for index in matches[:3]],
                 "matching_claim_count": len(matches), "matched_terms": hits,
                 "map_previews": map_matches[:3], "map_match_count": len(map_matches),
+                **({"calculation_count": sum(len(rows) for rows in calculations.values())}
+                   if calculations else {}),
             }))
         ranked.sort(key=lambda row: row[:3], reverse=True)
         page = ranked[offset:offset + 6]
@@ -570,6 +594,9 @@ class LearningNotebook:
             "unknowns_then": list(result.get("gaps", [])),
             "source_references_to_reread": list(references.values()),
         }
+        if calculations := calculation_records(result):
+            record["local_calculations"] = calculations
+            record["local_calculation_notice"] = CALCULATION_NOTICE
         return {
             "research": record,
             "notice": "完整旧分析，只供重新核对；原范围、判断性质和末尾限定仍需保留。"
@@ -733,6 +760,9 @@ def learning_record(row, record, store):
         selected = [claims[index]] if index is not None and 0 <= index < len(claims) else (
             claims if (links or row.get("source_step_id")) and index is None else []
         )
+        if calculations := calculation_records(result):
+            note["source_calculations"] = calculations
+            note["source_calculation_notice"] = CALCULATION_NOTICE
         if selected:
             context = result.get("career_learning_context", {})
             if context.get("inquiry_at_start"):

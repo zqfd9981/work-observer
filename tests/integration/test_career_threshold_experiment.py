@@ -8,6 +8,8 @@ from test_career_workspace import run_stage
 from work_observer.api.web import create_app
 from work_observer.config import Settings
 from work_observer.research.agent import ModelClient
+from work_observer.research.learning import LearningNotebook
+from work_observer.research.store import ResearchStore
 from work_observer.storage.database import upgrade
 
 INPUT = {
@@ -45,7 +47,14 @@ class ThresholdModel(ModelClient):
             if row.get("type") == "function_call_output"
         ]
         if not outputs:
-            name, args = "run_threshold_comparison", {**INPUT, "hypothesis": HYPOTHESIS}
+            inputs = INPUT
+            remembered = context["project_context"]["career_evidence"].get("selected_learning_note")
+            if remembered:
+                calculation = remembered["source_calculations"]["threshold_experiments"][0]
+                assert calculation["false_negative_cost"] == 20
+                assert "不表示本轮已经重新执行" in remembered["source_calculation_notice"]
+                inputs = {key: calculation[key] for key in INPUT}
+            name, args = "run_threshold_comparison", {**inputs, "hypothesis": HYPOTHESIS}
         elif len(outputs) == 1:
             result = outputs[0]
             low, high = result["policies"]
@@ -77,6 +86,11 @@ class ThresholdModel(ModelClient):
                     "gaps": ["真实案例分布、标签正确性和实际处理约束仍需核实。"],
                 },
             )
+        if name == "finish_research" and (
+            context["project_context"].get("previous_findings")
+            or context["project_context"].get("historical_reply")
+        ):
+            args["revisions"] = []
         call = {
             "type": "function_call",
             "name": name,
@@ -156,6 +170,58 @@ def test_local_counterexample_can_be_saved_and_reopened_without_a_model_call(tmp
         }
         assert (
             researched["tasks"] == before["tasks"] and researched["insights"] == before["insights"]
+        )
+        source_step = researched["results"][0]["step_id"]
+        noted = client.post(
+            base + "/insights",
+            headers=auth,
+            json={
+                "source_step_id": source_step,
+                "source_claim_index": None,
+                "question_id": goal["focus_question_id"],
+                "previous_view": "合成旧理解：只看整体正确率。",
+                "observation": "给定的漏报代价改变了这组案例的取舍。",
+                "current_view": "合成新理解：先明确错误类型与业务条件。",
+                "open_question": "真实标签与代价仍需核实。",
+            },
+        )
+        assert noted.status_code == 201, noted.text
+        note = noted.json()["insights"][-1]
+        record = client.get("/api/projects/" + goal["id"]).json()
+        store = ResearchStore(tmp_path / "checkpoints.db", namespace=str(database.resolve()))
+        notebook = LearningNotebook(lambda: record, store)
+        old = notebook.read_research_history(source_step)["research"]
+        assert old["local_calculations"] == {"threshold_experiments": [probe]}
+        assert (
+            notebook.search_research_history(["普通工单10"])["research"][0]["calculation_count"]
+            == 1
+        )
+        assert notebook.search(["普通工单10"])["notes"][0]["id"] == note["id"]
+        recalled = notebook.read(note["id"])["note"]
+        assert recalled["source_calculations"] == old["local_calculations"]
+        found = client.get("/api/career/search", params={"q": "普通工单10"}).json()
+        assert {source_step, note["id"]} <= {row["id"] for row in found["records"]}
+        recalled["source_calculations"]["threshold_experiments"][0]["cases"][-1]["name"] = "changed"
+        assert notebook.read(note["id"])["note"]["source_calculations"] == old["local_calculations"]
+        other = LearningNotebook(lambda: {"id": "other"}, store, project_lister=lambda: [record])
+        assert {
+            row["kind"] for row in other.search_other_goal_memory(["普通工单10"])["memories"]
+        } == {"insight", "research"}
+        revisited = run_stage(
+            client,
+            goal["id"],
+            auth,
+            "ask",
+            question_id=goal["focus_question_id"],
+            insight_id=note["id"],
+            question="从保存认识的原计算条件重新核对。",
+        )
+        assert revisited["results"][0]["result"]["status"] == "completed"
+        assert (
+            model.contexts[-1]["project_context"]["career_evidence"]["selected_learning_note"][
+                "source_calculations"
+            ]
+            == old["local_calculations"]
         )
     with TestClient(create_app(settings, **kwargs), base_url="http://127.0.0.1") as client:
         assert client.get(base).json()["results"][0]["result"]["career_learning_context"][

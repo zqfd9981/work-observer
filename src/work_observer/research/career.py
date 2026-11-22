@@ -19,6 +19,7 @@ from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.archived_sources import catalog as archive_catalog
+from work_observer.research.learning import calculation_records, learning_record
 from work_observer.research.projects import ProjectService, step_continuation
 from work_observer.retrieval.catalog import Catalog
 from work_observer.retrieval.unified import UnifiedRetrieval
@@ -505,7 +506,11 @@ class CareerService:
                         row.get(key, "")
                         for key in ("previous_view", "observation", "current_view", "open_question")
                     ) + "\n" + (row.get("source_passage") or {}).get("title", "")
-                    + "\n" + (row.get("source_passage") or {}).get("quote", ""),
+                    + "\n" + (row.get("source_passage") or {}).get("quote", "")
+                    + "\n" + json.dumps(
+                        learning_record(row, owner, self.store).get("source_calculations", {}),
+                        ensure_ascii=False,
+                    ),
                     "experiments",
                     step_id=row.get("source_step_id"),
                 )
@@ -578,6 +583,7 @@ class CareerService:
                         *[claim["text"] for claim in result.get("claims", [])],
                         *result.get("gaps", []),
                         *[value for part in map_parts for value in part["fields"].values()],
+                        json.dumps(calculation_records(result), ensure_ascii=False),
                     ]
                 )
                 title = (
