@@ -2332,6 +2332,7 @@ console.log('Inquiry material intake keeps typed work, updates inherited default
  assert.deepEqual(Array.from(initial.material_ids),['old-doc','new-doc']);assert.deepEqual(Array.from(initial.selected_job_ids),['old-job']);
  const first=j.prepareDiscussionFollowup(reviewed,scope,initial,j.discussionGap(reviewed,'review',1));
  assert.equal(first.question,'<script>last unknown?</script>');assert.equal(first.gap.index,1);assert.equal(first.open,true);assert.equal(initial.question,'');
+ const relationQuestion='Explain the selected task → delivery relation and its limits.',relationDraft=j.prepareDiscussionFollowup(reviewed,scope,initial,null,relationQuestion);assert.equal(relationDraft.question,relationQuestion);assert.equal(initial.question,'');assert.equal(j.prepareDiscussionFollowup(reviewed,scope,{...relationDraft,question:'Keep my edited relation question.'},null,'Another relation?').question,'Keep my edited relation question.');
  const pending={...first,question:'Keep this unsent question.',material_ids:['new-doc']},kept=j.prepareDiscussionFollowup(reviewed,scope,pending,j.discussionGap(reviewed,'review',0));
  assert.equal(kept.question,pending.question);assert.equal(kept.gap.index,1);assert.deepEqual(kept.material_ids,pending.material_ids);
  const long='完整未知。'.repeat(400)+'END_LIMIT',longDraft=j.prepareDiscussionFollowup(reviewed,scope,initial,{text:long,field:'review',index:2});assert.equal(longDraft.question,'');assert.equal(longDraft.gap.text,long);
