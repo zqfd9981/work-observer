@@ -728,6 +728,13 @@ def learning_record(row, record, store):
         )
         if selected:
             context = result.get("career_learning_context", {})
+            if context.get("selected_experiments"):
+                note["source_experiments"] = deepcopy(context["selected_experiments"])
+                note["source_experiments_notice"] = (
+                    "这份认识参考的来源讨论启动时选定的完整实验输入，不是实验当前内容。"
+                    "预期、计划和用户记录的观察分别保留；不是本轮新证据或独立验证，"
+                    "仍需按本轮范围读取产物原文并核对适用条件。"
+                )
             inputs = [
                 *context.get("notes", []),
                 *[item for item in (context.get("selected_note"), context.get("counter_note"),

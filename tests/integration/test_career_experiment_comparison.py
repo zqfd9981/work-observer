@@ -28,7 +28,12 @@ class ExperimentComparisonModel(ModelClient):
         context = json.loads(history[1]["content"])
         self.contexts.append(context)
         personal = context["project_context"]["career_evidence"]
-        records, selected = personal["experiments"], personal["selected_experiment_ids"]
+        note = personal.get("selected_learning_note") or {}
+        records = note.get("source_experiments") or personal["experiments"]
+        selected = [r["id"] for r in records] if note else personal["selected_experiment_ids"]
+        if note:
+            assert not personal["selected_experiment_ids"]
+            assert "不是本轮新证据" in note["source_experiments_notice"]
         assert len(records) == len(selected) == 4 and [r["id"] for r in records] == selected
         assert records[0]["prior_expectation"] == HYPOTHESIS
         assert records[0]["state"] == "planned" and not records[0]["reported_observation"]
@@ -203,11 +208,48 @@ def test_four_experiments_keep_full_independent_conditions_and_frozen_inputs(tmp
             == snapshot
         )
         assert snapshot[1]["reported_observation"] == OBSERVATION
+        before_note, calls = client.get(base).json(), len(model.contexts)
+        note = save(
+            base + "/insights",
+            {
+                "source_step_id": result["step_id"],
+                "question_id": question["id"],
+                "previous_view": "原以为相同工具会对应相同检查。",
+                "observation": "两次构造记录的对象与方法不同，不能直接归因。",
+                "current_view": "解释需要保留对象、构造条件与未确认的权限。",
+                "open_question": "相同条件下能否复现差异？",
+            },
+        )["insights"][-1]
+        after_note = client.get(base).json()
+        assert after_note["tasks"] == before_note["tasks"]
+        assert after_note["results"] == before_note["results"] and len(model.contexts) == calls
+        learned = run_stage(
+            client,
+            goal["id"],
+            auth,
+            "ask",
+            insight_id=note["id"],
+            question_id=question["id"],
+            question="按我的认识复核原始条件。",
+        )
+        learned_result = learned["results"][0]["result"]
+        assert learned_result["status"] == "completed", learned_result["stop_reason"]
+        recalled = learned_result["career_learning_context"]["selected_note"]
+        assert recalled["source_experiments"] == snapshot
+        assert recalled["source_experiments"][1]["reported_observation"] == OBSERVATION
+        assert (
+            learned["tasks"] == after_note["tasks"]
+            and learned["insights"] == after_note["insights"]
+        )
         calls = len(model.contexts)
-        continued = save(base + "/prepare", {
-            "kind": "ask", "source_step_id": result["step_id"],
-            "question": "接着这组实验，核对后来记录的变化。",
-        })
+        continued = save(
+            base + "/prepare",
+            {
+                "kind": "ask",
+                "source_step_id": result["step_id"],
+                "question": "接着这组实验，核对后来记录的变化。",
+            },
+        )
         project = client.get("/api/projects/" + goal["id"]).json()
         step = next(row for row in project["steps"] if row["id"] == continued["step_id"])
         assert step["career_experiment_ids"] == selected and len(model.contexts) == calls
