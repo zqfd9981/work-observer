@@ -24,10 +24,20 @@ class OtherGoalExperimentModel(ModelClient):
     def __init__(self):
         self.last_usage, self.contexts = {}, []
         self.artifact_in_scope = False
+        self.expected_revalidation = None
+        self.expected_new_observation = None
 
     async def turn(self, history):
         context = json.loads(history[1]["content"])
         self.contexts.append(context)
+        if self.expected_revalidation:
+            personal = context["project_context"]["career_evidence"]
+            assert personal["selected_experiment_id"] == self.expected_revalidation
+            current = next(row for row in personal["experiments"]
+                           if row["id"] == self.expected_revalidation)
+            assert current["purpose"] == "understanding_check"
+            assert current["reported_observation"] == self.expected_new_observation
+            assert current["template_origin"]["memory"]["reported_observation"] == OBSERVATION
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
         if not outputs:
@@ -126,9 +136,10 @@ def test_other_goal_experiment_memory_keeps_original_observations_and_log_scope(
                       "material_title": "合成复验当前原文",
                       "material_text": "当前场景的工作对象不同，个人验收权限未明确。"})
         target_base = "/api/career/" + target["id"]
-        result = run_stage(
+        study = run_stage(
             client, target["id"], auth, "ask", question="合成跨目标实验复验：参考" + MARKER + "。",
-        )["results"][0]["result"]
+        )["results"][0]
+        result = study["result"]
         assert result["status"] == "completed", result["stop_reason"]
         assert result["model_calls"] == 4
         read = result["career_learning_context"]["read_other_goals"][0]
@@ -140,10 +151,46 @@ def test_other_goal_experiment_memory_keeps_original_observations_and_log_scope(
         after = client.get(target_base).json()
         assert after["document_ids"] == target["document_ids"] and not after["tasks"]
         assert client.get(base).json() == before
+        template = {"title": "在新场景重新核对条件", "task_or_ability": "核对不同对象",
+                    "deliverable": "新场景记录", "completion_check": "比较同条件下的观察",
+                    "hypothesis": EXPECTATION, "source_step_id": study["step_id"],
+                    "source_experiment_id": read["record_id"],
+                    "design_change": "把工作对象替换为新场景，保留同样的检查方法。",
+                    "comparison_rows": design["comparison_rows"]}
+        calls = len(model.contexts)
+        for invalid in [{"source_step_id": None}, {"source_experiment_id": "0" * 32},
+                        {"design_change": ""}]:
+            rejected = client.post(target_base + "/experiments", headers=auth,
+                                   json={**template, **invalid})
+            assert rejected.status_code == 422, rejected.text
+        assert client.get(target_base).json() == after and len(model.contexts) == calls
+        planned = save(target_base + "/experiments", template)
+        new_task = planned["tasks"][-1]
+        assert new_task["state"] == "planned" and not new_task["outcome"]
+        assert new_task["purpose"] == "understanding_check"
+        assert not new_task.get("artifact_document_id") and not new_task["evidence_ids"]
+        assert all(not row["observed"] for row in new_task["comparison_rows"])
+        assert planned["document_ids"] == target["document_ids"]
+        assert planned["results"] == after["results"] and len(model.contexts) == calls
+        new_observation = "新场景用户记录：改变对象后检查步骤也需调整，真实权限仍未知。"
+        save(target_base + "/tasks/" + new_task["id"], {
+            "state": "done", "outcome": new_observation,
+        }, "patch")
+        next_task = save(target_base + "/experiments", {
+            **{key: value for key, value in template.items()
+               if key not in {"source_step_id", "source_experiment_id"}},
+            "previous_task_id": new_task["id"],
+        })["tasks"][-1]
+        assert next_task["source_experiment_id"] == read["record_id"]
+        assert next_task["source_step_id"] == study["step_id"] and not next_task["outcome"]
+        assert client.get(base).json() == before
         save(target_base + "/materials/attach", {"document_id": old_log})
         model.artifact_in_scope = True
+        model.expected_revalidation = new_task["id"]
+        model.expected_new_observation = new_observation
         reread = run_stage(client, target["id"], auth, "ask",
-                           question="合成跨目标实验复验：重读选入的旧日志。")["results"][0]["result"]
+                           question="合成跨目标实验复验：重读选入的旧日志。",
+                           task_id=new_task["id"])["results"][0]["result"]
         assert reread["status"] == "completed", reread["stop_reason"]
         assert {row["public_document_id"] for row in reread["evidence"]} == {
             target["materials"][0]["id"], old_log,

@@ -23,6 +23,31 @@ def experiment_answer_origin(career, task):
     }
 
 
+def experiment_template_origin(project, task, store):
+    if not task.get("source_experiment_id"):
+        return None
+    step = next((row for row in project.get("steps", [])
+                 if row["id"] == task.get("source_step_id")), {})
+    if not step.get("run_id"):
+        return None
+    run = store.get(step["run_id"]) or {}
+    if run.get("state") == "invalidated":
+        return None
+    reads = (run.get("result") or {}).get("career_learning_context", {}).get("read_other_goals", [])
+    origin = next((row for row in reads if row["kind"] == "experiment"
+                   and row["record_id"] == task["source_experiment_id"]), None)
+    if not origin:
+        return None
+    copied = deepcopy(origin)
+    copied["memory"].pop("template_origin", None)
+    copied["notice"] = (
+        "来源讨论当时读取的旧设计与用户观察，只供核对这份新计划的起点。"
+        "日志范围标记属于当时状态；本轮可读范围仍以fixed_scope为准。"
+        "旧观察不是这项新实验的结果，不能因借用设计而声称已经执行或验证。"
+    )
+    return copied
+
+
 def learning_family(notes, identity):
     links = {row["id"]: set() for row in notes}
     for row in notes:
@@ -358,6 +383,7 @@ class LearningNotebook:
                 "task_or_ability": row["task_or_ability"],
                 "planned_deliverable": row["deliverable"],
                 "proposed_check": row["completion_check"], "state": row["state"],
+                "purpose": row.get("purpose"),
                 "prior_expectation": row.get("hypothesis", ""),
                 "reported_observation": row.get("outcome", ""),
                 "comparison_conditions": row.get("comparison_conditions", ""),
@@ -367,6 +393,7 @@ class LearningNotebook:
                 "source_step_id": row.get("source_step_id"),
                 "target_requirement": row.get("target_requirement"),
                 "answer_to_verify": experiment_answer_origin(career, row),
+                "template_origin": experiment_template_origin(project, row, self.store),
                 "origin": row.get("origin", "research"),
                 "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
                 "artifact": row.get("artifact", ""),
@@ -633,6 +660,9 @@ def learning_record(row, record, store):
                        if item["id"] == row.get("task_id")), None)
     if experiment:
         note["linked_experiment"] = deepcopy(experiment)
+        note["linked_experiment"]["template_origin"] = experiment_template_origin(
+            record, experiment, store,
+        )
         note["experiment_notice"] = (
             "读取时当前保存的实验设计与观察，不代表已独立验证；完成状态也不证明能力或因果。"
             "artifact_document_id只供定位，本轮仍需读取可用原文；不自动恢复已移出的材料。"

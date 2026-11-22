@@ -3120,13 +3120,29 @@ class CareerService:
     def add_experiment(self, identity, data):
         with self.store.lock, self.store.db:
             project = self._project(identity)
+            if data.get("source_experiment_id") and not data.get("source_step_id"):
+                raise ValueError("请从本轮已读取的旧实验中选择设计，再准备复验。")
             if source_id := data.get("source_step_id"):
                 source = next((row for row in self.get(identity)["results"]
-                               if row["step_id"] == source_id and row["kind"] == "answer"
+                               if row["step_id"] == source_id
                                and (row.get("result") or {}).get("status") == "completed"
                                and row["state"] != "abandoned"), None)
                 if not source or data.get("previous_task_id"):
                     raise ValueError("请选择当前目标中一次完整回答，或从已有实验继续验证。")
+                if template_id := data.get("source_experiment_id"):
+                    templates = source["result"].get("career_learning_context", {}).get(
+                        "read_other_goals", [],
+                    )
+                    if not any(row["kind"] == "experiment" and row["record_id"] == template_id
+                               for row in templates):
+                        raise ValueError("这次研究没有读取所选旧实验，请重新选择已取回的设计。")
+                    if not data.get("design_change", "").strip():
+                        raise ValueError(
+                            "请说明本次场景、对象或条件与旧设计的异同，再保存复验计划。"
+                        )
+                    data = {**data, "purpose": "understanding_check"}
+                elif source["kind"] != "answer":
+                    raise ValueError("请从一次完整回答或本轮取回的旧实验设计准备验证。")
                 if data.get("question_id") != source.get("question_id"):
                     raise ValueError("请保留这次回答对应的调查问题，再保存验证计划。")
                 if source.get("understanding_check"):
@@ -3147,7 +3163,8 @@ class CareerService:
                         "target_requirement": previous["target_requirement"]}
                        if previous.get("target_requirement") else {}),
                     **({"source_step_id": previous.get("source_step_id"),
-                        "purpose": "understanding_check"}
+                        "purpose": "understanding_check",
+                        "source_experiment_id": previous.get("source_experiment_id")}
                        if previous.get("purpose") == "understanding_check" else {}),
                 }
             task_id = uuid4().hex

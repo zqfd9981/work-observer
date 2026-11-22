@@ -1506,6 +1506,7 @@ class ProjectService:
             notes = career.get("insights", [])
             from work_observer.research.learning import (
                 experiment_answer_origin,
+                experiment_template_origin,
                 learning_record,
                 recall_learning_notes,
             )
@@ -1526,6 +1527,7 @@ class ProjectService:
                     "planned_deliverable": row["deliverable"],
                     "proposed_check": row["completion_check"],
                     "origin": row.get("origin", "research"),
+                    "purpose": row.get("purpose"),
                     "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
                     "state": row["state"],
                     "reported_observation": row["outcome"] if full else row["outcome"][:500],
@@ -1535,6 +1537,8 @@ class ProjectService:
                     "previous_task_id": row.get("previous_task_id"),
                     "source_step_id": row.get("source_step_id"),
                     "answer_to_verify": experiment_answer_origin(career, row) if full else None,
+                    "template_origin": experiment_template_origin(record, row, self.store)
+                    if full else None,
                     "design_change": row.get("design_change", ""),
                     "comparison_conditions": row.get("comparison_conditions", "") if full else "",
                     "comparison_rows": deepcopy(row.get("comparison_rows", [])) if full else [],
