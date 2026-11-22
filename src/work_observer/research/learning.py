@@ -733,6 +733,8 @@ class LearningNotebook:
             record["retrieval_review_then"] = deepcopy(learning["retrieval_review"])
         if learning.get("feedback_origin"):
             record["feedback_origin"] = deepcopy(learning["feedback_origin"])
+        if learning.get("practice_experiment"):
+            record["practice_experiment_then"] = deepcopy(learning["practice_experiment"])
         if result.get("application_plan"):
             plan = deepcopy(result["application_plan"])
             for action in plan["actions"]:
@@ -767,6 +769,8 @@ class LearningNotebook:
             "带入的运行线索，未在本轮重跑，不能作为新的原文证据。"
             "application_plan_then是当时的建议与尚未执行的预期，引用改为原文定位；"
             "feedback_origin保留它明确针对的反馈与未知，不表示该未知已经解决。"
+            "practice_experiment_then保留重答时带入的个人练习记录，后来补改不会回写；"
+            "仍须区分计划、预期、实际观察和未执行条件，不是独立核验的效果。"
             "计划不等于实际结果，旧研究不能证明当前事实或个人能力，不修改原记录。",
         }
 

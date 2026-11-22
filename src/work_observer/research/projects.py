@@ -1988,6 +1988,10 @@ class ProjectService:
                 if step.get("career_answer_document_id")
                 else None,
                 "feedback_origin": deepcopy(step.get("career_feedback_origin")),
+                "selected_practice_experiment": next(
+                    (experiment_record(row, full=True) for row in career["tasks"]
+                     if row["id"] == step.get("career_practice_task_id")), None,
+                ),
                 "omitted_documents": step.get("career_omitted_documents", 0),
                 "document_selection_notice": "omitted_documents是未放入开头优先选择的资料数量，"
                 "不表示资料不存在、无关或不可读取。可读范围见fixed_scope.archived_public_ids，"

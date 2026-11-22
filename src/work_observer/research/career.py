@@ -2091,6 +2091,7 @@ class CareerService:
         source_step_id=None,
         claim_review_index=None,
         feedback_gap_index=None,
+        practice_task_id=None,
         experiment_ids=None,
         question="",
         section="requirements",
@@ -2126,6 +2127,8 @@ class CareerService:
             raise ValueError("请先选定一份旧研究和具体判断，再发起这项查证。")
         if feedback_gap_index is not None and (kind != "plan" or not source_step_id):
             raise ValueError("请从一次完整回答的反馈选择待验证的问题，再设计练习。")
+        if practice_task_id and kind != "answer":
+            raise ValueError("请在重答原题时带入这项练习观察。")
         material_focus_supplied = material_id is not None or material_ids is not None
         material_ids = list(material_ids or [])
         if material_ids and (kind not in {"ask", "map", "plan"} or material_id):
@@ -2729,6 +2732,37 @@ class CareerService:
                     "结合selected_inquiry与工作资料，说明什么观察可以支持或挑战原解释。"
                     "用户的解释不是已执行的实验或个人履历；保留未运行和未知的边界，不补造结果。"
                 )
+            if practice_task_id:
+                practice = next((row for row in project["career"]["tasks"]
+                                 if row["id"] == practice_task_id), None)
+                origin = (practice or {}).get("feedback_origin") or {}
+                original = next((row for row in project["career"]["runs"]
+                                 if row["step_id"] == origin.get("step_id")
+                                 and row["kind"] == "answer"), None)
+                if (not practice or not practice.get("outcome") or not original
+                        or origin.get("project_id", identity) != identity):
+                    raise ValueError("请先记录这项练习的实际观察，再回到本目标中的原题作答。")
+                same_question = (
+                    original.get("question_id") == question_id
+                    and original["interview_question"] == questions[question_index]
+                    and bool(original.get("inquiry_answer")) == bool(inquiry_answer)
+                )
+                if not inquiry_answer:
+                    same_question = same_question and (
+                        original.get("source_step_id") == source_step_id
+                        and original.get("question_index") == question_index
+                    )
+                if not same_question:
+                    raise ValueError("这项观察承接的是另一道原题，请从练习记录中重答对应问题。")
+                feedback_origin = deepcopy(origin)
+                question += (
+                    "\n本次是带着实际练习观察重答同一原题。"
+                    "career_evidence.selected_practice_experiment保留明确选中的完整计划、预期和观察。"
+                    "先读取feedback_origin所指的旧反馈、原回答及练习产物，再与本次回答对照："
+                    "指出哪个解释因哪项实际观察而改变，哪些条件尚未执行或仍不能判断。"
+                    "反馈只是分析，不因重答更长、练习标为done或观点更肯定就认定理解进步；"
+                    "用户记录不是独立核验，未执行的对照组不能写成成功。"
+                )
             focused_document_id = None
             interview_kinds = {"interview", "teachback", "answer", "followup"}
             if kind in interview_kinds:
@@ -2983,7 +3017,7 @@ class CareerService:
                     "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
                 )
             feedback_task = next((row for row in project["career"]["tasks"]
-                                  if row["id"] == task_id), {})
+                                  if row["id"] == (practice_task_id or task_id)), {})
             if feedback_origin is None:
                 feedback_origin = deepcopy(feedback_task.get("feedback_origin"))
             if (feedback_origin and inherit_focus
@@ -3280,6 +3314,8 @@ class CareerService:
                 project["steps"][-1]["career_retrieval_review"] = retrieval_review
             if feedback_origin:
                 project["steps"][-1]["career_feedback_origin"] = feedback_origin
+            if practice_task_id:
+                project["steps"][-1]["career_practice_task_id"] = practice_task_id
             if retrieval_document_ids is not None:
                 project["steps"][-1]["career_source_document_ids"] = retrieval_document_ids[:]
             if feedback_documents is not None:
@@ -3346,6 +3382,7 @@ class CareerService:
                     "counter_insight_id": counter_insight_id,
                     "question_id": question_id,
                     **({"feedback_origin": feedback_origin} if feedback_origin else {}),
+                    **({"practice_task_id": practice_task_id} if practice_task_id else {}),
                     "comparison_step_ids": comparison_step_ids,
                     "passage_ids": passage_ids,
                     "synthesis_sources": synthesis_sources,

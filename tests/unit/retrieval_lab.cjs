@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={practiceAnswerSource,feedbackPracticeAnswer,practiceAnswerRecall,feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -118,3 +118,17 @@ const planSource=api.answerExperimentSource({source_step_id:'plan-step',feedback
 
 const reusedGap=api.feedbackOrigin({...exactGap,project_id:'old-goal'}, {id:'new-goal'});
 assert.match(reusedGap,/#career\/old-goal\/discussion\/gap-answer/);assert.doesNotMatch(reusedGap,/#career\/new-goal\/discussion\/gap-answer/);
+
+const originalGroup={step_id:'original-group',kind:'teachback',current:true,state:'completed',understanding_check:true,result:{status:'completed',interview_questions:[gapAnswer.interview_question]}};
+gapAnswer.source_step_id=originalGroup.step_id;gapAnswer.question_index=0;
+gapData.results.push(originalGroup);api.setup(gapData);
+const observedPractice={id:'gap-practice',title:'原反馈验证',outcome:'只执行第一组，仍有漏回 <script>',feedback_origin:exactGap};
+assert.equal(api.practiceAnswerSource(observedPractice,gapData).available,true);
+const reanswerPanel=api.feedbackPracticeAnswer(observedPractice,gapData);
+assert.match(reanswerPanel,/data-career-practice-answer="gap-practice"/);assert.match(reanswerPanel,/原题末尾/);assert.match(reanswerPanel,/只执行第一组/);assert.doesNotMatch(reanswerPanel,/<script>/);
+assert.equal(api.feedbackPracticeAnswer({...observedPractice,outcome:''},gapData),'');
+assert.equal(api.practiceAnswerSource({...observedPractice,feedback_origin:{...exactGap,project_id:'old-goal'}},gapData),null);
+const changedGroup={...gapData,results:[gapAnswer,{...originalGroup,result:{...originalGroup.result,interview_questions:['另一题？']}}]};
+assert.equal(api.practiceAnswerSource(observedPractice,changedGroup).available,false);
+const frozenPractice=api.practiceAnswerRecall({career_learning_context:{practice_experiment:{id:'gap-practice',title:'原练习',prior_expectation:'预期找回，未验证',reported_observation:'实际仍漏回',comparison_rows:[{condition:'第一组',input:'上限1',expected:'可能漏回',observed:'仍漏回'},{condition:'第二组',input:'上限3',expected:'可能找回',observed:''}]}}},'goal');
+assert.match(frozenPractice,/实际仍漏回/);assert.match(frozenPractice,/未执行|未记录/);assert.match(frozenPractice,/#career\/goal\/task\/gap-practice/);

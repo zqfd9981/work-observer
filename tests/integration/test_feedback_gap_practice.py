@@ -3,6 +3,7 @@
 import json
 import re
 
+import pytest
 from starlette.testclient import TestClient
 from test_adaptive_investigation import settled, workspace
 
@@ -39,6 +40,12 @@ class FeedbackPracticeModel(ModelClient):
         if experiment.get("artifact_document"):
             documents.add(experiment["artifact_document"]["document_id"])
             assert experiment["feedback_to_verify"]["gap"] == GAP
+        practice = personal.get("selected_practice_experiment")
+        if practice:
+            assert practice["feedback_to_verify"]["gap"] == GAP
+            assert practice["comparison_rows"][0]["observed"] == "仍有漏回，只做了这一组。"
+            assert practice["comparison_rows"][1]["observed"] == ""
+            documents.add(practice["artifact_document"]["document_id"])
         assert set(context["fixed_scope"]["archived_public_ids"]) == documents
         outputs = [json.loads(row["output"]) for row in history
                    if row.get("type") == "function_call_output"]
@@ -93,7 +100,10 @@ class FeedbackPracticeModel(ModelClient):
         return [call], call
 
 
-def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection(tmp_path):
+@pytest.mark.parametrize("direct_inquiry", [False, True])
+def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection(
+    tmp_path, direct_inquiry,
+):
     model = FeedbackPracticeModel()
     with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
         auth = {"X-WO-Token": re.search(
@@ -111,7 +121,10 @@ def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection
         })["job_id"] for i in range(3)]
         created = post("/api/career", {
             "title": "合成反馈到验证", "goal": "把尚未回答清楚的问题变成可检查的观察",
-            "first_question": "检索没有返回是否就说明原文没有相关工作？", "job_ids": jobs,
+            "first_question": QUESTION if direct_inquiry else (
+                "检索没有返回是否就说明原文没有相关工作？"
+            ),
+            "job_ids": jobs,
             "material_title": "合成检索说明", "material_text": "固定原文和表达，比较不同返回上限。",
         })
         goal, work = created["id"], created["materials"][0]["id"]
@@ -130,7 +143,11 @@ def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection
 
         questions = run(prepare("teachback", question_id=created["focus_question_id"],
                                 selected_job_ids=jobs[:1]))
-        answer = run(prepare("answer", source_step_id=questions["step_id"], question_index=0,
+        inquiry_args = {"inquiry_answer": True, "question_id": created["focus_question_id"],
+                        "selected_job_ids": jobs[:1]}
+        interview_args = {"source_step_id": questions["step_id"], "question_index": 0}
+        answer_args = inquiry_args if direct_inquiry else interview_args
+        answer = run(prepare("answer", **answer_args,
                              answer="可能同时受查询表达和片段上限影响，我还没有生产验证。"))
         model.gap_index = answer["result"]["gaps"].index(GAP)
         assert GAP not in "\n".join(answer["result"]["gaps"])[:1000]
@@ -159,6 +176,11 @@ def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection
         assert task["question_id"] == created["focus_question_id"]
         assert task["state"] == "planned" and not task["outcome"]
         assert all(not row["observed"] for row in task["comparison_rows"])
+        unrun = client.post(base + "/prepare", headers=auth, json={
+            "kind": "answer", **answer_args,
+            "answer": "仍未执行。", "practice_task_id": task["id"],
+        })
+        assert unrun.status_code == 422 and "实际观察" in unrun.text
         rows = [{**row, "observed": "仍有漏回，只做了这一组。" if i == 0 else ""}
                 for i, row in enumerate(task["comparison_rows"])]
         changed = client.patch(base + "/tasks/" + task["id"], headers=auth, json={
@@ -171,6 +193,28 @@ def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection
         reflected = run(prepare("reflect", task_id=task["id"]))
         assert reflected["result"]["career_learning_context"]["feedback_origin"]["gap"] == GAP
         assert unrelated not in reflected["result"]["scope"]["archived_public_ids"]
+        mismatched = client.post(base + "/prepare", headers=auth, json={
+            "kind": "answer", **(interview_args if direct_inquiry else inquiry_args),
+            "answer": "直接回答原调查问题，不是当时那道自测题。", "practice_task_id": task["id"],
+        })
+        assert mismatched.status_code == 422 and "另一道原题" in mismatched.text
+        reanswered = run(prepare(
+            "answer", **answer_args,
+            answer="第一组仍有漏回，另一组尚未执行，不能分辨两种解释，还没有生产验证。",
+            practice_task_id=task["id"],
+        ))
+        assert reanswered["source_step_id"] == answer["source_step_id"]
+        assert reanswered["question_index"] == answer["question_index"]
+        assert reanswered["task_id"] == answer["task_id"]
+        assert reanswered["practice_task_id"] == task["id"]
+        snapshot = reanswered["result"]["career_learning_context"]["practice_experiment"]
+        assert snapshot["comparison_rows"][1]["observed"] == ""
+        assert snapshot["reported_observation"] == task["outcome"]
+        assert unrelated not in reanswered["result"]["scope"]["archived_public_ids"]
+        amended = client.patch(base + "/tasks/" + task["id"], headers=auth, json={
+            "state": "done", "outcome": "后补说明：仍只执行了第一组，还未验证另一组。",
+        })
+        assert amended.status_code == 200, amended.text
         project = client.get("/api/projects/" + goal).json()
         store = ResearchStore(tmp_path / "checkpoints.db",
                               namespace=str((tmp_path / "adaptive.db").resolve()))
@@ -182,6 +226,7 @@ def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection
             assert read["answer_to_verify"]["step_id"] == answer["step_id"]
             assert read["answer_to_verify"]["original_question"] == QUESTION
             assert read["feedback_to_verify"]["gap"] == GAP
+            assert read["reported_observation"] != snapshot["reported_observation"]
             assert notebook.search_experiments(["数量限制"])["experiments"][0]["id"] == task["id"]
             historical_plan = notebook.read_research_history(plan_id)["research"]
             assert historical_plan["feedback_origin"]["gap"] == GAP
@@ -189,6 +234,8 @@ def test_late_gap_and_full_question_survive_plan_save_observation_and_reflection
             assert len(original_action["comparison_rows"]) == 2
             assert "evidence_ids" not in original_action
             assert original_action["source_references_to_reread"]
+            history = notebook.read_research_history(reanswered["step_id"])["research"]
+            assert history["practice_experiment_then"] == snapshot
         finally:
             store.close()
         assert client.get(base).json()["questions"][0]["state"] == "open"
