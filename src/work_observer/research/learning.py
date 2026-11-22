@@ -9,6 +9,20 @@ from work_observer.retrieval.enhanced import validated_terms
 from work_observer.text_match import match_text
 
 
+def experiment_answer_origin(career, task):
+    source = next((row for row in career.get("runs", [])
+                   if row["step_id"] == task.get("source_step_id")
+                   and row["kind"] == "answer"), None)
+    if not source:
+        return None
+    return {
+        "step_id": source["step_id"], "original_question": source.get("interview_question"),
+        "user_answer": source.get("answer"), "answer_document_id": source.get("answer_document_id"),
+        "notice": "验证计划所针对的完整个人解释；不是实际观察或原文证据。"
+                  "可读取该step_id的历史反馈，再按本轮范围回查原文。",
+    }
+
+
 def learning_family(notes, identity):
     links = {row["id"]: set() for row in notes}
     for row in notes:
@@ -279,6 +293,7 @@ class LearningNotebook:
                 "previous_task_id": row.get("previous_task_id"),
                 "source_step_id": row.get("source_step_id"),
                 "target_requirement": row.get("target_requirement"),
+                "answer_to_verify": experiment_answer_origin(career, row),
                 "origin": row.get("origin", "research"),
                 "reused_from_goal": (row.get("reused_from") or {}).get("project_title"),
                 "artifact": row.get("artifact", ""),

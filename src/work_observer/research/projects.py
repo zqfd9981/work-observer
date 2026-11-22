@@ -1504,7 +1504,11 @@ class ProjectService:
                 elif selected_task:
                     stories = []
             notes = career.get("insights", [])
-            from work_observer.research.learning import learning_record, recall_learning_notes
+            from work_observer.research.learning import (
+                experiment_answer_origin,
+                learning_record,
+                recall_learning_notes,
+            )
 
             active_notes, learning_recall = recall_learning_notes(career, step, record["goal"])
             selected_note = next(
@@ -1529,6 +1533,8 @@ class ProjectService:
                     if full
                     else row.get("hypothesis", "")[:400],
                     "previous_task_id": row.get("previous_task_id"),
+                    "source_step_id": row.get("source_step_id"),
+                    "answer_to_verify": experiment_answer_origin(career, row) if full else None,
                     "design_change": row.get("design_change", ""),
                     "comparison_conditions": row.get("comparison_conditions", "") if full else "",
                     "comparison_rows": deepcopy(row.get("comparison_rows", [])) if full else [],
