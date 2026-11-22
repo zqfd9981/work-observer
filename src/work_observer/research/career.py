@@ -2583,6 +2583,8 @@ class CareerService:
             elif question_id:
                 question += (
                     "本次围绕career_evidence.selected_inquiry中的持续调查问题展开，"
+                    "why_matters是用户说明的调查目的、个人背景或取舍，不是岗位事实或能力认证。"
+                    "结合它解释工作差异与适用条件；用户在意的条件若未在原文说明，应保留未知。"
                     "结合用户本次提问、关心它的理由和希望补充的证据，回读相关原文。"
                     "origin_discussion包含问题起点的原分析与完整地图，"
                     "保留原关系理由、限定和迁移边界，把待检验解释带入后续验证，不能只按问题标题泛化。"

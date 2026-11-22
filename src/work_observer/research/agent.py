@@ -1763,7 +1763,8 @@ async def _research(
             ),
             "inquiry_at_start": {key: deepcopy((personal.get("selected_inquiry") or {}).get(key))
                                  for key in (
-                                     "id", "question", "state", "conclusion", "next_evidence",
+                                     "id", "question", "why_matters", "state", "conclusion",
+                                     "next_evidence",
                                      "hypothesis_a", "hypothesis_b", "source_step_id",
                                      "selected_job_ids", "material_ids",
                                  )} if personal.get("selected_inquiry") else None,
