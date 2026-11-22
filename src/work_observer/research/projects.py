@@ -2132,6 +2132,7 @@ async def _execute_project_locked(
                     lambda: service.get(identity), service.store,
                     step.get("career_insight_id"), step.get("career_counter_insight_id"),
                     selected_note_ids=step.get("career_insight_ids", []),
+                    project_lister=lambda: service.list(all_records=True),
                 )
                 if "learning_recall" in context.get("career_evidence", {}) else None
             )

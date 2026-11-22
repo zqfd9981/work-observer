@@ -221,9 +221,10 @@ class ResearchStore:
                 )
         return {"affected_run_ids": list(identities), "report_ids": sorted(reports)}
 
-    def dependent_runs(self, identities):
+    def dependent_runs(self, identities, *, project_ids=()):
         """派生上下文回链，不把旧报告或领域关系当独立证据。调用方负责闭包。"""
         identities = set(identities)
+        project_ids = set(project_ids)
         affected = []
         with self.lock:
             rows = self.db.execute(
@@ -235,6 +236,14 @@ class ResearchStore:
                 saved = json.loads(checkpoint) if checkpoint else {}
                 dependencies = set((record.get("result") or {}).get("continued_from", []))
                 dependencies.update((saved.get("result") or {}).get("continued_from", []))
+                recalled_projects = set()
+                for result in (record.get("result") or {}, saved.get("result") or {}):
+                    learning = result.get("career_learning_context") or {}
+                    recalled_projects.update(row["project_id"]
+                                             for row in learning.get("read_other_goals", []))
+                    recalled_projects.update(row["project_id"]
+                                             for search in learning.get("other_goal_searches", [])
+                                             for row in search["returned_records"])
                 # A later research notice can contain private context even though it
                 # does not change adoption or become factual ancestry of the memory.
                 for result in (record.get("result") or {}, saved.get("result") or {}):
@@ -254,7 +263,7 @@ class ResearchStore:
                 source = record.get("input", {}).get("review_run_id")
                 if isinstance(source, str):
                     dependencies.add(source)
-                if dependencies & identities:
+                if dependencies & identities or recalled_projects & project_ids:
                     affected.append(identity)
         return affected
 

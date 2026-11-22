@@ -229,6 +229,24 @@ EXTRA_TOOLS = [
     ),
 ]
 LEARNING_TOOLS = [
+    tool(
+        "search_other_goal_memory",
+        "只读查找其他求职目标中选用的个人认识与已完成研究，含完整地图的关键词。"
+        "空列表查看目录，每页6条。先看来源目标，再read_other_goal_memory读完整条件。"
+        "不复制或采用认识，不把其他目标的资料加入本轮范围；预览不是新证据。",
+        {"terms": {"type": "array", "items": {"type": "string", "maxLength": 100},
+                   "maxItems": 10}, "offset": {"type": "integer", "minimum": 0}},
+        ["terms", "offset"],
+    ),
+    tool(
+        "read_other_goal_memory",
+        "按来源目标、记录类型和ID读完整旧认识或研究。仅开放其他目标中选用的认识与"
+        "已完成研究，保留原场景、完整限定和来源位置。读取不改变任何记录或原文范围。",
+        {"project_id": {"type": "string"},
+         "kind": {"type": "string", "enum": ["insight", "research"]},
+         "record_id": {"type": "string"}},
+        ["project_id", "kind", "record_id"],
+    ),
     {
         "type": "function", "name": "run_cohort_comparison", "strict": True,
         "description": "先写可检验的预期，再给出1至6个分群的A/B总数与达到指标数。"
@@ -1636,6 +1654,11 @@ async def _research(
             "再read_research_history读取完整旧判断、工作关系、末尾限定和未知。"
             "旧分析只是待重核的线索，不能用搜索预览替代全文，也不能当成本轮证据。"
             "按source_references_to_reread回读当前可用原文，范围外资料保留无法核对。"
+            "如果当前问题需要借鉴其他求职目标的认识或工作关系，可search_other_goal_memory"
+            "按相关词找回，再read_other_goal_memory读完整记录。先比较来源目标、业务对象、"
+            "任务、交付和迁移限制；同一词出现不证明同一工作。"
+            "只有本轮可用原文支持时才能提出当前判断；范围外旧资料保持未重核，"
+            "不复制旧结论、不恢复搁置认识，也不把跨目标回忆当作独立证据。"
             "尚未开过研究的问题、用户收集的反例与待补证据也能帮助确定调查方向："
             "用search_inquiries按问题、解释或摘录标注查找，再read_inquiry读完整记录。"
             "两种解释、用户结论和摘录标注都只是待核判断；先读对应原文上下文，"
@@ -2059,6 +2082,7 @@ async def _research(
                             job["reading_progress"] is not None for job in data["jobs"]
                         )
                 elif name in {"search_learning_notes", "read_learning_note",
+                              "search_other_goal_memory", "read_other_goal_memory",
                               "search_inquiries", "read_inquiry",
                               "search_research_history", "read_research_history",
                               "search_experiments", "read_experiments", "run_retry_experiment",
@@ -2130,6 +2154,34 @@ async def _research(
                                 )
                         entry["question_id"] = arguments["question_id"]
                         learning.setdefault("read_inquiries", []).append(inquiry)
+                    elif name == "search_other_goal_memory" and set(arguments) == {
+                        "terms", "offset",
+                    }:
+                        data = learning_notebook.search_other_goal_memory(**arguments)
+                        entry.update(terms=arguments["terms"], matched=data["matching_count"])
+                        learning.setdefault("other_goal_searches", []).append({
+                            **arguments, "matching_count": data["matching_count"],
+                            "returned_records": [{key: row[key] for key in (
+                                "project_id", "kind", "record_id",
+                            )} for row in data["memories"]],
+                        })
+                    elif name == "read_other_goal_memory" and set(arguments) == {
+                        "project_id", "kind", "record_id",
+                    }:
+                        data = learning_notebook.read_other_goal_memory(**arguments)
+                        recalled_memory = data["memory"]
+                        references = recalled_memory.get("source_locators", recalled_memory.get(
+                            "source_references_to_reread", [],
+                        ))
+                        for reference in references:
+                            reference["in_current_scope"] = (
+                                reference.get("public_document_id")
+                                in scope.get("archived_public_ids", [])
+                                or reference.get("job_id") in candidates
+                            )
+                        entry.update(project_id=data["project_id"], memory_kind=data["kind"],
+                                     record_id=data["record_id"])
+                        learning.setdefault("read_other_goals", []).append(data)
                     elif name == "search_research_history" and set(arguments) == {
                         "terms", "offset",
                     }:

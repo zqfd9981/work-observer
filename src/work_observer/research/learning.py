@@ -74,12 +74,71 @@ class LearningNotebook:
     """Read this goal's personal notes and saved experiment records."""
 
     def __init__(self, project_reader, store, selected_note_id=None, counter_note_id=None,
-                 *, selected_note_ids=None):
+                 *, selected_note_ids=None, project_lister=None):
         self.project_reader = project_reader
         self.store = store
         self.selected_note_id = selected_note_id
         self.counter_note_id = counter_note_id
         self.selected_note_ids = selected_note_ids or []
+        self.project_lister = project_lister
+
+    def _other_goals(self):
+        identity = self.project_reader()["id"]
+        return [row for row in (self.project_lister() if self.project_lister else [])
+                if row["id"] != identity and row.get("career")]
+
+    def search_other_goal_memory(self, terms, offset=0):
+        if terms != []:
+            terms = validated_terms(terms)
+        if type(offset) is not int or offset < 0:
+            raise ProbeError("INVALID_MEMORY_OFFSET")
+        ranked, total = [], 0
+        for project in self._other_goals():
+            notebook = LearningNotebook(lambda project=project: project, self.store)
+            for kind, search, field, id_key in (
+                ("insight", notebook.search, "notes", "id"),
+                ("research", notebook.search_research_history, "research", "step_id"),
+            ):
+                page_offset = 0
+                while True:
+                    page = search(terms, page_offset)
+                    if page_offset == 0:
+                        total += page["matching_count"]
+                    for row in page[field]:
+                        ranked.append({
+                            "project_id": project["id"], "project_title": project["title"],
+                            "kind": kind, "record_id": row[id_key],
+                            "recorded_at": row["recorded_at"],
+                            "matched_terms": row["matched_terms"], "preview": row,
+                        })
+                    if page["next_offset"] is None or page["next_offset"] >= offset + 6:
+                        break
+                    page_offset = page["next_offset"]
+        ranked.sort(key=lambda row: (len(row["matched_terms"]), row["recorded_at"],
+                                    row["record_id"]), reverse=True)
+        return {
+            "memories": ranked[offset:offset + 6], "matching_count": total, "offset": offset,
+            "next_offset": offset + 6 if offset + 6 < total else None,
+            "notice": "其他求职目标中选用的个人认识与已完成研究，只是关键词召回预览。"
+                      "新旧顺序不表示正确性，需read_other_goal_memory读完整内容与原场景。"
+                      "不改变选用状态，不复制记录，不把其他目标的原文加入本轮范围。",
+        }
+
+    def read_other_goal_memory(self, project_id, kind, record_id):
+        project = next((row for row in self._other_goals() if row["id"] == project_id), None)
+        if not project or kind not in {"insight", "research"}:
+            raise ProbeError("OTHER_GOAL_MEMORY_NOT_AVAILABLE")
+        notebook = LearningNotebook(lambda: project, self.store)
+        memory = (notebook.read(record_id)["note"] if kind == "insight"
+                  else notebook.read_research_history(record_id)["research"])
+        return {
+            "project_id": project_id, "project_title": project["title"],
+            "project_goal": project["goal"], "kind": kind, "record_id": record_id,
+            "memory": memory,
+            "notice": "其他目标中本次读取的完整旧记录。先比较业务对象、分工、交付和适用条件，"
+                      "判断是否值得迁移，不把旧解释当作当前岗位事实或个人能力。"
+                      "旧资料只供定位；本轮仍按fixed_scope读取原文，不扩展选岗、资料或采用状态。",
+        }
 
     def _available(self):
         project = self.project_reader()

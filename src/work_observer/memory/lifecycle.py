@@ -241,6 +241,7 @@ def _cascade(
     relation_ids = set(journal.get("relation_ids", []))
     pending_memories = set(journal.get("memory_ids", []))
     pending_runs = set(journal.get("run_ids", []))
+    pending_runs.update(store.dependent_runs([], project_ids=affected_projects))
     related = workflows.related_runs(pending_runs, pending_memories, affected_projects)
     pending_runs.update(related["affected_run_ids"])
     affected_projects.update(related["affected_project_ids"])
@@ -284,7 +285,9 @@ def _cascade(
             related = workflows.related_runs(closure | affected_runs, identities, affected_projects)
             closure.update(related["affected_run_ids"])
             affected_projects.update(related["affected_project_ids"])
-            closure.update(store.dependent_runs(sorted(closure | affected_runs)))
+            closure.update(store.dependent_runs(
+                sorted(closure | affected_runs), project_ids=affected_projects,
+            ))
             structured = DomainKnowledgeService(repository).research_dependencies(
                 closure | affected_runs
             )
