@@ -1689,7 +1689,37 @@ class ProjectService:
                 } if origin_result.get("status") == "completed" and (
                     origin_run["state"] != "invalidated"
                 ) else None
+                origin_entry = next(
+                    (row for row in career.get("runs", [])
+                     if row["step_id"] == selected_inquiry.get("source_step_id")), {}
+                )
+                selected_inquiry["incomplete_origin"] = {
+                    "step_id": origin_step["id"],
+                    "question": origin_entry.get("user_question")
+                    or origin_entry.get("interview_question") or origin_step["question"],
+                    "status": origin_result.get("status") or origin_step.get("state"),
+                    "stop_reason": origin_result.get("stop_reason"),
+                    "source_cutoff": origin_result.get("created_at"),
+                    "same_job_scope": origin_step["scope_version"] == record["scope_version"],
+                    "source_references_to_reread": [
+                        {key: source.get(key) for key in (
+                            "title", "evidence_kind", "job_id", "public_document_id",
+                            "document_id", "snapshot_id", "historical_cutoffs", "start", "end",
+                        )} for source in origin_result.get("evidence", [])
+                        if source.get("evidence_kind") not in {
+                            "search_answer", "search_excerpt", "list_summary", "derived_knowledge",
+                        } and not source.get("derived") and source.get("quote")
+                        and (source.get("public_document_id") or source.get("document_id"))
+                    ],
+                } if origin_step and origin_result.get("status") != "completed" and (
+                    not origin_run or origin_run.get("state") != "invalidated"
+                ) else None
                 selected_inquiry["origin_notice"] = (
+                    "本问题来自未完成或仅整理原文的研究。incomplete_origin只保留原问题、"
+                    "状态与已读资料定位，不带入未完成草稿、旧地图或待采纳判断。"
+                    "先按本次更小的问题回读可用原文；上轮读过不等于本轮已核对，"
+                    "资料不足则明确缺口，不把旧失败、未验证解释或搜索线索当作结论。"
+                ) if selected_inquiry["incomplete_origin"] else (
                     "origin_discussion是问题形成时的原分析和完整工作地图，仅供定位，不是新证据。"
                     "若问题提到某一条关系，按原地图中的顺序回查其完整两端、理由与迁移限制。"
                     "设计验证时针对其中尚未验证的解释；先读取本轮可用原文，"
