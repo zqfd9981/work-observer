@@ -19,7 +19,11 @@ from work_observer.reports.results import audit_result
 from work_observer.research.applications import PREFIX
 from work_observer.research.applications import background as application_background
 from work_observer.research.archived_sources import catalog as archive_catalog
-from work_observer.research.investigation_memory import task_action_indices, task_context
+from work_observer.research.investigation_memory import (
+    interview_origin,
+    task_action_indices,
+    task_context,
+)
 from work_observer.research.learning import (
     calculation_records,
     experiment_relation_origin,
@@ -2117,6 +2121,7 @@ class CareerService:
                 raise ValueError("已有一轮研究待完成，请先查看或继续原研究。")
             sources = None
             source_job_ids = []
+            assessment_job_ids, interview_task_origin = None, None
             synthesis_sources = []
             if kind == "ask" and source_step_id:
                 sources = [
@@ -2289,6 +2294,16 @@ class CareerService:
                      if (interview_source(row) if kind == "answer" else row["kind"] == "answer")
                      and (not source_step_id or row["step_id"] == source_step_id)), None
                 )
+                if previous_assessment:
+                    interview_task_origin = deepcopy(previous_assessment.get("interview_origin"))
+                    if inherit_focus and selected_job_ids is None:
+                        original_step = next(row for row in project["steps"]
+                                             if row["id"] == previous_assessment["step_id"])
+                        effective = (previous_assessment["result"].get("investigation") or {}).get(
+                            "effective_scope",
+                        )
+                        assessment_job_ids = list(effective["job_ids"] if effective is not None
+                                                  else original_step["job_ids"])
                 if previous_assessment and previous_assessment.get("understanding_check"):
                     if question_id and question_id != previous_assessment["question_id"]:
                         raise ValueError("请沿用这组理解自测对应的调查问题，或另开一组自测。")
@@ -2621,6 +2636,9 @@ class CareerService:
                 if not interview:
                     raise ValueError("请先选择当前目标下已生成的面试问题。")
                 interview_result = interview["result"]
+                interview_task_origin = interview_task_origin or interview_origin(
+                    interview_result, interview["step_id"], question_index,
+                )
                 story_id, task_id = interview.get("story_id"), interview.get("task_id")
                 questions = interview_result.get("interview_questions") or [
                     text for text in interview_result.get("gaps", []) if "？" in text or "?" in text
@@ -2726,6 +2744,12 @@ class CareerService:
                 question += (
                     "请先按career_evidence.selected_answer.document_id读取本次所讨论的回答全文，"
                     "再作反馈或追问。回答是用户自述，不代表经历已核实或能力已经证明。"
+                )
+            if interview_task_origin:
+                question += (
+                    "本题承接career_evidence.selected_interview_task中的那一项调查。"
+                    "保留原问题、岗位对象、条件与未知，不把其他分项的工作或经验混入。"
+                    "当时的解释不是标准答案；先按定位回读本轮可用原文，再反馈或追问。"
                 )
             if insight_id and kind in {"ask", "challenge"}:
                 question += (
@@ -2930,6 +2954,8 @@ class CareerService:
                     "不能从业务/技术说明补造具体招聘资格或个人职责，也不能推定用户经历与能力。"
                     "可以解释工作、讨论待检验的迁移或设计学习实验；没有个人背景时保留未知并询问必要信息。"
                 )
+            if selected_job_ids is None and assessment_job_ids is not None:
+                selected_job_ids = assessment_job_ids
             if selected_job_ids is None:
                 selected_job_ids = (
                     saved_question.get("selected_job_ids", source_job_ids) if question_id
@@ -3084,7 +3110,7 @@ class CareerService:
                 completion="给出对应原文、个人自述和待验证方向，帮助用户理解工作并准备真实证据。",
             )
             project["steps"][-1]["public_document_ids"] = documents
-            if selected_job_ids:
+            if selected_job_ids or assessment_job_ids is not None:
                 project["steps"][-1]["job_ids"] = selected_job_ids[:]
             project["steps"][-1]["career_omitted_documents"] = omitted
             if adaptive and not offline:
@@ -3163,6 +3189,8 @@ class CareerService:
                     "task_id": task_id if has_task else None,
                     "experiment_ids": experiment_ids,
                     "created_at": now(),
+                    **({"interview_origin": interview_task_origin}
+                       if interview_task_origin else {}),
                 }
             )
             if claim_review_index is not None:

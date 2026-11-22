@@ -2038,6 +2038,12 @@ class ProjectService:
             current_entry = next(
                 (row for row in career["runs"] if row["step_id"] == step["id"]), {},
             )
+            if origin := current_entry.get("interview_origin"):
+                from work_observer.research.investigation_memory import interview_context
+
+                context["career_evidence"]["selected_interview_task"] = interview_context(
+                    record, origin, self.store,
+                )
             if step.get("career_action") == "ask" and current_entry.get("source_step_id"):
                 source_id = current_entry["source_step_id"]
                 source_step = next((row for row in record["steps"] if row["id"] == source_id), {})

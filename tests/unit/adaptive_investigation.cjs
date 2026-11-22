@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.adaptiveTest={investigationPanel,researchActivityItems,isInterviewSource,interviewQuestions,investigationRecordDraft,investigationTaskSource,investigationTaskContext,investigationTaskActions,conclusionDraft,careerWorkMap,mapContext:data=>{career.data=data;career.id=data.id;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.adaptiveTest={investigationPanel,researchActivityItems,isInterviewSource,interviewQuestions,interviewQuestionOrigin,interviewQuestionContext,investigationRecordDraft,investigationTaskSource,investigationTaskContext,investigationTaskActions,conclusionDraft,careerWorkMap,mapContext:data=>{career.data=data;career.id=data.id;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.adaptiveTest;
 assert.equal(api.investigationPanel({result:{claims:[]}}),'');
@@ -59,3 +59,13 @@ assert.match(firstDesign,/data-career-action-index="1"/);assert.match(firstDesig
 assert.match(firstDesign,/&lt;script&gt;/);assert.doesNotMatch(firstDesign,/<script>|重复请求对照/);
 api.mapContext({id:'goal',tasks:[{id:'saved',source_key:'two-run:1',state:'done'}]});
 assert.match(api.investigationTaskActions(practice,0),/#career\/goal\/task\/saved/);
+const questions={step_id:'interview-root',result:{status:'completed',interview_questions:['怎样验证边界？','怎样验证边界？'],claims:[{evidence_ids:['a']},{evidence_ids:['b']}],evidence:[{id:'a',title:'知识库原文',document_id:'doc-a'},{id:'b',title:'记忆同步原文',document_id:'doc-b'}],investigation:{tasks:[{intent:'interview',question:'知识库任务如何解释？'},{intent:'interview',question:'<script>记忆同步如何解释？</script>'}],outcomes:[{task_index:0,claim_indices:[0],questions:['怎样验证边界？']},{task_index:1,claim_indices:[1],questions:['怎样验证边界？']}]}}};
+const questionOrigin=api.interviewQuestionOrigin(questions,1);
+assert.equal(questionOrigin.task_index,1);assert.equal(questionOrigin.question_index,1);
+const questionData={id:'goal',results:[questions]},originHtml=api.interviewQuestionContext(questions,1,questionData);
+assert.match(originHtml,/记忆同步原文/);assert.doesNotMatch(originHtml,/知识库原文|<script>/);assert.match(originHtml,/&lt;script&gt;/);
+assert.match(originHtml,/#career\/goal\/discussion\/interview-root/);
+const feedbackOrigin={interview_origin:questionOrigin,result:{}};
+assert.match(api.interviewQuestionContext(feedbackOrigin,0,questionData),/记忆同步原文/);
+assert.match(api.interviewQuestionContext(feedbackOrigin,0,{id:'goal',results:[]}),/原调查暂不可读取/);
+assert.equal(api.interviewQuestionOrigin({result:{interview_questions:['旧题？']}},0),null);

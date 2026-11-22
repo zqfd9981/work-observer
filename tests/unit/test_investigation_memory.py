@@ -2,8 +2,50 @@
 
 from copy import deepcopy
 
-from work_observer.research.investigation_memory import recall
+from work_observer.research.investigation_memory import interview_context, interview_origin, recall
 from work_observer.research.learning import LearningNotebook
+
+
+def test_identical_interview_questions_keep_the_selected_task_and_its_read_locators():
+    question = "如何说明失败处理与验证边界？"
+    result = {"status": "completed", "interview_questions": [question, question], "claims": [
+        {"text": "合成任务A", "category": "task", "evidence_ids": ["a"]},
+        {"text": "合成任务B", "category": "task", "evidence_ids": ["b"]},
+    ], "evidence": [
+        {"id": key, "quote": "旧引用不能当本轮新证据", "job_id": key, "snapshot_id": "version",
+         "start": 0, "end": 12} for key in ("a", "b")
+    ], "investigation": {"tasks": [
+        {"intent": "interview", "question": "工作A的失败处理"},
+        {"intent": "interview", "question": "工作B的验证边界"},
+    ], "outcomes": [
+        {"task_index": i, "status": "answered", "answer": "历史解释，不是标准答案。",
+         "questions": [question], "claim_indices": [i]} for i in range(2)
+    ]}}
+    origin = interview_origin(result, "root", 1)
+    assert origin["task_index"] == 1 and origin["question_index"] == 1
+    assert interview_origin(result, "root", True) is None
+    changed = deepcopy(result)
+    changed["interview_questions"] = ["另一道题？", question]
+    assert interview_origin(changed, "root", 1) is None
+
+    class Store:
+        state = "completed"
+
+        def get(self, identity):
+            assert identity == "root-run"
+            return {"state": self.state, "result": deepcopy(result)}
+
+    store = Store()
+    project = {"steps": [{"id": "root", "run_id": "root-run"}]}
+    context = interview_context(project, origin, store)
+    assert context["available"] and context["task"]["question"] == "工作B的验证边界"
+    assert {row["job_id"] for row in context["source_references_to_reread"]} == {"b"}
+    assert "旧引用不能当本轮新证据" not in str(context)
+    assert "evidence_ids" not in context["claim_details_to_recheck"][0]
+    store.state = "invalidated"
+    unavailable = interview_context(project, origin, store)
+    assert not unavailable["available"] and "task" not in unavailable
+    assert unavailable["task_index"] == 1
 
 
 def test_nested_answer_is_recalled_with_full_final_condition_and_original_scope():

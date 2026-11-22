@@ -51,6 +51,47 @@ def task_context(result, index):
     }
 
 
+def interview_origin(result, step_id, question_index):
+    """Locate one question by position, including identical wording in different tasks."""
+    investigation = result.get("investigation") or {}
+    tasks = investigation.get("tasks", [])
+    located = []
+    for outcome in sorted(investigation.get("outcomes", []), key=lambda row: row["task_index"]):
+        index = outcome["task_index"]
+        if 0 <= index < len(tasks) and tasks[index]["intent"] == "interview":
+            located.extend((index, text) for text in outcome.get("questions", []))
+    if (type(question_index) is not int or not 0 <= question_index < len(located)
+            or [text for _, text in located] != result.get("interview_questions")):
+        return None
+    index, _ = located[question_index]
+    return {"step_id": step_id, "task_index": index, "question_index": question_index,
+            "task_question": tasks[index]["question"]}
+
+
+def interview_context(project, origin, store):
+    """Return the selected task's historical explanation and read locators, never new evidence."""
+    context = record_task_context(project, {
+        "source_step_id": origin["step_id"], "source_task_index": origin["task_index"],
+    }, store)
+    if context is None:
+        return {**origin, "available": False,
+                "notice": "原调查分项暂不可读取，保留原定位；不以其他调查替代。"}
+    return {
+        **origin, "available": True,
+        **{key: context[key] for key in ("task", "outcome", "constraints", "missing_context")},
+        "claim_details_to_recheck": [{key: claim.get(key) for key in (
+            "text", "category", "basis", "requirement",
+        )} for claim in context["claims"]],
+        "source_references_to_reread": [{key: source.get(key) for key in (
+            "title", "evidence_kind", "job_id", "public_document_id", "document_id",
+            "snapshot_id", "start", "end", "as_of",
+        )} for source in context["evidence"]],
+        "notice": "这是选中面试题对应的原调查问题与当时解释，不是标准答案或新证据。"
+        "只围绕该项工作与条件反馈、追问；旧引用只定位，须在本轮范围内重读原文才能引用。"
+        "用户回答仍是自述，未读或已移出的资料保留未知，不自动恢复。",
+    }
+
+
 def record_task_context(project, record, store):
     index = record.get("source_task_index")
     if index is None:
