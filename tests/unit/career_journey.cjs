@@ -1821,3 +1821,14 @@ console.log("Personal-view synthesis: exact chosen group, independent query focu
  assert.strictEqual(JSON.stringify(d),before);
  console.log('Understanding updates: actual read snapshots, edited local priors, explicit replacement versus other-goal derivation, blank new views, full long-input recall and unchanged records passed.');
 }
+
+{
+ const j=ctx.window.journeyTest,long='旧场景实际记录。'.repeat(180)+'末尾：未控制条件，不能外推。',answer='原先对条件的解释。'.repeat(120)+'末尾限定仍未知。';
+ const memory={id:'old-experiment',title:'失败的构造样例',state:'done',origin:'user',recorded_at:stamp(1),task_or_ability:'检查不同对象',planned_deliverable:'条件记录',proposed_check:'核对差异',prior_expectation:'原先预期不变。',reported_observation:long,comparison_rows:[{condition:'改变对象',input:'构造输入',expected:'不变',observed:'出现差异'}],answer_to_verify:{original_question:'原先的解释适用吗？',user_answer:answer},artifact_document:{document_id:'old-log',title:'旧日志',available_in_goal:true,in_current_scope:false}};
+ const result={model_calls:4,career_learning_context:{read_other_goals:[{project_id:'experiment-source-goal',project_title:'原场景',project_goal:'解释条件',kind:'experiment',record_id:memory.id,memory}]}};
+ const before=JSON.stringify(result),html=j.otherGoalRecall(result);assert.ok(html.includes(long)&&html.includes(answer)&&html.includes('预期')&&html.includes('出现差异'));
+ assert.ok(html.includes('当时不在本轮可读资料中')&&html.includes('#career/experiment-source-goal/task/old-experiment')&&!html.includes('打开产物原文'));assert.ok(html.includes('data-career-attach-material="old-log"'));
+ const offline=j.otherGoalRecall(result,true);assert.ok(offline.includes(long)&&offline.includes(answer)&&offline.includes('构造输入')&&!offline.includes('href=')&&!offline.includes('data-career-'));
+ assert.strictEqual(JSON.stringify(result),before);
+ console.log('Cross-goal experiment recall: complete predictions, original explanations, negative user observations, condition rows, source-goal links, out-of-scope logs and read-only exports passed.');
+}

@@ -231,7 +231,7 @@ EXTRA_TOOLS = [
 LEARNING_TOOLS = [
     tool(
         "search_other_goal_memory",
-        "只读查找其他求职目标中选用的个人认识与已完成研究，含完整地图的关键词。"
+        "只读查找其他求职目标中选用的认识、已完成研究及实验设计和用户观察，含地图关键词。"
         "空列表查看目录，每页6条。先看来源目标，再read_other_goal_memory读完整条件。"
         "不复制或采用认识，不把其他目标的资料加入本轮范围；预览不是新证据。",
         {"terms": {"type": "array", "items": {"type": "string", "maxLength": 100},
@@ -240,10 +240,10 @@ LEARNING_TOOLS = [
     ),
     tool(
         "read_other_goal_memory",
-        "按来源目标、记录类型和ID读完整旧认识或研究。仅开放其他目标中选用的认识与"
-        "已完成研究，保留原场景、完整限定和来源位置。读取不改变任何记录或原文范围。",
+        "按来源目标、记录类型和ID读完整旧认识、研究或实验。实验保留完整设计、预期、"
+        "用户观察、失败条件和产物位置；不表示已独立运行。保留原场景，不改变记录或原文范围。",
         {"project_id": {"type": "string"},
-         "kind": {"type": "string", "enum": ["insight", "research"]},
+         "kind": {"type": "string", "enum": ["insight", "research", "experiment"]},
          "record_id": {"type": "string"}},
         ["project_id", "kind", "record_id"],
     ),
@@ -1659,6 +1659,9 @@ async def _research(
             "任务、交付和迁移限制；同一词出现不证明同一工作。"
             "只有本轮可用原文支持时才能提出当前判断；范围外旧资料保持未重核，"
             "不复制旧结论、不恢复搁置认识，也不把跨目标回忆当作独立证据。"
+            "其他目标的experiment记忆还能找回实验设计、预期、实际观察和失败条件。"
+            "先区分计划与用户实际记录，再检查当前工作对象、样本和检查方法是否相同。"
+            "读取旧实验不等于重新执行；旧日志只有在本轮范围内才可回读，未读取就保留未核对。"
             "尚未开过研究的问题、用户收集的反例与待补证据也能帮助确定调查方向："
             "用search_inquiries按问题、解释或摘录标注查找，再read_inquiry读完整记录。"
             "两种解释、用户结论和摘录标注都只是待核判断；先读对应原文上下文，"
@@ -2178,6 +2181,12 @@ async def _research(
                                 reference.get("public_document_id")
                                 in scope.get("archived_public_ids", [])
                                 or reference.get("job_id") in candidates
+                            )
+                        if data["kind"] == "experiment" and (
+                            artifact := recalled_memory.get("artifact_document")
+                        ):
+                            artifact["in_current_scope"] = (
+                                artifact["document_id"] in scope.get("archived_public_ids", [])
                             )
                         entry.update(project_id=data["project_id"], memory_kind=data["kind"],
                                      record_id=data["record_id"])

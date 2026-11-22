@@ -98,6 +98,7 @@ class LearningNotebook:
             for kind, search, field, id_key in (
                 ("insight", notebook.search, "notes", "id"),
                 ("research", notebook.search_research_history, "research", "step_id"),
+                ("experiment", notebook.search_experiments, "experiments", "id"),
             ):
                 page_offset = 0
                 while True:
@@ -119,24 +120,31 @@ class LearningNotebook:
         return {
             "memories": ranked[offset:offset + 6], "matching_count": total, "offset": offset,
             "next_offset": offset + 6 if offset + 6 < total else None,
-            "notice": "其他求职目标中选用的个人认识与已完成研究，只是关键词召回预览。"
+            "notice": "其他求职目标中选用的认识、已完成研究和保存的实验，只是关键词召回预览。"
                       "新旧顺序不表示正确性，需read_other_goal_memory读完整内容与原场景。"
+                      "实验计划、预期和实际观察分别保留；失败或完成状态都不证明个人能力。"
                       "不改变选用状态，不复制记录，不把其他目标的原文加入本轮范围。",
         }
 
     def read_other_goal_memory(self, project_id, kind, record_id):
         project = next((row for row in self._other_goals() if row["id"] == project_id), None)
-        if not project or kind not in {"insight", "research"}:
+        if not project or kind not in {"insight", "research", "experiment"}:
             raise ProbeError("OTHER_GOAL_MEMORY_NOT_AVAILABLE")
         notebook = LearningNotebook(lambda: project, self.store)
-        memory = (notebook.read(record_id)["note"] if kind == "insight"
-                  else notebook.read_research_history(record_id)["research"])
+        if kind == "insight":
+            memory = notebook.read(record_id)["note"]
+        elif kind == "experiment":
+            memory = notebook.read_experiments([record_id])["experiments"][0]
+        else:
+            memory = notebook.read_research_history(record_id)["research"]
         return {
             "project_id": project_id, "project_title": project["title"],
             "project_goal": project["goal"], "kind": kind, "record_id": record_id,
             "memory": memory,
             "notice": "其他目标中本次读取的完整旧记录。先比较业务对象、分工、交付和适用条件，"
                       "判断是否值得迁移，不把旧解释当作当前岗位事实或个人能力。"
+                      "实验预期不等于执行；reported_observation仅是用户保存的观察，"
+                      "读取不会重跑实验或核实日志。"
                       "旧资料只供定位；本轮仍按fixed_scope读取原文，不扩展选岗、资料或采用状态。",
         }
 
@@ -219,12 +227,14 @@ class LearningNotebook:
         for row in career.get("tasks", []):
             if question_id and row.get("question_id") != question_id:
                 continue
+            original_answer = experiment_answer_origin(career, row) or {}
             text = match_text("\n".join(row.get(key, "") for key in (
                 "title", "task_or_ability", "deliverable", "completion_check",
                 "hypothesis", "outcome", "design_change", "artifact", "comparison_conditions",
             )) + "\n" + "\n".join(
                 value for case in row.get("comparison_rows", []) for value in case.values()
-            ))
+            ) + "\n" + (original_answer.get("original_question") or "")
+                + "\n" + (original_answer.get("user_answer") or ""))
             hits = [term for term in terms if match_text(term) in text]
             if hits or not terms:
                 ranked.append((len(hits), row.get("updated_at") or row["created_at"],
@@ -235,7 +245,9 @@ class LearningNotebook:
             "experiments": [{
                 "id": row["id"], "title": row["title"],
                 "question_id": row.get("question_id"), "state": row["state"],
-                "has_reported_observation": bool(row.get("outcome", "").strip()),
+                "has_reported_observation": bool(row.get("outcome", "").strip()) or any(
+                    case.get("observed", "").strip() for case in row.get("comparison_rows", [])
+                ),
                 "observation_preview": row.get("outcome", "")[:180],
                 "preview_is_partial": len(row.get("outcome", "")) > 180,
                 "previous_task_id": row.get("previous_task_id"),
