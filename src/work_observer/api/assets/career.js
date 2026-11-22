@@ -2848,7 +2848,7 @@ ${e(row.planned_deliverable)}</p><p><strong>怎样检查：</strong>${e(row.prop
   }
   function openQuestionInquiry(id,section=career.tab){
     captureDrafts();const row=career.data.questions?.find(row=>row.id===id);if(!row){notify("这条调查问题已不在当前目标中。");return;}
-    if(career.workspaceQuestion&&section==="requirements")selectInvestigation(id);career.tab=section;const draft=storyDraft();draft.inquiries={...draft.inquiries,[career.tab]:questionInquiryDraft(row)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus({preventScroll:true});
+    if(career.workspaceQuestion&&section==="requirements")selectInvestigation(id);career.tab=section;const draft=storyDraft(),pending=draft.inquiries?.[career.tab];draft.inquiries={...draft.inquiries,[career.tab]:pending?.question_id===row.id?pending:questionInquiryDraft(row)};career.drafts.set(career.id,draft);renderDetail();$("#career-inquiry").scrollIntoView({block:"center",behavior:"smooth"});$("#career-inquiry [name=question]").focus({preventScroll:true});
   }
   function focusCareerRecord(kind,id,claimIndex=null){
     if(kind==="task"){captureDrafts();const task=career.data.tasks.find(row=>row.id===id);if(!task){notify("这项实验已不在当前目标中，可以重新查找。");return;}career.tab="experiments";selectExperimentInquiry(task);renderDetail();$("#career-experiment-workspace").scrollIntoView({block:"start",behavior:"instant"});return;}
