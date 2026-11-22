@@ -50,6 +50,7 @@ class UnifiedRetrieval:
         aliases=True,
         include_knowledge=True,
         offset=None,
+        required_terms=None,
     ):
         if type(limit) is not int or not 1 <= limit <= 20:
             raise ProbeError("INVALID_RETRIEVAL_LIMIT")
@@ -71,8 +72,10 @@ class UnifiedRetrieval:
         jobs = retrieval.search(
             terms, filters=filters, job_ids=job_ids, as_of=cutoff,
             limit=None if browsing else 20, aliases=aliases, include_titles=browsing,
+            required_terms=required_terms,
         )
         expanded = jobs["expanded_terms"]
+        groups = jobs["required_term_groups"]
         stride = 700 - max(100, max(map(len, expanded)))
         evidence, excluded_integrity = [], []
         catalog = Catalog(self.repository)
@@ -104,11 +107,13 @@ class UnifiedRetrieval:
                 for start in range(0, len(row.text), stride):
                     quote = row.text[start : start + 700]
                     folded = match_text(quote)
+                    if not all(any(match_text(t) in folded for t in group) for group in groups):
+                        continue
                     hits = [term for term in expanded if match_text(term) in folded]
                     if hits:
                         chunks.append((sum(folded.count(match_text(t)) for t in hits), start, hits))
                 metadata = match_text((row.title or "") + "\n" + (row.publisher or ""))
-                if browsing and row.text and not chunks and any(
+                if browsing and not groups and row.text and not chunks and any(
                     match_text(term) in metadata for term in expanded
                 ):
                     chunks.append((0, 0, []))
@@ -263,6 +268,7 @@ class UnifiedRetrieval:
         return {
             "terms": terms,
             "expanded_terms": expanded,
+            "required_terms": jobs["required_terms"],
             "sample": jobs["sample"],
             "matching_jobs": jobs["matching_jobs"],
             "public_scope_total": public_count,

@@ -2053,6 +2053,8 @@ class ProjectService:
                     if plan:
                         for action in plan.get("actions", []):
                             cited.update(action.pop("evidence_ids", []))
+                    from work_observer.research.investigation_memory import research_context
+
                     continued = {
                         **{key: source_entry.get(key) for key in (
                             "step_id", "kind", "user_question", "interview_question", "created_at",
@@ -2061,6 +2063,7 @@ class ProjectService:
                         )},
                         "source_cutoff": source_result.get("created_at"),
                         "scope": source_result.get("scope"),
+                        "investigation": research_context(source_result),
                         "user_reported_answer": source_entry.get("answer", ""),
                         "claim_details_to_recheck": [
                             {

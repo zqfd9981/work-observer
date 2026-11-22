@@ -240,12 +240,17 @@ class RetrievalService:
 
     def search(
         self, terms, filters=None, job_ids=None, as_of=None, limit=10, aliases=True,
-        *, include_titles=False,
+        *, include_titles=False, required_terms=None,
     ):
         terms = validated_terms(terms, max_length=200 if include_titles else 100)
+        required_terms = [] if required_terms is None or required_terms == [] else validated_terms(
+            required_terms,
+        )
         if limit is not None and (type(limit) is not int or not 1 <= limit <= 20):
             raise ProbeError("INVALID_RETRIEVAL_LIMIT")
         expanded = self._expand(terms, aliases)
+        groups = [self._expand([term], aliases) for term in required_terms]
+        expanded = list(dict.fromkeys([*expanded, *(term for group in groups for term in group)]))
         stride = 700 - max(100, max(map(len, expanded)))
         records, filters, cutoff = self._records(filters, job_ids, as_of)
         ranked, tag_only, matching_jobs = [], [], set()
@@ -270,6 +275,8 @@ class RetrievalService:
                 for start in range(0, len(text), stride):
                     quote = text[start : start + 700]
                     folded = match_text(quote)
+                    if not all(any(match_text(t) in folded for t in group) for group in groups):
+                        continue
                     matches = [term for term in expanded if match_text(term) in folded]
                     score = sum(folded.count(match_text(term)) for term in matches)
                     if matches or not include_titles and label_hits and start == 0:
@@ -277,7 +284,7 @@ class RetrievalService:
                 metadata = "\n".join(
                     str(record.get(key) or "") for key in ("title", "company_name_raw")
                 )
-                if include_titles and not chunks and (
+                if include_titles and not groups and not chunks and (
                     label_hits or any(match_text(term) in match_text(metadata) for term in expanded)
                 ):
                     chunks.append((0, 0, []))
@@ -310,6 +317,8 @@ class RetrievalService:
         return {
             "terms": terms,
             "expanded_terms": expanded,
+            "required_terms": required_terms,
+            "required_term_groups": groups,
             "aliases": aliases,
             "sample": self._sample(records, filters, cutoff),
             "scope_job_ids": [item["job_id"] for item in records if item["state"] != "excluded"],

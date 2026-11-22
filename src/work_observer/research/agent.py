@@ -2013,6 +2013,13 @@ async def _research(
     try:
         persist()
         def reject_investigation_tool(call, entry, message):
+            if isinstance(message, ValidationError):
+                message = "；".join(
+                    ".".join(map(str, row["loc"])) + "：" + row["msg"]
+                    for row in message.errors(include_input=False, include_url=False)[:3]
+                )
+            elif isinstance(message, ValueError):
+                message = str(message)
             entry["validation"] = "investigation_needs_adjustment"
             history.append({
                 "type": "function_call_output", "call_id": call["call_id"],
@@ -2150,17 +2157,26 @@ async def _research(
                                 "career_evidence", {},
                             ).get("personal_document_ids", []),
                             previous=result.get("investigation"),
+                            inherited_constraints=((conversation_context or {}).get(
+                                "career_evidence", {},
+                            ).get("continued_discussion", {}).get("investigation") or {}).get(
+                                "constraints",
+                            ) or [],
                         )
-                    except ValueError:
-                        reject_investigation_tool(
-                            call, entry,
-                            "请按工具结构提交有效查询；补查保留原tasks的问题、意图与顺序。",
-                        )
+                    except ValueError as exc:
+                        reject_investigation_tool(call, entry, exc)
                         continue
                     if result.get("investigation"):
                         result.setdefault("investigation_history", []).append(
                             result["investigation"],
                         )
+                    if learning_enabled:
+                        from work_observer.research.investigation_memory import (
+                            recall as recall_leads,
+                        )
+
+                        data["memory_recall"] = recall_leads(learning_notebook, data)
+                        entry["memory_leads"] = len(data["memory_recall"]["records"])
                     result["investigation"] = {key: value for key, value in data.items()
                                                if key != "evidence"}
                     result["plan"].update(
@@ -3027,11 +3043,8 @@ async def _research(
                             task_outcomes = orchestration.outcomes(
                                 task_outcomes, result["investigation"], answer.claims, evidence,
                             )
-                        except ValueError:
-                            reject_investigation_tool(
-                                call, entry, "请逐项提交task_outcomes；关联有效的claim_indices，"
-                                "无足够原文时标为partial或needs_context。完整面试题仅放interview任务。",
-                            )
+                        except ValueError as exc:
+                            reject_investigation_tool(call, entry, exc)
                             continue
                     covered = {evidence[key]["job_id"] for key in used if key in evidence}
                     if approach == "source_first":

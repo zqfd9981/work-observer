@@ -83,16 +83,19 @@ def workspace(tmp_path, model):
                       model=model, reports_dir=tmp_path / "reports")
 
 
-def prepare(client, question):
+def prepare(client, question, cities=None, before_prepare=None):
     auth = {"X-WO-Token": re.search(r'name="wo-token" content="([^"]+)"', client.get("/").text)[1]}
     jobs = [client.post("/api/import", headers=auth, json={
         "title": "合成服务岗位" + str(index), "company": "合成公司" + str(index),
         "data_kind": "synthetic", "description": "负责接口开发与测试。上线责任未披露。",
+        **({"city": cities[index]} if cities else {}),
     }).json()["job_id"] for index in range(2)]
     goal = client.post("/api/career", headers=auth, json={
         "title": "合成意图编排", "goal": "理解实际工作", "job_ids": jobs,
     }).json()["id"]
     base = f"/api/career/{goal}"
+    if before_prepare:
+        before_prepare(client, auth, base)
     response = client.post(base + "/prepare", headers=auth, json={
         "kind": "ask", "question": question, "adaptive": True,
     })
@@ -256,3 +259,93 @@ def test_omitted_intents_receive_feedback_and_can_be_corrected(tmp_path):
         assert result["trace"][1]["validation"] == "investigation_needs_adjustment"
         assert len(result["investigation"]["outcomes"]) == 2
         assert result["model_calls"] == 3
+
+
+def test_followup_keeps_user_scope_and_explicit_release_reuses_existing_jobs(tmp_path):
+    plan = brief()
+    plan["constraints"] = [{"field": "city", "value": "上海", "source_text": "只看上海"}]
+    model = ScriptedPlanner(plan)
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, jobs = prepare(client, "只看上海，服务怎么跑稳？", ["上海", "北京"])
+        client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        first = settled(client, base)["results"][0]
+        assert first["result"]["status"] == "completed", first
+        assert first["result"]["investigation"]["effective_scope"]["job_ids"] == [jobs[0]]
+        for question, release in [
+            ("那应该怎么理解测试工作？", False), ("这次不限城市，都看看", True),
+        ]:
+            model.plan = brief()
+            if release:
+                model.plan["released_constraints"] = [{"field": "city", "source_text": "不限城市"}]
+            prepared = client.post(base + "/prepare", headers=auth, json={
+                "kind": "ask", "source_step_id": step, "question": question, "adaptive": True,
+            })
+            assert prepared.status_code == 201, prepared.text
+            next_step = prepared.json()["step_id"]
+            client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": next_step})
+            row = settled(client, base)["results"][0]
+            assert row["result"]["status"] == "completed", row
+            investigation = row["result"]["investigation"]
+            expected = jobs if release else jobs[:1]
+            assert set(investigation["effective_scope"]["job_ids"]) == set(expected)
+            assert model.contexts[-1]["project_context"]["career_evidence"][
+                "continued_discussion"
+            ]["investigation"]["constraints"] == first["result"]["investigation"]["constraints"]
+
+
+def test_rewritten_queries_find_old_understanding_without_adopting_or_citing_it(tmp_path):
+    model = ScriptedPlanner(brief([task("verify", terms=["idempotency_key"], retry=["接口"])]))
+    identities = {}
+
+    def add_notes(client, auth, base):
+        for name, use in [("related", True), ("parked", False)]:
+            data = {"previous_view": "retry", "observation": "serialization_failure",
+                    "current_view": "idempotency_key requires atomic_commit " + name,
+                    "open_question": "unique_violation"}
+            response = client.post(base + "/insights", headers=auth, json=data)
+            assert response.status_code == 201, response.text
+            note = next(row for row in response.json()["insights"]
+                        if row["current_view"] == data["current_view"])
+            identities[name] = note["id"]
+            if not use:
+                assert client.post(base + "/insights/" + note["id"] + "/use", headers=auth,
+                                   json={"use_for_research": False}).status_code == 200
+
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, _ = prepare(
+            client, "提交失败后再来一次，结果会不会多一份？", before_prepare=add_notes,
+        )
+        client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        data = settled(client, base)
+        result = data["results"][0]["result"]
+        assert result["status"] == "completed", result
+        initial = model.contexts[0]["project_context"]["career_evidence"]["learning_notes"]
+        assert identities["related"] not in {row["id"] for row in initial}
+        recalled = result["investigation"]["memory_recall"]
+        assert recalled["context_characters"] <= 5000
+        records = recalled["records"]
+        assert identities["related"] in {row["record_id"] for row in records}
+        assert identities["parked"] not in {row["record_id"] for row in records}
+        assert all(row["derived"] and not row["independent_source"] for row in records)
+        assert not set(identities.values()) & {row["id"] for row in result["evidence"]}
+        assert next(row for row in data["insights"]
+                    if row["id"] == identities["parked"])["use_for_research"] is False
+        assert result["model_calls"] == 2
+
+
+def test_one_unavailable_memory_category_does_not_stop_source_investigation(tmp_path, monkeypatch):
+    from work_observer.connectors.mcp_probe import ProbeError
+    from work_observer.research.learning import LearningNotebook
+
+    def unavailable(*_args, **_kwargs):
+        raise ProbeError("LEARNING_NOTE_NOT_AVAILABLE")
+
+    monkeypatch.setattr(LearningNotebook, "search", unavailable)
+    model = ScriptedPlanner(brief())
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth, goal, base, step, _ = prepare(client, "服务怎么跑稳？")
+        client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        result = settled(client, base)["results"][0]["result"]
+        assert result["status"] == "completed", result
+        assert result["evidence"]
+        assert result["investigation"]["memory_recall"]["unavailable_kinds"] == ["understanding"]

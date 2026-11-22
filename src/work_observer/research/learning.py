@@ -6,6 +6,7 @@ from copy import deepcopy
 from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.memory.service import _tokens
 from work_observer.reports.cognition import work_map_search_parts
+from work_observer.research.investigation_memory import research_context
 from work_observer.retrieval.enhanced import validated_terms
 from work_observer.text_match import match_text
 
@@ -616,10 +617,12 @@ class LearningNotebook:
             claims = result.get("claims", [])
             parts = work_map_search_parts(result.get("work_map") or {})
             calculations = calculation_records(result)
+            investigation = research_context(result) or {}
             text = match_text("\n".join([
                 question, *(row["text"] for row in claims), *result.get("gaps", []),
                 *(value for part in parts for value in part["fields"].values()),
                 json.dumps(calculations, ensure_ascii=False),
+                json.dumps(investigation, ensure_ascii=False),
             ]))
             hits = [term for term in terms if match_text(term) in text]
             if terms and not hits:
@@ -652,6 +655,13 @@ class LearningNotebook:
                 } for index in matches[:3]],
                 "matching_claim_count": len(matches), "matched_terms": hits,
                 "map_previews": map_matches[:3], "map_match_count": len(map_matches),
+                "investigation_previews": [{
+                    "task_index": outcome["task_index"], "status": outcome["status"],
+                    "answer_preview": outcome["answer"][:180],
+                    "preview_is_partial": len(outcome["answer"]) > 180,
+                } for outcome in investigation.get("outcomes") or []
+                    if not terms or any(match_text(term) in match_text(outcome["answer"])
+                                        for term in terms)][:3],
                 **({"calculation_count": sum(len(rows) for rows in calculations.values())}
                    if calculations else {}),
             }))
@@ -697,6 +707,7 @@ class LearningNotebook:
                                                 if key in references],
             } for index, claim in enumerate(result.get("claims", []))],
             "work_map_then": deepcopy(result.get("work_map")),
+            "investigation_then": research_context(result),
             "unknowns_then": list(result.get("gaps", [])),
             "source_references_to_reread": list(references.values()),
         }
