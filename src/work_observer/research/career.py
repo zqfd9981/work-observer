@@ -2846,6 +2846,7 @@ class CareerService:
                     )
                     if not task or not _has_experiment_observations(task):
                         raise ValueError("请先为这个工作样本记录实际观察，再围绕它面试。")
+                    continued_requirement = task.get("target_requirement") or continued_requirement
                     if not task.get("outcome", "").strip():
                         question += ("所选样本尚未整理整体观察；按comparison_rows逐组提问，"
                                      "未记录observed的条件保留未知，不将局部观察当作全部完成。")
@@ -3699,6 +3700,8 @@ class CareerService:
             "question_id": task.get("question_id"), "source_step_id": task.get("source_step_id"),
             "review_step_id": task.get("retrieval_review_step_id"),
             "note_origin": task.get("retrieval_note_origin"),
+            **({"target_requirement": task["target_requirement"]}
+               if task.get("target_requirement") else {}),
         }}
 
     def _retrieval_note_origin(self, identity, project, previous, source_insight_id):
@@ -3740,7 +3743,8 @@ class CareerService:
 
     def retrieval_experiment(
         self, identity, *, question_id=None, source_step_id=None, hypothesis="",
-        previous_task_id=None, review_step_id=None, source_insight_id=None, save=False, **inputs,
+        previous_task_id=None, review_step_id=None, source_insight_id=None,
+        requirement_key="", save=False, **inputs,
     ):
         from work_observer.research.retrieval_experiment import (
             compare_returns,
@@ -3793,7 +3797,12 @@ class CareerService:
         if (set(inputs.get("job_ids", [])) - set(project["job_ids"])
                 or set(inputs.get("document_ids", [])) - set(project["public_document_ids"])):
             raise ValueError("本次对照只使用当前目标中明确选中的原文，不能混入其他目标资料。")
+        target_requirement = self._retrieval_requirement(
+            identity, requirement_key, previous, source_step_id,
+        )
         result = run_retrieval_comparison(self.repository, inputs)
+        if target_requirement:
+            result["target_requirement"] = target_requirement
         changes = comparison_changes(previous_record, result) if previous_record else []
         if previous:
             result["previous_comparison"] = {
@@ -3808,7 +3817,7 @@ class CareerService:
             result["review_origin"] = review_origin
         if note_origin:
             result["note_origin"] = note_origin
-        if previous or review_origin or note_origin:
+        if previous or review_origin or note_origin or target_requirement:
             result["artifact_text"] = record_text(result)
         if not save:
             return {"experiment": result}
@@ -3826,6 +3835,7 @@ class CareerService:
             **({"source_step_id": source_step_id} if source_step_id and not previous else {}),
             "purpose": "understanding_check",
             "local_experiment": "retrieval",
+            **({"target_requirement": target_requirement} if target_requirement else {}),
             **({"retrieval_review_step_id": review_step_id} if review_origin else {}),
             **({"retrieval_note_origin": note_origin} if note_origin else {}),
         })
@@ -3840,7 +3850,7 @@ class CareerService:
 
     def retrieval_suite(self, identity, *, question_id=None, source_step_id=None,
                         previous_task_id=None, source_insight_id=None, hypothesis="",
-                        save=False, **inputs):
+                        requirement_key="", save=False, **inputs):
         from work_observer.research.retrieval_experiment import record_text
         from work_observer.research.retrieval_suite import compare_suites, run_retrieval_suite
 
@@ -3863,6 +3873,9 @@ class CareerService:
             if not source or question_id and question_id != source.get("question_id"):
                 raise ValueError("请选择本目标中一次完整回答作为评估起点，保留其调查关联。")
             question_id = source.get("question_id")
+        target_requirement = self._retrieval_requirement(
+            identity, requirement_key, previous, source_step_id,
+        )
         note_origin = self._retrieval_note_origin(identity, project, previous, source_insight_id)
         if question_id and not any(row["id"] == question_id
                                    for row in project["career"].get("questions", [])):
@@ -3874,6 +3887,8 @@ class CareerService:
             raise ValueError("研究期间可以预览评估，结束后再保存记录。")
         result = run_retrieval_suite(self.repository, inputs)
         result["hypothesis"] = hypothesis
+        if target_requirement:
+            result["target_requirement"] = target_requirement
         if note_origin:
             result["note_origin"] = note_origin
         change_note = ""
@@ -3904,6 +3919,7 @@ class CareerService:
             "completion_check": "逐条回读失败样例的原文；不以累计指标替代样例核对。",
             "previous_task_id": previous_task_id, "purpose": "understanding_check",
             "local_experiment": "retrieval_suite",
+            **({"target_requirement": target_requirement} if target_requirement else {}),
             **({"retrieval_note_origin": note_origin} if note_origin else {}),
             "design_change": change_note,
             **({"retrieval_suite_comparison": result["previous_comparison"]} if previous else {}),
@@ -4012,24 +4028,38 @@ class CareerService:
         )
         return {"experiment": result, "career": saved, "task_id": task_id}
 
+    def _retrieval_requirement(self, identity, key, previous, source_step_id):
+        if previous:
+            target = deepcopy(previous.get("target_requirement"))
+            if key and key != (target or {}).get("key"):
+                raise ValueError("继续检索时请保留原来选定的岗位要求，另一项工作可另开练习。")
+            return target
+        if key:
+            if source_step_id:
+                raise ValueError("请选择从岗位要求或从原回答开始一项新练习。")
+            return self._experiment_requirement(identity, key)
+        return None
+
+    def _experiment_requirement(self, identity, key):
+        requirement = next((row for row in self.get(identity)["requirements"]
+                            if row["key"] == key), None)
+        if not requirement:
+            raise ValueError("这项岗位分析已不在当前列表，请重新选择要准备的工作。")
+        return deepcopy({
+            **{field: requirement[field] for field in (
+                "key", "text", "category", "requirement", "evidence", "basis",
+            )},
+            **requirement["proof"],
+            "notice": "用户从岗位分析中选定的练习方向；计划、关联材料与完成记录不代表胜任。",
+        })
+
     def add_experiment(self, identity, data):
         with self.store.lock, self.store.db:
             project = self._project(identity)
             if key := data.get("requirement_key"):
                 if data.get("source_step_id") or data.get("previous_task_id"):
                     raise ValueError("请从当前岗位要求设计新练习，或保留原实验的设计来源。")
-                requirement = next((row for row in self.get(identity)["requirements"]
-                                    if row["key"] == key), None)
-                if not requirement:
-                    raise ValueError("这项岗位分析已不在当前列表，请重新选择要准备的工作。")
-                data = {**data, "target_requirement": {
-                    **{field: requirement[field] for field in (
-                        "key", "text", "category", "requirement", "evidence", "basis",
-                    )},
-                    **requirement["proof"],
-                    "notice": "用户从岗位分析中选定的练习方向；"
-                    "计划、关联材料与完成记录不代表胜任。",
-                }}
+                data = {**data, "target_requirement": self._experiment_requirement(identity, key)}
             if data.get("source_experiment_id") and not data.get("source_step_id"):
                 raise ValueError("请从本轮已读取的旧实验中选择设计，再准备复验。")
             relation_index = data.get("source_relation_index")
