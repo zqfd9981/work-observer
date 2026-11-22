@@ -286,6 +286,7 @@ class LearningNotebook:
                 )
                 + "\n" + (row.get("source_passage") or {}).get("title", "")
                 + "\n" + (row.get("source_passage") or {}).get("quote", "")
+                + "\n" + json.dumps(row.get("source_passages", []), ensure_ascii=False)
                 + "\n" + json.dumps(calculations, ensure_ascii=False)
             )
             hits = [term for term in terms if match_text(term) in text]
@@ -761,7 +762,10 @@ def learning_record(row, record, store):
         "source_step_id": row.get("source_step_id"),
         "previous_view": row["previous_view"],
         "source_passage": deepcopy(row.get("source_passage")),
-        "source_locators": [deepcopy(row["source_passage"])] if row.get("source_passage") else [],
+        "source_passages": deepcopy(row.get("source_passages", [])),
+        "source_locators": [*([deepcopy(row["source_passage"])]
+                              if row.get("source_passage") else []),
+                            *deepcopy(row.get("source_passages", []))],
         "reported_observation": row["observation"],
         "current_user_view": row["current_view"],
         "open_question": row["open_question"],

@@ -516,6 +516,7 @@ class CareerService:
                         for key in ("previous_view", "observation", "current_view", "open_question")
                     ) + "\n" + (row.get("source_passage") or {}).get("title", "")
                     + "\n" + (row.get("source_passage") or {}).get("quote", "")
+                    + "\n" + json.dumps(row.get("source_passages", []), ensure_ascii=False)
                     + "\n" + json.dumps(
                         learning_record(row, owner, self.store).get("source_calculations", {}),
                         ensure_ascii=False,
@@ -1555,6 +1556,16 @@ class CareerService:
                     else self._source_passage({key: value for key, value in passage.items()
                                                if value is not None})
                 )}
+            if passages := data.get("source_passages"):
+                keys = ("public_document_id", "document_id", "snapshot_id", "start", "end")
+                old = (existing or {}).get("source_passages", [])
+                data = {**data, "source_passages": [
+                    next((item for item in old if all(item.get(key) == passage.get(key)
+                                                     for key in keys)), None)
+                    or self._source_passage({key: value for key, value in passage.items()
+                                             if value is not None})
+                    for passage in passages
+                ]}
             if data.get("question_id") and not any(
                 row["id"] == data["question_id"] for row in project["career"].get("questions", [])
             ):
@@ -2813,6 +2824,8 @@ class CareerService:
                          for row in selected_insights)
             preferred.extend((row.get("source_passage") or {}).get("public_document_id")
                              for row in selected_insights)
+            preferred.extend(passage.get("public_document_id") for row in selected_insights
+                             for passage in row.get("source_passages", []))
             if synthesis_sources:
                 from work_observer.research.inquiry_synthesis import synthesis_inquiries
 

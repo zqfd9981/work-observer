@@ -178,6 +178,7 @@ class InsightInput(BaseModel):
     replaces_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
     source_passage: SourcePassageInput | None = None
+    source_passages: list[SourcePassageInput] = Field(default_factory=list, max_length=6)
 
 
 class QuestionPassageNoteInput(BaseModel):
