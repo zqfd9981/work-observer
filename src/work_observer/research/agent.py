@@ -2519,21 +2519,22 @@ async def _research(
                     ):
                         raise ProbeError("INVALID_SEARCH_TERMS")
                     from work_observer.retrieval.enhanced import RetrievalService
+                    from work_observer.retrieval.ranking import query_groups, rank_passages
 
-                    terms = RetrievalService(
+                    service = RetrievalService(
                         repository, alias_groups=result["strategy"]["aliases"]
-                    )._expand(terms, True)
-                    hits = [
-                        ev
-                        for values in pool.values()
-                        for ev in values
-                        if any(match_text(t) in match_text(ev["quote"]) for t in terms)
-                    ]
-                    hits.sort(
-                        key=lambda ev: (
-                            -sum(match_text(ev["quote"]).count(match_text(t)) for t in terms)
-                        )
                     )
+                    concepts = query_groups(
+                        terms, lambda values, service=service: service._expand(values, True),
+                    )
+                    terms = service._expand(terms, True)
+                    hits = []
+                    for values in pool.values():
+                        for ev in values:
+                            matched = [t for t in terms if match_text(t) in match_text(ev["quote"])]
+                            if matched:
+                                hits.append({**ev, "retrieval": {"matched_terms": matched}})
+                    hits = rank_passages(hits, concepts)
                     data = {
                         "matching_jobs": len({ev["job_id"] for ev in hits}),
                         "evidence": hits[:10],

@@ -135,6 +135,68 @@ def settled(client, base):
     raise AssertionError("scripted investigation did not settle")
 
 
+def test_followup_search_ranks_concrete_requirements_in_the_frozen_job_scope(tmp_path):
+    class FollowupSearch(ScriptedPlanner):
+        async def turn(self, history):
+            outputs = [json.loads(row["output"]) for row in history
+                       if row.get("type") == "function_call_output"]
+            plans = [row for row in outputs if row.get("engine") == "langgraph"]
+            searches = [row for row in outputs if "expanded_terms" in row
+                        and "match_note" in row]
+            if not plans:
+                return await super().turn(history)
+            if not searches:
+                name, arguments = "search_evidence", {"terms": ["Agent", "端云同步"]}
+            else:
+                self.followup = searches[-1]
+                first = self.followup["evidence"][0]
+                assert "端云同步" in first["quote"]
+                name = "finish_research"
+                arguments = {
+                    "claims": [{"category": "ability", "basis": "direct",
+                                "requirement": "required", "text": "任职要求写明掌握端云同步记忆。",
+                                "evidence_ids": [first["citation_key"]]}],
+                    "gaps": ["该合成资料没有披露能力的实际验收方式。"],
+                    "task_outcomes": [{"task_index": 0, "status": "answered",
+                                       "answer": "任职要求写明掌握端云同步记忆。",
+                                       "claim_indices": [0], "questions": []}],
+                    "application_plan": None,
+                }
+            call = {"type": "function_call", "name": name,
+                    "arguments": json.dumps(arguments), "call_id": str(len(history))}
+            return [call], call
+
+    model = FollowupSearch(brief([task(terms=["Agent"], retry=["记忆"])]))
+    text = "Agent " * 55 + "。" + "通用业务描述。" * 90 + "任职要求：掌握端云同步记忆。"
+    with TestClient(workspace(tmp_path, model), base_url="http://127.0.0.1") as client:
+        auth = {"X-WO-Token": re.search(
+            r'name="wo-token" content="([^"]+)"', client.get("/").text,
+        )[1]}
+        jobs = [client.post("/api/import", headers=auth, json={
+            "title": "合成排序岗位" + str(i), "company": "合成公司" + str(i),
+            "description": body, "data_kind": "synthetic",
+        }).json()["job_id"] for i, body in enumerate([
+            text, "Agent工具集成，Agent平台接口。", "端云同步 " * 100,
+        ])]
+        goal = client.post("/api/career", headers=auth, json={
+            "title": "合成补查排序", "goal": "核对原文要求", "job_ids": jobs[:2],
+        }).json()["id"]
+        base = f"/api/career/{goal}"
+        step = client.post(base + "/prepare", headers=auth, json={
+            "kind": "ask", "question": "这些JD写了哪些端云同步要求？", "adaptive": True,
+        }).json()["step_id"]
+        response = client.post(f"/api/projects/{goal}/run", headers=auth, json={"step_id": step})
+        assert response.status_code == 202, response.text
+        result = settled(client, base)["results"][0]["result"]
+        assert result["status"] == "completed", result
+        found = model.followup["evidence"]
+        assert found[0]["job_id"] == jobs[0]
+        assert found[0]["quote"] == text[found[0]["start"] : found[0]["end"]]
+        assert {item["job_id"] for item in found} <= set(jobs[:2])
+        assert model.followup["matching_jobs"] == 2
+        assert model.followup["reading_guide"]["sources"]
+
+
 @pytest.mark.parametrize("question,tasks", [
     ("说白了这工作天天忙啥，顺便给个能自己动手验证的小练习", [task(), task("practice")]),
     ("这俩活儿差在哪？面试我该怎么讲取舍", [task("compare"), task("interview")]),
