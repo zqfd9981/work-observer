@@ -2362,3 +2362,13 @@ console.log('Inquiry material intake keeps typed work, updates inherited default
  const seed=j.agendaQuestionDraft(entries.find(row=>row.id==='gap-source'&&row.field==='gaps'&&row.index===0),d);assert.equal(seed.source_gap_index,0);assert.equal(j.questionValues(answered).source_gap_index,0);
  console.log('An exact unknown retains rephrased follow-up inquiries, user explanations, remaining limits and evidence links; active alternatives stay pending and recorded explanations can be filtered without treating them as verified truth.');
 }
+
+{
+ const j=ctx.window.journeyTest,full='用户只保留局部观察。'.repeat(100)+'末尾：其他条件仍未知。',note={id:'read-child',question:'Rephrased child inquiry.',parent_question_id:'read-parent',state:'answered',conclusion:full,next_evidence:'Need a changed condition.',conclusion_step_id:'read-child-study',origin_unknown:{step_id:'read-origin',index:0,text:'<script>Which work boundary remains unknown?</script>',notice:'原研究记录的未知，仍需回读原文。'},child_inquiries:[{id:'read-grandchild',question:'A further <b>condition</b>?',state:'parked',has_user_conclusion:true}]},result={model_calls:3,career_learning_context:{read_inquiries:[note],inquiry_searches:[]}},html=j.inquiryRecall(result,'read-goal'),offline=j.inquiryRecall(result,'read-goal',true);
+ assert(html.includes(full)&&html.includes('末尾：其他条件仍未知。')&&html.includes('本轮检索 0 次'));
+ assert(html.includes('&lt;script&gt;Which work boundary remains unknown?&lt;/script&gt;')&&!html.includes('<script>Which'));
+ assert(html.includes('/investigate/read-parent')&&html.includes('/discussion/read-child-study')&&html.includes('/discussion/read-origin'));
+ assert(html.includes('读取时关联的 1 条子调查目录')&&html.includes('A further &lt;b&gt;condition&lt;/b&gt;?'));
+ assert(offline.includes(full)&&offline.includes('Which work boundary remains unknown?')&&!offline.includes('href='));
+ console.log('Recalled child inquiries show their exact starting unknown, complete user explanation and limits, parent/research links and descendant directory; standalone output keeps text without live actions.');
+}

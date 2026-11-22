@@ -22,6 +22,33 @@ def calculation_records(result):
     return {key: deepcopy(context[key]) for key in CALCULATION_FIELDS if context.get(key)}
 
 
+def inquiry_children(career, question_id):
+    return [{
+        **{key: deepcopy(row.get(key)) for key in (
+            "id", "question", "state", "source_step_id", "source_gap_index",
+            "conclusion_step_id", "updated_at", "created_at",
+        )},
+        "has_user_conclusion": bool(row.get("conclusion", "").strip()),
+    } for row in career.get("questions", []) if row.get("parent_question_id") == question_id]
+
+
+def inquiry_unknown_origin(project, question, store):
+    index = question.get("source_gap_index")
+    if type(index) is not int or index < 0:
+        return None
+    step = next((row for row in project.get("steps", [])
+                 if row["id"] == question.get("source_step_id")), {})
+    run = store.get(step["run_id"]) if step.get("run_id") else {}
+    result = (run or {}).get("result") or {}
+    if (not run or run.get("state") == "invalidated" or result.get("status") != "completed"
+            or index >= len(result.get("gaps", []))):
+        return None
+    return {
+        "step_id": step["id"], "index": index, "text": result["gaps"][index],
+        "notice": "这是原研究记录的未知，不是已成立事实；本次需回读原文查证。",
+    }
+
+
 def work_relation_record(owner, study, result, index, current):
     relation = result["work_map"]["work_relations"][index]
     claims = result.get("claims", [])
@@ -457,6 +484,8 @@ class LearningNotebook:
         record["evidence_passages"] = record["evidence_passages"] or []
         record["child_question_ids"] = [item["id"] for item in career.get("questions", [])
                                         if item.get("parent_question_id") == question_id]
+        record["child_inquiries"] = inquiry_children(career, question_id)
+        record["origin_unknown"] = inquiry_unknown_origin(project, row, self.store)
         record["linked_experiment_ids"] = [item["id"] for item in career.get("tasks", [])
                                            if item.get("question_id") == question_id]
         record["linked_research_step_ids"] = [item["step_id"] for item in career.get("runs", [])

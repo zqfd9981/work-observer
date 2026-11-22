@@ -1513,6 +1513,8 @@ class ProjectService:
                 experiment_claim_origin,
                 experiment_relation_origin,
                 experiment_template_origin,
+                inquiry_children,
+                inquiry_unknown_origin,
                 learning_record,
                 recall_learning_notes,
             )
@@ -1590,6 +1592,15 @@ class ProjectService:
                 None,
             )
             if selected_inquiry:
+                selected_inquiry["child_inquiries"] = inquiry_children(
+                    career, selected_inquiry["id"],
+                )
+                selected_inquiry["child_inquiry_notice"] = (
+                    "这是直接承接当前问题的子调查目录，按明确关联列出，不依赖关键词。"
+                    "目录未带入完整用户解释；可按id用read_inquiry读取结论、限制和原文定位。"
+                    "有结论与answered只表示用户保存过解释，不代表已证实；parked仍暂不研究。"
+                    "回读当前可用原文，再判断对子问题与原问题分别有什么影响。"
+                )
                 selected_ids = step.get("career_passage_ids", [])
                 if selected_ids:
                     passages = {row["id"]: row for row in
@@ -1666,15 +1677,9 @@ class ProjectService:
                     if origin_step and origin_step.get("run_id") else None
                 )
                 origin_result = (origin_run or {}).get("result") or {}
-                gap_index = selected_inquiry.get("source_gap_index")
-                if (isinstance(gap_index, int) and origin_result.get("status") == "completed"
-                        and origin_run.get("state") != "invalidated"
-                        and 0 <= gap_index < len(origin_result.get("gaps", []))):
-                    selected_inquiry["origin_unknown"] = {
-                        "step_id": origin_step["id"], "index": gap_index,
-                        "text": origin_result["gaps"][gap_index],
-                        "notice": "这是原研究记录的未知，不是已成立事实；本次需回读原文查证。",
-                    }
+                selected_inquiry["origin_unknown"] = inquiry_unknown_origin(
+                    record, selected_inquiry, self.store,
+                )
                 selected_inquiry["origin_discussion"] = {
                     "step_id": origin_step["id"],
                     "question": origin_step["question"],
