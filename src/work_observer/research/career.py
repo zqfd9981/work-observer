@@ -2164,7 +2164,7 @@ class CareerService:
             retrieval_review, retrieval_job_ids, retrieval_document_ids = None, None, None
             feedback_origin, feedback_documents = None, None
             retrieval_case = None
-            requirement_interview_documents = None
+            requirement_documents = None
             answer_pair_documents = None
             comparison_followup_ids = []
             synthesis_sources = []
@@ -2304,7 +2304,7 @@ class CareerService:
                     if kind == "interview":
                         assessment_job_ids = source_job_ids[:]
                 if kind == "interview" and not task_id and not story_id:
-                    requirement_interview_documents = list(dict.fromkeys(
+                    requirement_documents = list(dict.fromkeys(
                         key for key in [
                             *(row.get("public_document_id")
                               for row in selected_requirement["evidence"]),
@@ -2331,6 +2331,30 @@ class CareerService:
                 )
                 if not insight:
                     raise ValueError("未找到要核对的认识，请重新选择。")
+                if (inherit_focus and kind in {"ask", "teachback", "challenge", "plan"}
+                        and not selected_requirement and continued_requirement is None
+                        and not selected_job_ids
+                        and not any((question_id, task_id, story_id, source_step_id,
+                                     insight.get("task_id"), insight.get("question_id"),
+                                     counter_insight_id, insight_ids, comparison_step_ids))):
+                    continued_requirement = deepcopy(
+                        learning_record(insight, project, self.store).get("source_requirement"),
+                    )
+                    if continued_requirement:
+                        selected_job_ids = None
+                        source_job_ids = list(dict.fromkeys(
+                            row["job_id"] for row in continued_requirement["evidence"]
+                            if row.get("job_id") in project["job_ids"]
+                        ))
+                        requirement_documents = list(dict.fromkeys(
+                            key for key in [
+                                *(row.get("public_document_id")
+                                  for row in continued_requirement["evidence"]),
+                                *(row.get("document_id")
+                                  for row in continued_requirement.get("records", [])),
+                                *material_ids, material_id,
+                            ] if key in project["public_document_ids"]
+                        ))
                 if inherit_focus and kind != "teachback":
                     observed_task = next(
                         (
@@ -2370,7 +2394,7 @@ class CareerService:
                         prior_scope = previous_assessment["result"].get("scope") or {}
                         answer_id = previous_assessment.get("answer_document_id")
                         allowed = set(project["public_document_ids"]) | {answer_id}
-                        requirement_interview_documents = list(dict.fromkeys(
+                        requirement_documents = list(dict.fromkeys(
                             key for key in [*prior_scope.get("archived_public_ids", []), answer_id]
                             if key and key in allowed
                         ))
@@ -3440,8 +3464,8 @@ class CareerService:
                 project, kind, preferred, repository=self.repository,
                 query="\n".join(value for value in topic if value) or project["goal"],
             )
-            if requirement_interview_documents is not None:
-                documents = requirement_interview_documents
+            if requirement_documents is not None:
+                documents = requirement_documents
                 omitted = len(set(project["public_document_ids"]) - set(documents))
             if retrieval_document_ids is not None:
                 documents = retrieval_document_ids
@@ -3480,9 +3504,9 @@ class CareerService:
                 project["steps"][-1]["career_practice_task_id"] = practice_task_id
             if retrieval_document_ids is not None:
                 project["steps"][-1]["career_source_document_ids"] = retrieval_document_ids[:]
-            elif requirement_interview_documents is not None:
+            elif requirement_documents is not None:
                 project["steps"][-1]["career_source_document_ids"] = (
-                    requirement_interview_documents[:]
+                    requirement_documents[:]
                 )
             if feedback_documents is not None:
                 project["steps"][-1]["career_source_document_ids"] = feedback_documents[:]

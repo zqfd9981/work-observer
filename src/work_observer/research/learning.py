@@ -928,6 +928,7 @@ def learning_record(row, record, store):
             "不能恢复被搁置的旧认识或把新认识外推到原来的全部范围。"
         )
     index = row.get("source_claim_index")
+    source_step, run = None, None
     if index is not None or links or row.get("source_step_id"):
         source_step = next(
             (item for item in record["steps"] if item["id"] == row.get("source_step_id")),
@@ -1052,4 +1053,12 @@ def learning_record(row, record, store):
                 "source_work_map中的关系及迁移限定仍需重新核对。"
                 "重查时应读取本轮可用原文，保留原分析的限定，不把旧引用编号用于新回答。"
             )
+    requirement = ((source_step or {}).get("career_requirement")
+                   if (run or {}).get("state") != "invalidated" else None)
+    requirement = requirement or (experiment or {}).get("target_requirement")
+    if requirement:
+        note["source_requirement"] = deepcopy(requirement)
+        for source in note["source_requirement"].get("evidence", []):
+            source.pop("id", None)
+            source.pop("citation_key", None)
     return note
