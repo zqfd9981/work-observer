@@ -238,6 +238,7 @@ class ConversationNoteInput(BaseModel):
 
 class ResearchQuestionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    requirement_key: str = Field(default="", max_length=100)
     question: str = Field(min_length=1, max_length=1500)
     why_matters: str = Field(default="", max_length=1000)
     next_evidence: str = Field(default="", max_length=1500)

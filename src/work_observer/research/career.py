@@ -1873,6 +1873,22 @@ class CareerService:
                 data = {**data, "source_passage": self._source_passage(data["source_passage"])}
             questions = project["career"].setdefault("questions", [])
             by_id = {row["id"]: row for row in questions}
+            data = dict(data)
+            if key := data.pop("requirement_key", ""):
+                target = self._experiment_requirement(identity, key)
+                data["target_requirement"] = target
+                if "selected_job_ids" not in data:
+                    data["selected_job_ids"] = list(dict.fromkeys(
+                        row["job_id"] for row in target["evidence"]
+                        if row.get("job_id") in project["job_ids"]
+                    ))
+                if "material_ids" not in data:
+                    data["material_ids"] = list(dict.fromkeys(
+                        key for key in [
+                            *(row.get("public_document_id") for row in target["evidence"]),
+                            *(row.get("document_id") for row in target.get("records", [])),
+                        ] if key in project["public_document_ids"]
+                    ))
             if data.get("source_insight_id") and not any(
                 row["id"] == data["source_insight_id"]
                 for row in project["career"].get("insights", [])
@@ -1901,6 +1917,14 @@ class CareerService:
             for key in ("source_step_id", "conclusion_step_id"):
                 if data.get(key) and data[key] not in runs:
                     raise ValueError("未找到所选讨论，请重新选择或取消关联。")
+            if not question_id and not data.get("target_requirement"):
+                source_step = next((row for row in project["steps"]
+                                    if row["id"] == data.get("source_step_id")), {})
+                target = source_step.get("career_requirement") or by_id.get(
+                    parent_id, {},
+                ).get("target_requirement")
+                if target:
+                    data["target_requirement"] = deepcopy(target)
             previous = by_id.get(question_id, {})
             gap_index = data.get("source_gap_index", previous.get("source_gap_index"))
             if data.get("source_step_id") != previous.get("source_step_id") and (
@@ -2449,6 +2473,27 @@ class CareerService:
                 if (kind in {"ask", "map", "plan"} and not material_focus_supplied
                     and not material_ids and not material_id):
                     material_ids = list(saved_question.get("material_ids") or [])
+                target = saved_question.get("target_requirement")
+                if (target and inherit_focus and not selected_requirement
+                        and continued_requirement is None and not task_id and not story_id):
+                    source_ids = list(dict.fromkeys(
+                        row["job_id"] for row in target["evidence"]
+                        if row.get("job_id") in project["job_ids"]
+                    ))
+                    chosen_ids = selected_job_ids or saved_question.get("selected_job_ids", [])
+                    if not chosen_ids or set(chosen_ids) == set(source_ids):
+                        continued_requirement = deepcopy(target)
+                        source_job_ids = source_ids
+                        if not selected_job_ids:
+                            selected_job_ids = None
+                        assessment_job_ids = source_ids if selected_job_ids is None else None
+                        requirement_documents = list(dict.fromkeys(
+                            key for key in [
+                                *(row.get("public_document_id") for row in target["evidence"]),
+                                *(row.get("document_id") for row in target.get("records", [])),
+                                *material_ids, material_id,
+                            ] if key in project["public_document_ids"]
+                        ))
                 if kind == "challenge":
                     hypothesis_a = hypothesis_a or saved_question.get("hypothesis_a", "")
                     hypothesis_b = hypothesis_b or saved_question.get("hypothesis_b", "")
