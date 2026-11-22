@@ -448,7 +448,7 @@ class LearningNotebook:
             "hypothesis_a", "hypothesis_b", "parent_question_id", "source_step_id",
             "conclusion_step_id", "source_passage", "evidence_passages", "material_ids",
             "selected_job_ids", "carried_understanding", "reused_from", "created_at", "updated_at",
-            "source_insight_id",
+            "source_insight_id", "source_gap_index",
         )}
         origin = next((item for item in career.get("insights", [])
                        if item["id"] == row.get("source_insight_id")), None)

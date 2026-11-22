@@ -243,6 +243,7 @@ class ResearchQuestionInput(BaseModel):
     state: Literal["open", "answered", "parked"] = "open"
     conclusion: str = Field(default="", max_length=2000)
     source_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
+    source_gap_index: int | None = Field(default=None, strict=True, ge=0)
     conclusion_step_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     parent_question_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
     source_insight_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
@@ -542,6 +543,8 @@ def career_routes(*, repository, store, settings, response, read_json, busy, tas
             values.pop("material_ids")
         if "parent_question_id" not in data.model_fields_set:
             values.pop("parent_question_id")
+        if "source_gap_index" not in data.model_fields_set:
+            values.pop("source_gap_index")
         if data.source_passage:
             values["source_passage"] = data.source_passage.model_dump(exclude_none=True)
         return change(

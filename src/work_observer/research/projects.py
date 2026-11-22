@@ -1666,6 +1666,15 @@ class ProjectService:
                     if origin_step and origin_step.get("run_id") else None
                 )
                 origin_result = (origin_run or {}).get("result") or {}
+                gap_index = selected_inquiry.get("source_gap_index")
+                if (isinstance(gap_index, int) and origin_result.get("status") == "completed"
+                        and origin_run.get("state") != "invalidated"
+                        and 0 <= gap_index < len(origin_result.get("gaps", []))):
+                    selected_inquiry["origin_unknown"] = {
+                        "step_id": origin_step["id"], "index": gap_index,
+                        "text": origin_result["gaps"][gap_index],
+                        "notice": "这是原研究记录的未知，不是已成立事实；本次需回读原文查证。",
+                    }
                 selected_inquiry["origin_discussion"] = {
                     "step_id": origin_step["id"],
                     "question": origin_step["question"],

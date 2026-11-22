@@ -1857,6 +1857,24 @@ class CareerService:
             for key in ("source_step_id", "conclusion_step_id"):
                 if data.get(key) and data[key] not in runs:
                     raise ValueError("未找到所选讨论，请重新选择或取消关联。")
+            previous = by_id.get(question_id, {})
+            gap_index = data.get("source_gap_index", previous.get("source_gap_index"))
+            if data.get("source_step_id") != previous.get("source_step_id") and (
+                "source_gap_index" not in data
+            ):
+                gap_index = None
+                if "source_gap_index" in previous:
+                    data = {**data, "source_gap_index": None}
+            if gap_index is not None and (
+                gap_index != previous.get("source_gap_index")
+                or data.get("source_step_id") != previous.get("source_step_id")
+            ):
+                source = next((row for row in self.get(identity)["results"]
+                               if row["step_id"] == data.get("source_step_id")), None)
+                if (not source or source["state"] == "abandoned"
+                        or (source.get("result") or {}).get("status") != "completed"
+                        or gap_index >= len(source["result"].get("gaps", []))):
+                    raise ValueError("请从一份完整研究中的具体未知项建立调查。")
             if not question_id and "selected_job_ids" not in data:
                 source = by_id.get(parent_id) or runs.get(data.get("source_step_id"), {})
                 if "selected_job_ids" in source:
