@@ -87,11 +87,13 @@ def openapi(routes):
     from work_observer.api.workflows import WorkflowInput, WorkflowRunInput, WorkflowScopeInput
     from work_observer.connectors.manual import ManualJD
     from work_observer.reports.industry import IndustryObservationInput
+    from work_observer.reports.industry_evolution import IndustryRevisionInput
     from work_observer.research.run_history import HistoryQuery
 
     models = {
         ("/api/industry", "POST"): IndustryObservationInput,
         ("/api/industry/{id}/inquiries", "POST"): IndustryInquiryInput,
+        ("/api/industry/{id}/revisions", "POST"): IndustryRevisionInput,
         ("/api/career", "POST"): CareerInput,
         ("/api/career/{id}", "PATCH"): CareerGoalInput,
         ("/api/career/{id}/stories", "POST"): StoryInput,

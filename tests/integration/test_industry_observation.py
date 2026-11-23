@@ -91,6 +91,51 @@ def test_observation_evidence_scope_and_followup(tmp_path):
         })
         assert changed.status_code == 201
         old = client.get("/api/industry/" + identity).json()
-        assert old["findings"] == report["findings"]
+        assert old["findings"][0]["interpretation"] == report["findings"][0]["interpretation"]
+        assert old["findings"][0]["needs_review"] is True
+        assert old["evolution"]["changes"][0]["kind"] == "正文内容已变化"
         assert all(s["availability"] == "verified" for s in old["sources"] if s["has_detail"])
         assert "IndustryObservationInput" in client.get("/api/openapi.json").text
+        correction = dict(
+            finding_index=0, decision="revise", reason="回读新原文，工作职责已不同。",
+            interpretation="当前岗位改为文档管理工作。", boundary="仅限这个已有岗位。",
+            evidence=[dict(job_id=jobs[0], quote="新职责：负责不同的文档管理工作。")],
+            next_question="文档管理工作的交付和验收要求是什么？",
+        )
+        bad = copy.deepcopy(correction)
+        bad["evidence"][0]["quote"] = "无法从原文核对的虚构文本"
+        assert client.post(f"/api/industry/{identity}/revisions", headers=headers,
+                           json=bad).status_code == 422
+        assert client.get("/api/industry/" + identity).json()["evolution"]["revisions"] == 0
+        revised = client.post(f"/api/industry/{identity}/revisions", headers=headers,
+                              json=correction)
+        assert revised.status_code == 201, revised.text
+        updated = revised.json()
+        finding = updated["findings"][0]
+        assert finding["needs_review"] is False and finding["decision"] == "revise"
+        assert finding["history"][0]["previous_interpretation"] == "第一份资料描述接口开发。"
+        assert finding["evidence"][0]["source"]["document_id"] != ev["source"]["document_id"]
+        assert updated["evolution"]["revisions"] == 1
+        # This remains source change since the initial observation, not a market trend claim.
+        assert updated["evolution"]["changes"][0]["kind"] == "正文内容已变化"
+        followup = client.post(f"/api/industry/{identity}/inquiries", headers=headers,
+                               json={"question": "继续检查已知纠正及缺正文岗位。"}).json()
+        assert set(followup["job_ids"]) == set(jobs + [missing_id])
+        project = client.get("/api/projects/" + followup["project_id"]).json()
+        assert correction["reason"] in project["goal"]
+        assert correction["interpretation"] in project["goal"]
+        bad = {**correction, "decision": "retain", "interpretation": "又改了判断"}
+        assert client.post(f"/api/industry/{identity}/revisions", headers=headers,
+                           json=bad).status_code == 422
+        for decision in ("withdraw", "unresolved", "retain"):
+            response = client.post(f"/api/industry/{identity}/revisions", headers=headers,
+                                   json={**correction, "decision": decision})
+            assert response.status_code == 201, response.text
+            assert response.json()["findings"][0]["decision"] == decision
+    with TestClient(create_app(settings, reports_dir=tmp_path / "reports"),
+                    base_url="http://127.0.0.1") as client:
+        restored = client.get("/api/industry/" + identity).json()
+        assert restored["evolution"]["revisions"] == 4
+        assert len(restored["evolution"]["inquiries"]) == 2
+        assert restored["findings"][0]["history"][0]["previous_decision"] == "initial"
+        assert restored["findings"][0]["initial_interpretation"] == "第一份资料描述接口开发。"

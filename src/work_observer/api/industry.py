@@ -5,6 +5,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 from work_observer.reports.industry import IndustryObservationInput, IndustryObservationService
+from work_observer.reports.industry_evolution import IndustryEvolution, IndustryRevisionInput
 
 
 class IndustryInquiryInput(BaseModel):
@@ -32,9 +33,16 @@ def industry_routes(*, repository, store, reports_dir, response, read_json):
         return response(await run_in_threadpool(service().inquiry, request.path_params["id"],
                                                 data.finding_index, data.question, store()), 201)
 
+    async def revise(request):
+        data = IndustryRevisionInput.model_validate(await read_json(request))
+        evolution = IndustryEvolution(service())
+        return response(await run_in_threadpool(evolution.revise, request.path_params["id"],
+                                                data.model_dump()), 201)
+
     return [
         Route("/api/industry", listing),
         Route("/api/industry", save, methods=["POST"]),
         Route("/api/industry/{id}", report),
         Route("/api/industry/{id}/inquiries", inquiry, methods=["POST"]),
+        Route("/api/industry/{id}/revisions", revise, methods=["POST"]),
     ]

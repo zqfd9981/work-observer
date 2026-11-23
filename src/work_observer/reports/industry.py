@@ -144,23 +144,29 @@ class IndustryObservationService:
             raise ValueError("未找到这份行业观察。")
         report = json.loads(path.read_text(encoding="utf8"))
         for source in report["sources"]:
-            available = False
-            if source["eligible"]:
-                try:
-                    doc = Catalog(self.repository).document(source["document_id"])
-                    version = next((row for row in doc["versions"]
-                                    if row["snapshot_id"] == source["snapshot_id"]), None)
-                    available = bool(doc["integrity"] == "verified" and version and body_hash(
-                        version["payload"].get("description", ""),
-                    ) == source["body_sha256"])
-                except (ValueError, OSError, ProbeError):
-                    available = False
-            source["availability"] = "verified" if available else (
-                "missing_detail" if not source["has_detail"] else "unavailable"
-            )
-        return report
+            self.audit_source(source)
+        from work_observer.reports.industry_evolution import IndustryEvolution
+
+        return IndustryEvolution(self).decorate(report)
+
+    def audit_source(self, source):
+        available = False
+        if source["eligible"]:
+            try:
+                doc = Catalog(self.repository).document(source["document_id"])
+                version = next((row for row in doc["versions"]
+                                if row["snapshot_id"] == source["snapshot_id"]), None)
+                available = bool(doc["integrity"] == "verified" and version and body_hash(
+                    version["payload"].get("description", ""),
+                ) == source["body_sha256"])
+            except (ValueError, OSError, ProbeError):
+                available = False
+        source["availability"] = "verified" if available else (
+            "missing_detail" if not source["has_detail"] else "unavailable"
+        )
 
     def inquiry(self, identity, finding_index, question, store):
+        from work_observer.reports.industry_evolution import DECISIONS
         from work_observer.research.projects import ProjectService
 
         report = self.get(identity)
@@ -169,26 +175,47 @@ class IndustryObservationService:
         findings = ([report["findings"][finding_index]] if finding_index is not None
                     else report["findings"])
         job_ids = list(dict.fromkeys(ev["job_id"] for row in findings for ev in row["evidence"]))
-        if any(source["availability"] != "verified" for source in report["sources"]
-               if source["job_id"] in job_ids):
+        if any(ev["source"]["availability"] != "verified"
+               for finding in findings for ev in finding["evidence"]):
             raise ValueError("这条观察的原始正文暂不可核验，请先回查来源，不能换用其他资料冒充。")
+        if finding_index is None:
+            job_ids = [s["job_id"] for s in report["sources"]]
         records, _, _ = RetrievalService(self.repository)._records(None, job_ids, None)
         if {row["job_id"] for row in records} != set(job_ids):
             raise ValueError("部分原岗位已不在当前可读范围，请先回查样本。")
         finding = findings[0] if finding_index is not None else None
+        corrections = [event for row in findings for event in row["history"]][-2:]
         goal = (
             question + "\n\n起点：" + report["title"]
             + "\n原观察保存于：" + report["created_at"]
-            + ("\n待核归纳：" + finding["interpretation"]
-               + "\n原保留条件：" + finding["boundary"] if finding else "")
+            + ("\n待核归纳：" + finding["interpretation"][:900]
+               + "\n当前状态：" + DECISIONS.get(finding["decision"], "首轮归纳")
+               + "\n原保留条件：" + finding["boundary"][:400] if finding else "")
+            + ("" if finding else "\n当前待核观察：" + "；".join(
+                DECISIONS.get(row["decision"], "首轮归纳") + "：" + row["interpretation"][:220]
+                for row in findings
+            ))
+            + "\n已吸收的纠正：" + "；".join(
+                DECISIONS[e["decision"]] + "：" + e["reason"][:220] for e in corrections
+            )
+            + "\n当前资料变化：" + "；".join(
+                row["title"][:45] + "：" + row["kind"]
+                for row in report["evolution"]["changes"][:4]
+            )
             + "\n上面的观察是辅助分析，不是独立证据。先回读所选JD，核对工作、交付物、"
             "能力与要求强度；保留未读、缺失与其他解释。来源或样本变化不能直接作为市场趋势。"
-        )
+        )[:3990]
         service = ProjectService(store)
         project = service.create(title="行业观察追问："+report["title"][:100], goal=goal,
                                  job_ids=job_ids, public_document_ids=[], max_public=0)
         project = service.add(project["id"], goal, revision=project["revision"],
                               coverage_mode="all", allow_public=False,
                               completion="回读选定JD，逐条说明观察的依据、反例与仍待核实的条件。")
+        from work_observer.reports.industry_evolution import IndustryEvolution
+
+        IndustryEvolution(self).append(identity, {
+            "kind": "inquiry", "finding_index": finding_index,
+            "question": question, "project_id": project["id"],
+        })
         return {"project_id": project["id"], "job_ids": job_ids,
                 "step_id": project["steps"][-1]["id"], "started": False}
