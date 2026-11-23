@@ -21,6 +21,8 @@ from work_observer.tracking.evaluation import StrategyService
 class RetrievalCase(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=1, max_length=80)
+    question: str = Field(default="", max_length=1500)
+    label_reason: str = Field(default="", max_length=1500)
     baseline: RetrievalQuery
     candidate: RetrievalQuery
     expectation: Literal["sources", "none"] = "sources"
@@ -43,7 +45,7 @@ class RetrievalSuiteInput(BaseModel):
         for row in self.cases:
             RetrievalComparisonInput.model_validate({
                 "job_ids": self.job_ids, "document_ids": self.document_ids, "top_k": self.top_k,
-                **row.model_dump(exclude={"name"}),
+                **row.model_dump(exclude={"name", "question", "label_reason"}),
             })
         return self
 
@@ -57,7 +59,7 @@ def run_retrieval_suite(repository, raw):
     sources = []
     for case in data.cases:
         result = run_retrieval_comparison(
-            repository, {**shared, **case.model_dump(exclude={"name"})},
+            repository, {**shared, **case.model_dump(exclude={"name", "question", "label_reason"})},
             as_of=cutoff, alias_groups=aliases,
         )
         sources = result["sources"]
@@ -91,7 +93,7 @@ def run_retrieval_suite(repository, raw):
         "aliases": aliases, "sources": sources, "cases": cases, "runs": runs,
         "totals": totals, "corpus_complete": complete, "comparison_rows": rows,
         "conditions": f"{len(data.cases)}条使用者样例共用同一批{len(selected)}份原文、"
-        f"截止时点{cutoff}、别名配置和top-{data.top_k}片段上限；每条分别保留查询与标签。",
+        f"截止时点{cutoff}、别名配置和top-{data.top_k}片段上限；每条分别保留问题、标签依据和查询。",
         "notice": NOTICE + "累计指标按样例×来源计数，同一来源可在不同样例重复计入；"
         "样例不是随机或独立标注，不能推断全库表现。原文不完整时不计算标签完全一致数。",
         "outcome": f"本机实际运行{len(data.cases)}条样例、{len(runs)}组词面查询；"

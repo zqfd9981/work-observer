@@ -164,6 +164,10 @@ def review_context(repository, project, task):
 
 def comparison_changes(previous, current, *, query_and_labels=True):
     changes = []
+    if query_and_labels:
+        for key, label in (("question", "样例问题"), ("label_reason", "标签依据")):
+            if previous["input"].get(key, "") != current["input"].get(key, ""):
+                changes.append(label)
     for key, label in (("baseline", "原查询"), ("candidate", "改写查询"), ("top_k", "片段上限")):
         if not query_and_labels and key != "top_k":
             continue

@@ -38,6 +38,9 @@ class SuiteDiscussionModel(ModelClient):
             assert selected["name"] == self.expected_case_name
             assert len(selected["runs"]) == 2
             assert selected["input"]["expected_job_ids"] == self.jobs[:1]
+            assert (selected["input"]["question"], selected["input"]["label_reason"]) == (
+                self.expected_case_intent
+            )
             assert selected["runs"][0]["unexpected_source_keys"] == ["job:" + self.jobs[1]]
         if personal.get("selected_story"):
             documents.add(personal["selected_story"]["document_id"])
@@ -117,7 +120,21 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
                   "cases": [case("评估职责", "查无表达甲", "评估集", jobs[:1]),
                             case("记忆职责", "上下文", "端云同步", jobs[1:2]),
                             case("不应命中的问题", "查无表达乙", "评估集")]}
+        question = "如何找到端云上下文管理的原始工作要求？\n" * 35 + "原问题末尾<保留>"
+        reason = (
+            "第二份原文明确提到端云同步与KV记忆，其他资料仍需逐条区分。\n" * 25 + "标签理由末尾"
+        )
+        values["cases"][1].update(question=question, label_reason=reason)
         preview = post(base + "/experiments/retrieval-suite", values)["experiment"]
+        assert preview["input"]["cases"][1]["question"] == question
+        assert preview["input"]["cases"][1]["label_reason"] == reason
+        without_intent = deepcopy(values)
+        without_intent["cases"][1].pop("question")
+        without_intent["cases"][1].pop("label_reason")
+        plain = post(base + "/experiments/retrieval-suite", without_intent)["experiment"]
+        assert [run["metrics"] for run in plain["runs"]] == [
+            run["metrics"] for run in preview["runs"]
+        ]  # User intent explains the label; it never changes retrieval scoring.
         assert len(preview["runs"]) == 6 and len(preview["comparison_rows"]) == 6
         assert preview["totals"][0]["source_recall"] == 0.5
         assert preview["totals"][1]["source_recall"] == 1
@@ -146,6 +163,7 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
         replay = client.get(base + "/tasks/" + task["id"] + "/retrieval-inputs").json()
         assert replay["record_kind"] == "retrieval_suite"
         assert replay["input"] == saved["experiment"]["input"]
+        assert replay["input"]["cases"][1]["label_reason"] == reason
         model.jobs, model.artifact = jobs[:2], task["artifact_document_id"]
         for kind in ("reflect", "interview"):
             step = post(base + "/prepare", {"kind": kind, "task_id": task["id"]})
@@ -180,6 +198,8 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
         revised["top_k"] = 1
         revised["cases"][0]["baseline"] = {"terms": ["评估集"]}
         revised["cases"][1]["expected_job_ids"] = jobs[:1]
+        revised["cases"][1]["question"] = "这次改问如何找到评估集建设职责？"
+        revised["cases"][1]["label_reason"] = "改为第一份原文中的评估集职责，原问题与标签一起改变。"
         revised["cases"] = [revised["cases"][1], revised["cases"][0],
                             case("新增：端云负例", "端云同步", "端云同步")]
         changed = post(base + "/experiments/retrieval-suite", {
@@ -193,6 +213,11 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
         assert {row["state"] for row in cases.values()} == {"matched", "added", "removed"}
         assert "原查询" in cases["评估职责"]["changed_conditions"]
         assert "预期相关标签" in cases["记忆职责"]["changed_conditions"]
+        assert "样例问题" in cases["记忆职责"]["changed_conditions"]
+        assert "标签依据" in cases["记忆职责"]["changed_conditions"]
+        assert cases["记忆职责"]["before"]["input"]["question"] == question
+        assert cases["记忆职责"]["before"]["input"]["label_reason"] == reason
+        assert cases["记忆职责"]["after"]["input"]["question"] == revised["cases"][0]["question"]
         returns = cases["评估职责"]["return_comparison"][0]["sources"]
         source = next(row for row in returns if row["source_key"] == "job:" + jobs[0])
         assert not source["before"]["returned"] and source["after"]["returned"]
@@ -220,6 +245,9 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
             })
             assert rejected.status_code == 422, rejected.text
         model.expected_case_name = "记忆职责"
+        model.expected_case_intent = (
+            revised["cases"][0]["question"], revised["cases"][0]["label_reason"],
+        )
         step = post(base + "/prepare", {
             "kind": "ask", "task_id": changed_task["id"],
             "retrieval_case_name": model.expected_case_name,
@@ -233,6 +261,8 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
         assert focused["result"]["status"] == "completed", focused["result"]
         selected = focused["result"]["career_learning_context"]["retrieval_case"]
         assert selected["name"] == model.expected_case_name
+        assert selected["input"]["question"] == revised["cases"][0]["question"]
+        assert selected["input"]["label_reason"] == revised["cases"][0]["label_reason"]
         assert focused["retrieval_case_name"] == model.expected_case_name
         continued = post(base + "/prepare", {
             "kind": "ask", "source_step_id": focused["step_id"],

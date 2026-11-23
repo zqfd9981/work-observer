@@ -252,3 +252,24 @@ assert.match(roleUnderstandingExport,/&lt;script&gt;/);assert.doesNotMatch(roleU
 requirementFeedback.result.claims=[];requirementFeedback.result.evidence=[];
 assert.match(api.insightSource(roleUnderstanding,requirementFocusData),/当时的职责/);
 assert.match(api.insightSource(roleUnderstanding,requirementFocusData),/这份认识起点的岗位工作与原文/);
+
+const fullCaseQuestion='用户想知道哪些工作涉及上下文同步？\n'.repeat(35)+'原问题末尾 <img>';
+const fullLabelReason='原文写明端云记忆任务，其他来源的判断仍需核实。\n'.repeat(25)+'标签理由末尾 <script>';
+const intentNext=api.retrievalSuiteNext({name:'带原意的样例',question:fullCaseQuestion,label_reason:fullLabelReason},caseInputs);
+assert.equal(intentNext.cases[0].question,fullCaseQuestion);assert.equal(intentNext.cases[0].label_reason,fullLabelReason);
+assert.equal(intentNext.question,'');assert.equal(intentNext.label_reason,'');
+const intentCase=intentNext.cases[0];
+api.setSuite({...intentNext,question:fullCaseQuestion,label_reason:fullLabelReason});
+const intentPanel=api.retrievalSuitePanel(data);
+assert.match(intentPanel,/data-retrieval-suite-question/);assert.match(intentPanel,/data-retrieval-suite-label-reason/);
+assert.match(intentPanel,/原问题末尾 &lt;img&gt;/);assert.match(intentPanel,/标签理由末尾 &lt;script&gt;/);assert.doesNotMatch(intentPanel,/<img>|<script>/);
+const intentRecall=api.retrievalCaseRecall({career_learning_context:{retrieval_case:{name:intentCase.name,input:intentCase,runs:[],notice:'原记录'}}});
+assert.match(intentRecall,/原问题末尾 &lt;img&gt;/);assert.match(intentRecall,/标签理由末尾 &lt;script&gt;/);
+const intentResult=api.retrievalSuiteResult({...result,input:{cases:[intentCase]},cases:[{name:intentCase.name,run_indices:[0]}],totals:[]},data,'intent-saved');
+assert.match(intentResult,/标签理由末尾 &lt;script&gt;/);
+const absentIntent=api.retrievalCaseRecall({career_learning_context:{retrieval_case:{name:'无原意样例',input:{},runs:[],notice:'旧记录'}}});
+assert.match(absentIntent,/未单独记录，不能用查询词推定原意/);assert.match(absentIntent,/未填写，仍需回查原文核对/);
+console.log('Evaluation cases retain the complete user question and label rationale through editing, saved output and focused investigation.');
+
+const intentComparison=api.retrievalSuiteComparison({kind:'retrieval_suite',notice:'完整比较',cases:[{name:'同名样例',state:'matched',changed_conditions:['样例问题','标签依据'],before:{input:intentCase,runs:[]},after:{input:{...intentCase,question:'新的问题',label_reason:'新的依据'},runs:[]},return_comparison:[]}]},'goal',true);
+assert.match(intentComparison,/原问题末尾 &lt;img&gt;/);assert.match(intentComparison,/标签理由末尾 &lt;script&gt;/);assert.match(intentComparison,/新的问题/);assert.match(intentComparison,/新的依据/);

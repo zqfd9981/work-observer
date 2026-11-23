@@ -409,3 +409,5 @@
 .career-context-lab textarea{width:100%;box-sizing:border-box}.career-context-lab .form-grid>section{min-width:0}
 .career-context-result{padding:18px 0;border-top:1px solid var(--line)}.career-context-result article{margin:18px 0;padding:14px;background:var(--green-soft);border-radius:8px}
 .career-context-result p,.career-context-result blockquote{white-space:pre-wrap;overflow-wrap:anywhere}.career-context-origin{padding:12px;margin:12px 0;background:var(--paper);border:1px solid var(--line);border-radius:8px}
+
+.career-retrieval-case-intent{padding:12px;border-left:3px solid var(--green);margin:12px 0;background:var(--green-soft)}.career-retrieval-case-intent p{white-space:pre-wrap;overflow-wrap:anywhere}
