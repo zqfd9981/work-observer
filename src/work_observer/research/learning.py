@@ -10,7 +10,9 @@ from work_observer.research.investigation_memory import record_task_context, res
 from work_observer.retrieval.enhanced import validated_terms
 from work_observer.text_match import match_text
 
-CALCULATION_FIELDS = ("local_experiments", "cohort_experiments", "threshold_experiments")
+CALCULATION_FIELDS = (
+    "local_experiments", "cohort_experiments", "threshold_experiments", "context_experiments",
+)
 CALCULATION_NOTICE = (
     "来源讨论当时运行的完整本地计算输入与输出，不表示本轮已经重新执行。"
     "构造案例、参照标签与指定代价不等于业务事实；改变条件后须重新计算并核对原文。"

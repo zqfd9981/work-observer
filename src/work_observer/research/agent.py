@@ -18,6 +18,7 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
 from work_observer.research import requirements as qualification
 from work_observer.research.cohort_experiment import CohortProbeInput, run_cohort_experiment
+from work_observer.research.context_experiment import ContextProbeInput, run_context_experiment
 from work_observer.research.retry_experiment import RetryProbeInput, run_retry_experiment
 from work_observer.research.threshold_experiment import (
     ThresholdProbeInput,
@@ -293,6 +294,15 @@ LEARNING_TOOLS = [
         "不连接服务、不做并发或故障恢复测试，也不确认真实业务键。"
         "只返回本轮模拟观察，不创建练习、不改变资料或个人认识，不提供原文证据ID。",
         "parameters": RetryProbeInput.model_json_schema(),
+    },
+    {
+        "type": "function", "name": "run_context_experiment", "strict": True,
+        "description": "先写一条待检验的预期，再用少量两端上下文记录比较拼接和按编号合并。"
+        "同编号同内容副本折叠，冲突内容全部保留；不判断新旧、删除或真实同步协议。"
+        "最多4组、32条记录，编号与内容合计4000字。自行构造用synthetic，"
+        "只有用户明确提供记录时才用user_provided；不能从JD推定真实会话输入。"
+        "本机内存计算，不连接网络或数据库，不创建练习或原文证据ID，不改变用户记录。",
+        "parameters": ContextProbeInput.model_json_schema(),
     },
     tool(
         "search_research_history",
@@ -1690,6 +1700,10 @@ async def _research(
             "不得把模拟说成真实服务、并发测试、故障恢复、岗位权限或个人能力的验证。"
             "报告时把原文、运行前预期、本地观察和仍未知的条件分开；工具记录不是可引用原文。"
             "仍需读取当前原文，不能因跑了模拟就把调查标为已解决。"
+            "\n解释记忆存储与上下文合并时，可run_context_experiment运行构造快照对照。"
+            "先写预期，保留每条输入、端云来源、冲突内容和单端记录；"
+            "不把相同编号当作内容一致，不从一端缺少推定删除，也不选择哪个版本更新。"
+            "只说明这些输入在给定内存规则下的行为，不冒充端云网络、并发、恢复或权限验证。"
             "\n涉及产品或运营指标解释时，可用run_cohort_comparison检验具体计数下的判断。"
             "\n涉及筛选规则、误报漏报和处理量时，可用run_threshold_comparison比较给定阈值与代价。"
             "构造案例仅检验解释边界，不能当作招聘原文、真实业务样本或求职者匹配评分。"
@@ -2237,7 +2251,8 @@ async def _research(
                               "search_inquiries", "read_inquiry",
                               "search_research_history", "read_research_history",
                               "search_experiments", "read_experiments", "run_retry_experiment",
-                              "run_cohort_comparison", "run_threshold_comparison"}:
+                              "run_cohort_comparison", "run_threshold_comparison",
+                              "run_context_experiment"}:
                     if not learning_enabled:
                         raise ProbeError("RESEARCH_TOOL_DENIED")
                     learning = result.setdefault("career_learning_context", {})
@@ -2267,6 +2282,30 @@ async def _research(
                                 len(case.requests) for case in probe.cases
                             ))
                             learning.setdefault("local_experiments", []).append(data)
+                    elif name == "run_context_experiment":
+                        try:
+                            probe = ContextProbeInput.model_validate(arguments)
+                            observed = run_context_experiment(
+                                [case.model_dump() for case in probe.cases], probe.data_kind,
+                            )
+                            data = {
+                                "kind": "local_context_merge", "hypothesis": probe.hypothesis,
+                                **{key: value for key, value in observed.items()
+                                   if key not in {"artifact_text", "comparison_rows"}},
+                                "notice": "本轮构造或用户提供快照上的内存计算，不是原文证据；"
+                                "没有验证真实端云同步、删除传播或个人能力。",
+                            }
+                        except ValidationError as exc:
+                            data = {"error": "INVALID_CONTEXT_EXPERIMENT_INPUT",
+                                    "notice": "未运行或保存练习，请修正输入后在原预算内重试。",
+                                    "details": exc.errors(include_url=False, include_input=False,
+                                                          include_context=False)}
+                            entry["validation"] = data["error"]
+                        else:
+                            entry.update(case_count=len(probe.cases), record_count=sum(
+                                len(case.edge) + len(case.cloud) for case in probe.cases
+                            ))
+                            learning.setdefault("context_experiments", []).append(data)
                     elif name == "run_threshold_comparison":
                         try:
                             probe = ThresholdProbeInput.model_validate(arguments)

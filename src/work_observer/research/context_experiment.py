@@ -35,6 +35,19 @@ class ContextCasesInput(BaseModel):
         return self
 
 
+class ContextProbeInput(ContextCasesInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    data_kind: Literal["synthetic", "user_provided"]
+    hypothesis: str = Field(min_length=1, max_length=1500)
+
+    @model_validator(mode="after")
+    def short_probe(self):
+        if sum(len(row.key) + len(row.value) for case in self.cases
+               for row in [*case.edge, *case.cloud]) > 4000:
+            raise ValueError("研究内的本地示例请将编号和内容合计控制在4000字以内。")
+        return self
+
+
 CONDITIONS = (
     "每组独立计算，端侧在前、云侧在后。编号和内容按输入文字比较，不判断语义、新旧或权威。"
     "直接拼接保留每条输入；按编号合并仅折叠同编号同内容的副本，冲突内容全部保留待核对。"

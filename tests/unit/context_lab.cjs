@@ -4,7 +4,7 @@ const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,
-  'window.contextLabTest={interviewFocusPanel,chooseInterviewFocus,contextReplayDraft,contextTaskRun,contextRecords,contextLabValues,contextLabResult,contextLab,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});}};})();'),ctx);
+  'window.contextLabTest={contextProbeRecall,calculationRecords,sourceCalculationRecall,calculationInsightDraft,interviewFocusPanel,chooseInterviewFocus,contextReplayDraft,contextTaskRun,contextRecords,contextLabValues,contextLabResult,contextLab,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});}};})();'),ctx);
 const api=ctx.window.contextLabTest;
 api.setup({id:'goal',questions:[],requirements:[],results:[]});
 assert.equal(api.contextRecords('m1 | 内容中有 | 分隔符','端侧')[0].value,'内容中有 | 分隔符');
@@ -37,3 +37,10 @@ const notePracticeData={id:'context-note-goal',requirements:[],stories:[],result
 api.setup(notePracticeData);api.chooseInterviewFocus('insight:note');
 const notePractice=api.interviewFocusPanel(notePracticeData);
 assert.match(notePractice,/认识所据实验：原冲突练习/);assert.match(notePractice,/data-public-source="parent-log"/);assert.doesNotMatch(notePractice,/data-public-source="child-log"/);assert.match(notePractice,/末尾未知：时序仍未验证/);
+
+const probeResult={model_calls:3,status:'completed',claims:[],gaps:[],career_learning_context:{context_experiments:[oldRun]}};
+const probeRecall=api.contextProbeRecall(probeResult,'goal');
+assert.match(probeRecall,/本轮实际运行的上下文对照 · 1 次/);assert.match(probeRecall,/保存时的原预期/);assert.match(probeRecall,/内容里有 \| 分隔符/);
+const calculationRecord=api.calculationRecords(probeResult);assert.equal(calculationRecord.context_experiments.length,1);
+const historicalProbe=api.sourceCalculationRecall(calculationRecord,'goal',true);
+assert.match(historicalProbe,/原讨论 · 上下文合并/);assert.match(historicalProbe,/原讨论当时的本机计算/);assert.match(historicalProbe,/<details open><summary>核对每条输入/);assert.doesNotMatch(historicalProbe,/本轮实际运行的上下文对照/);

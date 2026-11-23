@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from work_observer.research.context_experiment import run_context_experiment
+from work_observer.research.context_experiment import ContextProbeInput, run_context_experiment
 
 
 def test_context_merge_preserves_conflicts_origins_and_one_sided_records():
@@ -40,3 +40,21 @@ def test_context_merge_preserves_conflicts_origins_and_one_sided_records():
 def test_invalid_or_unbounded_context_input_is_rejected(cases):
     with pytest.raises(ValidationError):
         run_context_experiment(cases)
+
+
+def test_agent_probe_requires_explicit_prediction_and_bounded_complete_input():
+    schema = ContextProbeInput.model_json_schema()
+    assert set(schema["required"]) == set(schema["properties"])
+    values = {"hypothesis": "先检查冲突", "data_kind": "synthetic", "cases": [
+        {"name": "样例", "edge": [{"key": "m", "value": "内容"}], "cloud": []},
+    ]}
+    assert ContextProbeInput.model_validate(values).hypothesis == "先检查冲突"
+    with pytest.raises(ValidationError):
+        ContextProbeInput.model_validate({**values, "save": True})
+    with pytest.raises(ValidationError):
+        ContextProbeInput.model_validate({**values, "hypothesis": "   "})
+    with pytest.raises(ValidationError):
+        ContextProbeInput.model_validate({**values, "cases": [{
+            "name": "过长", "edge": [{"key": str(i), "value": "文" * 500} for i in range(8)],
+            "cloud": [{"key": "cloud", "value": "超出总量"}],
+        }]})
