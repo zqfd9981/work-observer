@@ -1901,6 +1901,7 @@ class ProjectService:
                     "practice_experiment_then": deepcopy(old_learning.get("practice_experiment")),
                     "feedback_origin_then": deepcopy(old_learning.get("feedback_origin")),
                     "retrieval_review_then": deepcopy(old_learning.get("retrieval_review")),
+                    "retrieval_case_then": deepcopy(old_learning.get("retrieval_case")),
                     "claim_details_to_recheck": [
                         {key: claim.get(key) for key in (
                             "text", "category", "basis", "requirement",

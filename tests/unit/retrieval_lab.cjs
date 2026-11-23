@@ -4,7 +4,7 @@ const node=()=>({value:'',addEventListener(){},querySelector:node,querySelectorA
 const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,console,setTimeout,clearTimeout,Intl};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
-const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={insightRequirement,insightSource,requirementUnderstandingHistory,requirementPreparationRecords,requirementInterviewHistory,chooseInterviewFocus,interviewFocusParts,interviewFocusLabel,interviewSelection,interviewSourceFocus,interviewFocusPanel,requirementRecall,answerComparisonDraft,requirementSuiteDraft,retrievalSuiteReplayDraft,retrievalCaseInquiryDraft,retrievalCaseRecall,retrievalSuiteComparison,retrievalSuiteNext,retrievalSuiteCase,retrievalSuitePanel,retrievalSuiteResult,setSuite:suite=>{career.drafts.get(career.id).retrieval_suite=suite;},answerComparisonConditions,answerComparisonRecall,practiceAnswerSource,feedbackPracticeAnswer,practiceAnswerRecall,feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
+const source=fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,'window.retrievalLabTest={retrievalCaseInterviewDraft,interviewCaseSelection,interviewCaseOptions,setInterviewCase:chosen=>{career.drafts.get(career.id).interview_case=chosen;},insightRequirement,insightSource,requirementUnderstandingHistory,requirementPreparationRecords,requirementInterviewHistory,chooseInterviewFocus,interviewFocusParts,interviewFocusLabel,interviewSelection,interviewSourceFocus,interviewFocusPanel,requirementRecall,answerComparisonDraft,requirementSuiteDraft,retrievalSuiteReplayDraft,retrievalCaseInquiryDraft,retrievalCaseRecall,retrievalSuiteComparison,retrievalSuiteNext,retrievalSuiteCase,retrievalSuitePanel,retrievalSuiteResult,setSuite:suite=>{career.drafts.get(career.id).retrieval_suite=suite;},answerComparisonConditions,answerComparisonRecall,practiceAnswerSource,feedbackPracticeAnswer,practiceAnswerRecall,feedbackGapPlans,feedbackOrigin,answerExperimentSource,understandingUpdateCandidates,storyRetrievalSource,taskStoryDraft,retrievalNoteRuns,learningInputs,learningImpactRecords,retrievalNoteTask,retrievalNoteButton,retrievalNoteOrigin,experimentInsightDraft,retrievalReturnComparison,testNoteRoute:async id=>{let routed;captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>{routed=args;};await startRetrievalNote(id);return routed;},retrievalHasDraftChanges,retrievalReviewOrigin,retrievalReviewRecall,testFeedbackRoute:async id=>{captureDrafts=()=>{};loadRetrievalRecord=async(...args)=>args;return await startRetrievalLab(id);},retrievalLab,retrievalLabDraft,retrievalLabValues,retrievalLabResult,retrievalReplayDraft,retrievalReplaySources,retrievalReplayPanel,retrievalChangeNote,retrievalMissingChecks,retrievalMatchLabel,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});},setLab:lab=>{career.drafts.get(career.id).retrieval_lab=lab;}};})();');
 vm.runInContext(source,ctx);
 const api=ctx.window.retrievalLabTest;
 const data={id:'goal',jobs:[{id:'job',title:'<script>合成岗位</script>',company:'合成公司'}],materials:[{id:'doc',title:'合成工作资料'}],questions:[]};
@@ -171,7 +171,7 @@ const focusedCaseDraft=api.retrievalCaseInquiryDraft({id:'case-suite',question_i
 assert.equal(focusedCaseDraft.retrieval_case_name,'带冒号:原文漏回 <img>');assert.equal(focusedCaseDraft.task_id,'case-suite');assert.equal(focusedCaseDraft.question_id,'source-question');assert.deepEqual(Array.from(focusedCaseDraft.selected_job_ids),['job']);assert.equal(focusedCaseDraft.source_step_id,'');assert.equal(focusedCaseDraft.material_ids.length,0);assert.match(focusedCaseDraft.question,/不把更改标签当作修复/);
 assert.throws(()=>api.retrievalCaseInquiryDraft({id:'case-suite'},{record_kind:'retrieval_suite',input:{cases:[]}},'已移除',data),/没有所选样例/);
 const focusedCaseRecall=api.retrievalCaseRecall({career_learning_context:{retrieval_case:{name:'只核对 <img>',notice:'旧运行线索',runs:[run]}}});
-assert.match(focusedCaseRecall,/本轮明确追问/);assert.match(focusedCaseRecall,/不是|不表示本轮重新执行/);assert.doesNotMatch(focusedCaseRecall,/<img>/);
+assert.match(focusedCaseRecall,/本轮明确选中/);assert.match(focusedCaseRecall,/不是|不表示本轮重新执行/);assert.doesNotMatch(focusedCaseRecall,/<img>/);
 const actionableComparison=api.retrievalSuiteComparison(suiteComparison,'new-goal',false,'current-suite');
 assert.match(actionableComparison,/data-retrieval-case-inquiry="current-suite:&lt;img&gt;正例"/);assert.doesNotMatch(actionableComparison,/data-retrieval-case-inquiry="parent-suite:移除样例"/);
 
@@ -291,7 +291,33 @@ const diagnosisRecall=api.retrievalCaseRecall(diagnosisResult,diagnosisData.id,f
 assert.match(diagnosisRecall,/data-retrieval-case-rerun="diagnosis"/);assert.doesNotMatch(api.retrievalCaseRecall(diagnosisResult,diagnosisData.id,true,diagnosisData),/data-retrieval-case-rerun/);
 api.setup(diagnosisData);api.setSuite(diagnosisDraft);
 const diagnosisPanel=api.retrievalSuitePanel(diagnosisData);
-assert.match(diagnosisPanel,/这次继续验证承接哪轮讨论/);assert.match(diagnosisPanel,/原讨论当时追问的评估样例/);assert.match(diagnosisPanel,/仍缺新的观察 &lt;img&gt;/);
+assert.match(diagnosisPanel,/这次继续验证承接哪轮讨论/);assert.match(diagnosisPanel,/原讨论当时选中的评估样例/);assert.match(diagnosisPanel,/仍缺新的观察 &lt;img&gt;/);
 const reloadedDiagnosis=api.retrievalSuiteReplayDraft({...diagnosisRecord,previous:{...diagnosisRecord.previous,review_step_id:'diagnosis',review_origin:{step_id:'diagnosis',source_case:diagnosedCase}}});
 assert.equal(reloadedDiagnosis.review_step_id,'diagnosis');assert.equal(reloadedDiagnosis.review_origin.source_case.input.question,fullCaseQuestion);
 console.log('A completed case diagnosis reopens its exact case for editing, retains the original discussion and inquiry, and never rewrites saved inputs.');
+
+const interviewCase={...intentCase,name:'评估:标签 / 路径 <img>'};
+const interviewRecord={...diagnosisRecord,input:{...diagnosisRecord.input,cases:[interviewCase,{...intentCase,name:'另一条'}]}};
+const caseTask={id:'case-parent',title:'实际保存的评估',created_at:'2026-11-20T08:00:00Z',artifact_document_id:'case-log',state:'done',outcome:'有限样例观察'};
+const chosenCase=api.retrievalCaseInterviewDraft(caseTask,interviewRecord,interviewCase.name);
+assert.equal(chosenCase.focus,'case:case-parent:评估:标签 / 路径 <img>');assert.equal(chosenCase.input.question,fullCaseQuestion);
+chosenCase.input.candidate.terms.push('独立修改');assert.equal(interviewRecord.input.cases[0].candidate.terms.includes('独立修改'),false);
+const caseSource={step_id:'case-questions',kind:'interview',state:'completed',current:true,task_id:'case-parent',retrieval_case_name:interviewCase.name,result:{status:'completed',model_calls:3,gaps:['如何核对实际观察？'],career_learning_context:{retrieval_case:{name:interviewCase.name,input:interviewCase,runs:[run],notice:'原样例'}}}};
+const otherCaseSource={...caseSource,step_id:'other-case-questions',retrieval_case_name:'另一条',result:{...caseSource.result,career_learning_context:{retrieval_case:{name:'另一条',input:{...interviewCase,name:'另一条'},runs:[run],notice:'另一条'}}}};
+const caseData={id:'case-goal',tasks:[caseTask],stories:[],insights:[],requirements:[],questions:[],results:[otherCaseSource,caseSource]};
+api.setup(caseData);api.chooseInterviewFocus(chosenCase.focus);
+assert.equal(api.interviewSelection(caseData).selected.step_id,'case-questions');assert.equal(api.interviewSelection(caseData).sources.length,1);
+assert.equal(api.interviewSourceFocus(caseSource),chosenCase.focus);assert.equal(api.interviewCaseSelection(caseData).name,interviewCase.name);
+const casePanel=api.interviewFocusPanel(caseData);
+assert.match(casePanel,/本次明确选中的评估样例：评估:标签 \/ 路径 &lt;img&gt;/);assert.match(casePanel,/原问题末尾 &lt;img&gt;/);assert.match(casePanel,/标签理由末尾 &lt;script&gt;/);
+assert.match(casePanel,/实际保存的评估/);assert.doesNotMatch(casePanel,/<img>|<script>/);
+const sameCaseAnswer={step_id:'case-answer-a',kind:'answer',state:'completed',source_step_id:caseSource.step_id,task_id:caseTask.id,question_index:0,retrieval_case_name:interviewCase.name,interview_question:'如何核对实际观察？',result:{status:'completed'}};
+const secondCaseAnswer={...sameCaseAnswer,step_id:'case-answer-b'};
+const wrongCaseAnswer={...sameCaseAnswer,step_id:'wrong-case-answer',retrieval_case_name:'另一条'};
+assert.throws(()=>api.answerComparisonDraft([sameCaseAnswer,wrongCaseAnswer]),/同一道题/);
+assert.equal(api.answerComparisonDraft([sameCaseAnswer,secondCaseAnswer]).comparison_step_ids.length,2);
+const caseConditions=api.answerComparisonConditions({retrieval_case_then:{name:interviewCase.name,input:interviewCase,runs:[run],notice:'保存时的样例'}},'case-goal',true);
+assert.match(caseConditions,/原问题末尾 &lt;img&gt;/);assert.match(caseConditions,/标签理由末尾 &lt;script&gt;/);
+const caseResult=api.retrievalSuiteResult({...result,input:{cases:[interviewCase]},cases:[{name:interviewCase.name,run_indices:[0]}],totals:[]},caseData,'case-parent');
+assert.match(caseResult,/data-retrieval-case-interview="case-parent:评估:标签 \/ 路径 &lt;img&gt;"/);
+console.log('A named evaluation case is an independent interview focus, including colon-containing names, complete label rationale and separate answer comparisons.');

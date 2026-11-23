@@ -2166,8 +2166,8 @@ class CareerService:
             raise ValueError("请从一次完整回答的反馈选择待验证的问题，再设计练习。")
         if practice_task_id and kind != "answer":
             raise ValueError("请在重答原题时带入这项练习观察。")
-        if retrieval_case_name and kind != "ask":
-            raise ValueError("请从已保存评估集的具体样例准备追问。")
+        if retrieval_case_name and kind not in {"ask", "interview"}:
+            raise ValueError("请从已保存评估集的具体样例准备追问或面试。")
         material_focus_supplied = (
             material_id is not None or material_ids is not None or retrieval_case_name is not None
         )
@@ -2419,6 +2419,10 @@ class CareerService:
                     interview_task_origin = deepcopy(previous_assessment.get("interview_origin"))
                     original_step = next(row for row in project["steps"]
                                          if row["id"] == previous_assessment["step_id"])
+                    if original_step.get("career_retrieval_case"):
+                        retrieval_case = deepcopy(original_step["career_retrieval_case"])
+                        retrieval_case_name = retrieval_case["name"]
+                        retrieval_review = deepcopy(original_step.get("career_retrieval_review"))
                     if not selected_requirement and continued_requirement is None:
                         continued_requirement = deepcopy(original_step.get("career_requirement"))
                     if continued_requirement and not previous_assessment.get("task_id") and not (
@@ -2539,6 +2543,7 @@ class CareerService:
                     == bool(pair[0].get("understanding_check"))
                     and (row.get("requirement_key") or "")
                     == (pair[0].get("requirement_key") or "")
+                    and row.get("retrieval_case_name") == pair[0].get("retrieval_case_name")
                     and all(row.get(key) == pair[0].get(key) for key in answer_focus)
                     for row in pair
                 )
@@ -2556,6 +2561,12 @@ class CareerService:
                     requirement_source = next(row for row in project["steps"]
                                               if row["id"] == pair[0]["step_id"])
                     continued_requirement = deepcopy(requirement_source.get("career_requirement"))
+                    if requirement_source.get("career_retrieval_case"):
+                        retrieval_case = deepcopy(requirement_source["career_retrieval_case"])
+                        retrieval_case_name = retrieval_case["name"]
+                        retrieval_review = deepcopy(
+                            requirement_source.get("career_retrieval_review"),
+                        )
                     if inherit_focus or continued_requirement:
                         pair_steps = [next(row for row in project["steps"]
                                            if row["id"] == answer["step_id"]) for answer in pair]
@@ -3302,7 +3313,7 @@ class CareerService:
                 if retrieval_review is None and local_task and is_retrieval_task(local_task):
                     retrieval_review = review_context(self.repository, project, local_task)
                 if retrieval_review is not None:
-                    if retrieval_review.get("input", {}).get("cases"):
+                    if retrieval_review.get("input", {}).get("cases") and not retrieval_case_name:
                         question += (
                             "本次是小样本检索评估集，每条样例各有原表达、改写表达和使用者标签。"
                             "逐条核对命中、漏回和额外返回，尤其保留不应命中样例上的额外来源；"
@@ -3323,9 +3334,10 @@ class CareerService:
                     if retrieval_case_name:
                         from work_observer.research.retrieval_suite import select_case
 
-                        retrieval_case = select_case(retrieval_review, retrieval_case_name)
+                        if retrieval_case is None:
+                            retrieval_case = select_case(retrieval_review, retrieval_case_name)
                         question += (
-                            "本轮只围绕selected_retrieval_case这条明确选中的样例追问。"
+                            "本轮只围绕selected_retrieval_case这条明确选中的样例提问、解释与反馈。"
                             "读取它的两组查询、使用者预期、实际命中与失败定位，再核对原文；"
                             "样例question与label_reason保留使用者的原问题和标签理由，"
                             "它们不是独立标注或招聘事实；未填写不能自行补造原意。"
@@ -3333,6 +3345,13 @@ class CareerService:
                             "按用户本轮问题给出有引用的有限解释及最有价值的下一项证据，"
                             "不重复整组评估，也不以旧记录证明已经修复或学会。"
                         )
+                        if kind == "interview":
+                            question += (
+                                "在gaps中给出最多三道完整面试问题，使用问号。"
+                                "围绕这条样例的原问题、标签理由、实际返回与条件变化，"
+                                "让用户解释失败原因、区分尚不能确定的解释，并说明下一步如何验证。"
+                                "不要先给出示范作答；本机词面练习不能写成真实业务或语义评测经验。"
+                            )
                     if inherit_focus or retrieval_case_name:
                         explicit_scope = selected_job_ids if selected_job_ids is not None else (
                             assessment_job_ids
