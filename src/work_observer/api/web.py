@@ -250,6 +250,7 @@ def create_app(
             "knowledge.html",
             "quality.html",
             "data-quality.html",
+            "industry.html",
             "updates.html",
             "workflows.html",
             "trials.html",
@@ -268,6 +269,7 @@ def create_app(
             "knowledge.js",
             "quality.js",
             "data-quality.js",
+            "industry.js",
             "updates.js",
             "workflows.js",
             "trials.js",
@@ -868,6 +870,10 @@ def create_app(
             repository=lambda: repository, response=response, read_json=read_json, busy=busy
         )
     )
+    from work_observer.api.industry import industry_routes
+
+    routes.extend(industry_routes(repository=lambda: repository, store=lambda: store,
+                                  reports_dir=reports_dir, response=response, read_json=read_json))
     routes.extend(
         update_routes(
             repository=lambda: repository,

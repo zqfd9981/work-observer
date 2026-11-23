@@ -17,7 +17,7 @@ const claimBasisLabels = {direct:"原文明示",synthesis:"研究归纳",inferen
 const claimBasisLabel = claim => claimBasisLabels[claim?.basis] || "性质未标注";
 const categoryLabels = {business:"业务背景", deliverable:"交付物", task:"任务", responsibility:"责任", ability:"能力", tool:"工具"};
 const reasonLabels = {VISION_NO_READABLE_TEXT:"未取得可核对的正文，未写入岗位。可对照原图人工填写。",VISION_MODEL_HTTP_ERROR:"当前模型服务未能处理图片，未写入岗位。",INVALID_VISION_DRAFT:"视觉响应不符合草稿格式，未写入岗位。",MODEL_CONFIG_MISSING:"尚未配置模型，可改用仅整理证据模式。",MODEL_AUTH_REQUIRED:"模型服务认证未通过。",MODEL_FORBIDDEN:"当前模型服务权限不足。",MODEL_RATE_LIMIT_OR_QUOTA:"模型服务限流或额度不足，可稍后再试。",MODEL_HTTP_ERROR:"模型服务暂时没有正常响应。",TIMEOUT:"已达到时间上限，研究停止。",model_call_limit:"已达到调用次数上限，研究停止。",no_available_details:"范围内没有可研究的完整正文。"};
-const titles = {career:"求职成长",jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "profile-quality":"完整画像核对", "research-benchmarks":"研究方法核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
+const titles = {industry:"行业观察",career:"求职成长",jobs:"岗位资料", companies:"公司档案", research:"研究工作台", projects:"持续研究项目", workflows:"日常研究流程", trials:"受限检索试用", knowledge:"领域与证据", quality:"研究质量核对", "profile-quality":"完整画像核对", "research-benchmarks":"研究方法核对", "data-quality":"资料核对",updates:"领域变化观察", reports:"已存研究", memory:"知识与偏好", matches:"个人匹配", retrieval:"检索与评测", operations:"观察与更新"};
 let toastTimer, pollTimer;
 const conversation = {id:null, timer:null, reports:new Map(), drafts:new Map(), sourceScopes:new Map(), notes:[], knowledge:[], notesFor:null, renderedId:null};
 Object.assign(reasonLabels,{
@@ -3173,7 +3173,7 @@ document.addEventListener("click",event=>{
 
 async function route() {
   updateDemoGuide();
-  const page = location.hash.slice(1).split("/")[0] || "career";
+  const page = location.hash.slice(1).split("/")[0] || (demoMode?"career":"industry");
   state.page = titles[page] ? page : "research";
   $$(".page").forEach(element=>{element.hidden = element.id !== "page-" + state.page;});
   $$("nav [data-page]").forEach(link=>{
@@ -3184,6 +3184,7 @@ async function route() {
   $("#breadcrumb").textContent = titles[state.page];
   document.title = `${titles[state.page]} · Work Observer`;
   if (state.page === "jobs") await loadJobs();
+  if (state.page === "industry") await window.loadIndustry?.();
   if (state.page === "career") await window.loadCareer?.();
   if (state.page === "companies") await loadCompanies();
   if (state.page === "research") {

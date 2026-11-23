@@ -31,6 +31,7 @@ def openapi(routes):
     )
     from work_observer.api.data_quality import SCHEMA_MODELS as DATA_QUALITY_MODELS
     from work_observer.api.imports import CSVCommitInput, CSVPreviewInput, ImageExtractInput
+    from work_observer.api.industry import IndustryInquiryInput
     from work_observer.api.knowledge import (
         DomainCollectionInput,
         DomainInput,
@@ -85,9 +86,12 @@ def openapi(routes):
     from work_observer.api.web import JobQuery, MemoryInput, MemoryRevision, ResearchInput
     from work_observer.api.workflows import WorkflowInput, WorkflowRunInput, WorkflowScopeInput
     from work_observer.connectors.manual import ManualJD
+    from work_observer.reports.industry import IndustryObservationInput
     from work_observer.research.run_history import HistoryQuery
 
     models = {
+        ("/api/industry", "POST"): IndustryObservationInput,
+        ("/api/industry/{id}/inquiries", "POST"): IndustryInquiryInput,
         ("/api/career", "POST"): CareerInput,
         ("/api/career/{id}", "PATCH"): CareerGoalInput,
         ("/api/career/{id}/stories", "POST"): StoryInput,
