@@ -4100,10 +4100,37 @@ class CareerService:
 
     def context_experiment(self, identity, *, cases, data_kind="synthetic", question_id=None,
                            requirement_key="", hypothesis="", previous_task_id=None,
-                           design_change="", save=False):
+                           design_change="", source_step_id=None, source_probe_index=None,
+                           save=False):
         from work_observer.research.context_experiment import run_context_experiment
 
         project = self._project(identity)
+        if ((source_step_id is None) != (source_probe_index is None)
+                or previous_task_id and source_step_id):
+            raise ValueError("请选择一组原讨论中的计算，或从已有练习继续，不混用两个起点。")
+        source, source_target, probe_origin = None, None, None
+        if source_step_id:
+            source = next((row for row in self.get(identity)["results"]
+                           if row["step_id"] == source_step_id
+                           and row["state"] != "abandoned"
+                           and row.get("result")), None)
+            probes = ((source or {}).get("result") or {}).get(
+                "career_learning_context", {},
+            ).get("context_experiments", [])
+            if not source or source_probe_index >= len(probes):
+                raise ValueError("原讨论中没有这组可用的上下文计算，请重新选择来源。")
+            if question_id and question_id != source.get("question_id"):
+                raise ValueError("请保留原计算对应的调查问题，另一问题可另开练习。")
+            question_id = source.get("question_id")
+            source_step = next(row for row in project["steps"] if row["id"] == source_step_id)
+            source_target = deepcopy(source_step.get("career_requirement"))
+            probe_origin = {
+                "step_id": source_step_id, "probe_index": source_probe_index,
+                "question_id": question_id, "hypothesis": probes[source_probe_index]["hypothesis"],
+                "recorded_at": source["created_at"],
+                "research_status": source["result"]["status"],
+                "notice": "原讨论当时已经运行的本地示例，本次计算另行记录；不是招聘原文证据。",
+            }
         previous = next((row for row in project["career"]["tasks"]
                          if row["id"] == previous_task_id), None)
         if previous_task_id and (not previous or previous.get("local_experiment") != "context_merge"
@@ -4113,6 +4140,7 @@ class CareerService:
             if question_id and question_id != previous.get("question_id"):
                 raise ValueError("继续计算时请保留原调查关联，其他问题可另开练习。")
             question_id = previous.get("question_id")
+            probe_origin = deepcopy(previous.get("context_probe_origin"))
         inquiry = next((row for row in project["career"].get("questions", [])
                         if row["id"] == question_id), None)
         if question_id and not inquiry:
@@ -4121,6 +4149,10 @@ class CareerService:
             target = deepcopy(previous.get("target_requirement"))
             if requirement_key and requirement_key != (target or {}).get("key"):
                 raise ValueError("继续计算时请保留原岗位工作，另一项要求可另开练习。")
+        elif source:
+            target = source_target
+            if requirement_key and requirement_key != (target or {}).get("key"):
+                raise ValueError("请保留原讨论选定的岗位工作，另一项要求可另开练习。")
         else:
             target = (self._experiment_requirement(identity, requirement_key) if requirement_key
                       else deepcopy((inquiry or {}).get("target_requirement")))
@@ -4132,6 +4164,18 @@ class CareerService:
         result["artifact_text"] += (
             "\n\n运行前的预期（用户记录，不是计算结果）：\n" + (hypothesis or "未填写")
         )
+        if probe_origin:
+            result["context_probe_origin"] = probe_origin
+            result["artifact_text"] += (
+                "\n\n原讨论中的计算起点（原预期不是本次结果）：\n"
+                + json.dumps(probe_origin, ensure_ascii=False, indent=2)
+            )
+        if source:
+            result["design_change"] = design_change
+            result["artifact_text"] += (
+                "\n这次条件改动（用户说明）："
+                + (design_change or "未单独说明，不能推定输入相同或只改变了一项。")
+            )
         if previous:
             result["previous_task_id"] = previous_task_id
             result["design_change"] = design_change
@@ -4161,6 +4205,7 @@ class CareerService:
             "design_change": design_change,
             "context_run": deepcopy({key: value for key, value in result.items()
                                      if key not in {"artifact_text", "target_requirement"}}),
+            **({"context_probe_origin": probe_origin} if probe_origin else {}),
             **({"target_requirement": target} if target else {}),
         })
         task_id = saved["tasks"][-1]["id"]

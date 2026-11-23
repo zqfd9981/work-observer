@@ -2,6 +2,7 @@
 
 import json
 import re
+from copy import deepcopy
 
 import pytest
 from starlette.testclient import TestClient
@@ -142,7 +143,73 @@ def test_natural_question_runs_context_probe_and_keeps_history_distinct_from_sou
             assert any(item["step_id"] == row["step_id"] for item in found["research"])
         finally:
             store.close()
+        # An actual probe keeps its original JD work even after a newer role analysis.
+        model.selected_job = jobs[1]
+        assert run({"kind": "role"})["result"]["status"] == "completed"
+        latest = client.get(base).json()["requirements"][0]
+        assert latest["key"] != inquiry["target_requirement"]["key"]
+        model.selected_job = jobs[0]
+        values = {
+            "source_step_id": row["step_id"], "source_probe_index": 0,
+            "hypothesis": "重新核对原来的冲突输入。", "data_kind": "synthetic",
+            "cases": [{"name": probe["name"], **deepcopy(probe["input"])}
+                      for probe in probes[0]["cases"]],
+        }
+        calls = len(model.contexts)
+        preview = post(base + "/experiments/context", values)
+        assert client.get(base).json()["tasks"] == []
+        saved = post(base + "/experiments/context", {**values, "save": True})
+        assert saved["experiment"] == preview["experiment"]
+        saved_task = saved["career"]["tasks"][-1]
+        assert saved_task["target_requirement"] == inquiry["target_requirement"]
+        assert saved_task["question_id"] == inquiry["id"]
+        origin = saved_task["context_probe_origin"]
+        assert origin["step_id"] == row["step_id"] and origin["probe_index"] == 0
+        assert origin["hypothesis"] == PREDICTION and origin["research_status"] == "completed"
+        assert saved_task["context_run"]["context_probe_origin"] == origin
+        assert saved_task["context_run"]["cases"] == probes[0]["cases"]
+        artifact = client.get(
+            "/api/public-documents/" + saved_task["artifact_document_id"],
+        ).json()["text"]
+        assert PREDICTION in artifact and row["step_id"] in artifact
+        changed = deepcopy(values)
+        changed.pop("source_step_id")
+        changed.pop("source_probe_index")
+        changed.update(previous_task_id=saved_task["id"], design_change="只改变冲突组云侧的内容。")
+        changed["cases"][1]["cloud"][0]["value"] = "端侧内容"
+        child = post(base + "/experiments/context", {**changed, "save": True})
+        child_task = child["career"]["tasks"][-1]
+        assert child_task["context_probe_origin"] == origin
+        assert child_task["target_requirement"] == inquiry["target_requirement"]
+        assert child_task["question_id"] == inquiry["id"]
+        assert child_task["context_run"]["cases"][1]["conflicting_keys"] == []
+        assert len(model.contexts) == calls
+        for overrides in (
+            {"source_probe_index": None}, {"source_step_id": None},
+            {"source_probe_index": True}, {"source_probe_index": 7},
+            {"source_step_id": "f" * 32}, {"previous_task_id": saved_task["id"]},
+            {"question_id": "f" * 32}, {"requirement_key": latest["key"]},
+        ):
+            response = client.post(base + "/experiments/context", headers=auth, json={
+                **values, **overrides, "save": True,
+            })
+            assert response.status_code == 422, response.text
+        final = client.get(base).json()
+        assert len(final["tasks"]) == 2
+        original_row = next(item for item in final["results"] if item["step_id"] == row["step_id"])
+        assert original_row["result"]["career_learning_context"]["context_experiments"] == probes
         if not bad_first:
             model.cite_probe = True
             rejected = run(asked)
             assert rejected["result"]["status"] != "completed"
+            failed_probe = rejected["result"]["career_learning_context"]["context_experiments"]
+            assert len(failed_probe) == 1
+            reused = post(base + "/experiments/context", {
+                **values, "source_step_id": rejected["step_id"], "save": True,
+            })
+            assert reused["experiment"]["context_probe_origin"]["research_status"] == (
+                rejected["result"]["status"]
+            )
+            assert reused["career"]["tasks"][-1]["target_requirement"] == (
+                inquiry["target_requirement"]
+            )
