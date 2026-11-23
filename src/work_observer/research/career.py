@@ -2355,12 +2355,21 @@ class CareerService:
                 )
                 if not insight:
                     raise ValueError("未找到要核对的认识，请重新选择。")
+                note_context_task = next((row for row in project["career"]["tasks"]
+                                          if row["id"] == insight.get("task_id")
+                                          and row.get("local_experiment") == "context_merge"), None)
+                note_requirement_focus = (
+                    not any((question_id, insight.get("task_id"), insight.get("question_id")))
+                    or note_context_task and question_id in {
+                        None, insight.get("question_id"), note_context_task.get("question_id"),
+                    }
+                )
                 if (inherit_focus and kind in {"ask", "teachback", "challenge", "plan"}
                         and not selected_requirement and continued_requirement is None
                         and not selected_job_ids
-                        and not any((question_id, task_id, story_id, source_step_id,
-                                     insight.get("task_id"), insight.get("question_id"),
-                                     counter_insight_id, insight_ids, comparison_step_ids))):
+                        and note_requirement_focus
+                        and not any((task_id, story_id, source_step_id, counter_insight_id,
+                                     insight_ids, comparison_step_ids))):
                     continued_requirement = deepcopy(
                         learning_record(insight, project, self.store).get("source_requirement"),
                     )
@@ -3512,15 +3521,18 @@ class CareerService:
                     previous_result = previous_run.get("result") or {}
                     preferred.extend(row.get("public_document_id")
                                      for row in previous_result.get("evidence", []))
+            context_note = next((row for row in project["career"].get("insights", [])
+                                 if row["id"] == insight_id), {}) if inherit_focus else {}
             context_task = next((row for row in project["career"]["tasks"]
-                                 if row["id"] == task_id
+                                 if row["id"] == (task_id or context_note.get("task_id"))
                                  and row.get("local_experiment") == "context_merge"), None)
             if context_task:
-                requirement_documents = list(dict.fromkeys(
-                    key for key in [context_task.get("artifact_document_id"),
-                                    *material_ids, material_id]
-                    if key in project["public_document_ids"]
-                ))
+                context_documents = [key for key in [context_task.get("artifact_document_id"),
+                                                     *material_ids, material_id]
+                                     if key in project["public_document_ids"]]
+                requirement_documents = list(dict.fromkeys([
+                    *(requirement_documents or []), *context_documents,
+                ]))
             documents, omitted = research_documents(
                 project, kind, preferred, repository=self.repository,
                 query="\n".join(value for value in topic if value) or project["goal"],

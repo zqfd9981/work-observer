@@ -4,7 +4,7 @@ const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/app.js','utf8'),ctx);
 vm.runInContext(fs.readFileSync('src/work_observer/api/assets/career.js','utf8').replace(/\}\)\(\);\s*$/,
-  'window.contextLabTest={contextReplayDraft,contextTaskRun,contextRecords,contextLabValues,contextLabResult,contextLab,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});}};})();'),ctx);
+  'window.contextLabTest={interviewFocusPanel,chooseInterviewFocus,contextReplayDraft,contextTaskRun,contextRecords,contextLabValues,contextLabResult,contextLab,setup:data=>{career.id=data.id;career.data=data;career.drafts.set(data.id,{});}};})();'),ctx);
 const api=ctx.window.contextLabTest;
 api.setup({id:'goal',questions:[],requirements:[],results:[]});
 assert.equal(api.contextRecords('m1 | 内容中有 | 分隔符','端侧')[0].value,'内容中有 | 分隔符');
@@ -32,3 +32,8 @@ const savedView=api.contextTaskRun(savedTask,{id:'goal'});
 assert.match(savedView,/保存时的本机计算/);assert.match(savedView,/data-context-load="parent"/);assert.doesNotMatch(savedView,/后来编辑的预期/);
 const multiline=JSON.parse(JSON.stringify(savedTask));multiline.context_run.cases[0].input.edge[0].value='第一行\n第二行';
 assert.throws(()=>api.contextReplayDraft(multiline),/不能自动改写/);
+
+const notePracticeData={id:'context-note-goal',requirements:[],stories:[],results:[],tasks:[{...savedTask,title:'原冲突练习',artifact_document_id:'parent-log'},{...savedTask,id:'child',title:'后来改条件的练习',artifact_document_id:'child-log'}],insights:[{id:'note',task_id:'parent',current_view:'冲突还不能自动决定哪份更新。',observation:'原输入保留了不同内容。',open_question:'末尾未知：时序仍未验证。',use_for_research:false}]};
+api.setup(notePracticeData);api.chooseInterviewFocus('insight:note');
+const notePractice=api.interviewFocusPanel(notePracticeData);
+assert.match(notePractice,/认识所据实验：原冲突练习/);assert.match(notePractice,/data-public-source="parent-log"/);assert.doesNotMatch(notePractice,/data-public-source="child-log"/);assert.match(notePractice,/末尾未知：时序仍未验证/);
