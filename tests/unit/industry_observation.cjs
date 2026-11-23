@@ -6,6 +6,11 @@ const ctx={window:{},document:{addEventListener:(key,handler)=>handlers[key]=han
 vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
 const report={id:'a'.repeat(32),title:'观察<script>',question:'工作如何分工？',summary:'首轮概述',origin_label:'辅助研究',created_at:'2026-11-23',sample:{jobs:2,readable_details:1,missing_details:1,cited_jobs:1,notice:'非市场占比',observed_from:'2026-11-17',observed_to:'2026-11-18'},sources:[{job_id:'a',title:'岗位甲',source:'boss',transport:'mcp',availability:'verified',document_id:'doc',observed_at:'2026-11-17'},{job_id:'b',title:'岗位乙',source:'boss',availability:'missing_detail'}],findings:[{title:'工作分工',facet:'work',basis:'synthesis',interpretation:'跨资料归纳',boundary:'样本有限',evidence:[{job_id:'a',quote:'业务接口<script>原文',start:0,end:15,role:'职责'}]},{title:'其他门槛',facet:'threshold',basis:'synthesis',interpretation:'另一项独立发现',boundary:'需要核对',evidence:[{job_id:'a',quote:'其他门槛的完整原文',start:16,end:30,role:'要求'}]}],unknowns:['缺正文不能推断'],next_questions:['验收标准？']};
 ctx.input=report;
+const start=vm.runInContext('industryReportView(input)',ctx);
+assert.ok(start.includes('查看工作与能力')&&start.includes('实际工作'));
+assert.ok(!start.includes('<form')&&!start.includes('观察动态'));
+assert.ok(start.includes('#industry/'+report.id)&&start.includes('无需配置'));
+ctx.location.hash='#industry/'+report.id;
 const overview=vm.runInContext('industryReportView(input)',ctx);
 assert.ok(overview.includes('观察&lt;script&gt;')&&!overview.includes('<script>'));
 assert.ok(overview.includes('#industry/'+report.id+'/findings/0')&&overview.includes('其他门槛'));
