@@ -3863,6 +3863,7 @@ class CareerService:
             "comparison_rows": record["comparison_rows"],
             "question_id": task.get("question_id"), "source_step_id": task.get("source_step_id"),
             "review_step_id": task.get("retrieval_review_step_id"),
+            **({"review_origin": record["review_origin"]} if record.get("review_origin") else {}),
             "note_origin": task.get("retrieval_note_origin"),
             **({"target_requirement": task["target_requirement"]}
                if task.get("target_requirement") else {}),
@@ -4014,7 +4015,7 @@ class CareerService:
 
     def retrieval_suite(self, identity, *, question_id=None, source_step_id=None,
                         previous_task_id=None, source_insight_id=None, hypothesis="",
-                        requirement_key="", save=False, **inputs):
+                        requirement_key="", review_step_id=None, save=False, **inputs):
         from work_observer.research.retrieval_experiment import record_text
         from work_observer.research.retrieval_suite import compare_suites, run_retrieval_suite
 
@@ -4041,6 +4042,25 @@ class CareerService:
             identity, requirement_key, previous, source_step_id,
         )
         note_origin = self._retrieval_note_origin(identity, project, previous, source_insight_id)
+        review_origin = None
+        if review_step_id:
+            review = next((row for row in self.get(identity)["results"]
+                           if row["step_id"] == review_step_id
+                           and (row.get("result") or {}).get("status") == "completed"
+                           and row["state"] != "abandoned"), None)
+            learning = ((review or {}).get("result") or {}).get("career_learning_context", {})
+            recalled = learning.get("retrieval_review") or {}
+            if (not previous or not recalled.get("available")
+                    or recalled.get("task_id") != previous_task_id
+                    and previous.get("retrieval_review_step_id") != review_step_id):
+                raise ValueError("请从已回查这组评估样例的完整讨论继续，保留原评估与调查关联。")
+            review_origin = {
+                "step_id": review_step_id, "kind": review["kind"],
+                "question_id": review.get("question_id"), "insight_id": review.get("insight_id"),
+                "answer_document_id": review.get("answer_document_id"),
+                **({"source_case": deepcopy(learning["retrieval_case"])}
+                   if learning.get("retrieval_case") else {}),
+            }
         if question_id and not any(row["id"] == question_id
                                    for row in project["career"].get("questions", [])):
             raise ValueError("请选择当前目标中的调查问题，或取消关联。")
@@ -4055,6 +4075,8 @@ class CareerService:
             result["target_requirement"] = target_requirement
         if note_origin:
             result["note_origin"] = note_origin
+        if review_origin:
+            result["review_origin"] = review_origin
         change_note = ""
         if previous:
             comparison = compare_suites(record, result)
@@ -4085,6 +4107,7 @@ class CareerService:
             "local_experiment": "retrieval_suite",
             **({"target_requirement": target_requirement} if target_requirement else {}),
             **({"retrieval_note_origin": note_origin} if note_origin else {}),
+            **({"retrieval_review_step_id": review_step_id} if review_origin else {}),
             "design_change": change_note,
             **({"retrieval_suite_comparison": result["previous_comparison"]} if previous else {}),
             **({"source_step_id": source_step_id}

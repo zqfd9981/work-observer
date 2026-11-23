@@ -25,6 +25,8 @@ class SuiteDiscussionModel(ModelClient):
         personal = context["project_context"]["career_evidence"]
         review = personal["retrieval_review"]
         assert review["available"] and len(review["input"]["cases"]) == 3
+        if getattr(self, "expected_review_origin", None):
+            assert review["review_origin"] == self.expected_review_origin
         assert len(review["runs"]) == 6
         expected_extra = getattr(self, "expected_extra", self.jobs[0])
         assert review["runs"][-1]["unexpected_source_keys"] == ["job:" + expected_extra]
@@ -274,6 +276,59 @@ def test_suite_keeps_case_failures_and_shared_scope_through_save_replay_and_inte
         assert discussed["result"]["status"] == "completed", discussed["result"]
         assert discussed["result"]["career_learning_context"]["retrieval_case"] == selected
         model.expected_case_name = None
+        # Continue from the diagnosis, retaining the specific old case and discussion.
+        followup_values = deepcopy(revised)
+        followup_values.update(previous_task_id=changed_task["id"],
+                               review_step_id=discussed["step_id"])
+        followup_values["cases"][0]["candidate"] = {"terms": ["评估集"]}
+        calls, tasks_before = len(model.contexts), deepcopy(client.get(base).json()["tasks"])
+        preview = post(base + "/experiments/retrieval-suite", followup_values)
+        assert client.get(base).json()["tasks"] == tasks_before
+        next_run = post(base + "/experiments/retrieval-suite", {**followup_values, "save": True})
+        next_task = next_run["career"]["tasks"][-1]
+        review_origin = next_run["experiment"]["review_origin"]
+        assert len(model.contexts) == calls
+        assert preview["experiment"]["review_origin"] == review_origin
+        assert review_origin["step_id"] == discussed["step_id"]
+        assert review_origin["source_case"] == selected
+        assert next_task["retrieval_review_step_id"] == discussed["step_id"]
+        assert next_task["question_id"] == changed_task["question_id"]
+        assert next_run["career"]["tasks"][:-1] == tasks_before
+        loaded = client.get(base + "/tasks/" + next_task["id"] + "/retrieval-inputs").json()
+        assert loaded["previous"]["review_origin"] == review_origin
+        assert loaded["previous"]["review_step_id"] == discussed["step_id"]
+        assert loaded["input"]["cases"][0]["candidate"]["terms"] == ["评估集"]
+        assert review_origin["source_case"]["input"]["candidate"]["terms"] == ["端云同步"]
+        for overrides in ({"previous_task_id": None}, {"previous_task_id": task["id"]},
+                          {"review_step_id": "f" * 32}):
+            response = client.post(base + "/experiments/retrieval-suite", headers=auth, json={
+                **followup_values, **overrides, "save": True,
+            })
+            assert response.status_code == 422, response.text
+        assert len(client.get(base).json()["tasks"]) == len(tasks_before) + 1
+        # An explicit replay can retain the same diagnosis through a subsequent run.
+        again = post(base + "/experiments/retrieval-suite", {
+            **followup_values, "previous_task_id": next_task["id"],
+        })
+        assert again["experiment"]["review_origin"] == review_origin
+        old_artifact, old_parent, old_comparison = (
+            model.artifact, model.parent_artifact, model.expected_comparison,
+        )
+        model.artifact = next_task["artifact_document_id"]
+        model.parent_artifact = changed_task["artifact_document_id"]
+        model.expected_comparison = next_run["experiment"]["previous_comparison"]
+        model.expected_review_origin = review_origin
+        step = post(base + "/prepare", {"kind": "reflect", "task_id": next_task["id"]})
+        post("/api/projects/" + goal["id"] + "/run", {"step_id": step["step_id"]})
+        reflected = settled(client, base)["results"][0]
+        assert reflected["result"]["status"] == "completed", reflected["result"].get("stop_reason")
+        assert reflected["result"]["career_learning_context"]["retrieval_review"][
+            "review_origin"
+        ] == review_origin
+        model.artifact, model.parent_artifact, model.expected_comparison = (
+            old_artifact, old_parent, old_comparison,
+        )
+        model.expected_review_origin = None
         revised_story = post(base + "/stories", {
             "title": "合成评估复验经历", "source_task_id": changed_task["id"],
             "situation": "检查失败样例后重新运行。", "action": "修改查询和标签，并保留移除样例。",

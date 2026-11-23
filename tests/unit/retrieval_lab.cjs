@@ -273,3 +273,25 @@ console.log('Evaluation cases retain the complete user question and label ration
 
 const intentComparison=api.retrievalSuiteComparison({kind:'retrieval_suite',notice:'完整比较',cases:[{name:'同名样例',state:'matched',changed_conditions:['样例问题','标签依据'],before:{input:intentCase,runs:[]},after:{input:{...intentCase,question:'新的问题',label_reason:'新的依据'},runs:[]},return_comparison:[]}]},'goal',true);
 assert.match(intentComparison,/原问题末尾 &lt;img&gt;/);assert.match(intentComparison,/标签理由末尾 &lt;script&gt;/);assert.match(intentComparison,/新的问题/);assert.match(intentComparison,/新的依据/);
+
+const diagnosedCase={name:intentCase.name,input:intentCase,runs:[run,{...run,name:'改写表达'}],notice:'已选择的旧样例'};
+const diagnosisResult={run_id:'diagnosis-run',status:'completed',model_calls:3,gaps:['仍缺新的观察 <img>'],career_learning_context:{retrieval_case:diagnosedCase,retrieval_review:{task_id:'evaluated-parent',available:true}}};
+const diagnosisRow={step_id:'diagnosis',state:'completed',kind:'ask',user_question:'请定位这条失败',result:diagnosisResult};
+const diagnosisData={...data,id:'diagnosis-goal',tasks:[],results:[diagnosisRow]};
+const diagnosisRecord={record_kind:'retrieval_suite',input:{job_ids:['job'],document_ids:[],top_k:3,cases:[{...intentCase,name:'另一条'},intentCase]},previous:{task_id:'evaluated-parent',question_id:'original-inquiry',source_step_id:'original-answer',hypothesis:'原解释'}};
+const diagnosisDraft=api.retrievalSuiteReplayDraft(diagnosisRecord,null,diagnosisData,'diagnosis');
+assert.equal(diagnosisDraft.editing_index,1);assert.equal(diagnosisDraft.name,intentCase.name);
+assert.equal(diagnosisDraft.question,fullCaseQuestion);assert.equal(diagnosisDraft.label_reason,fullLabelReason);
+assert.equal(diagnosisDraft.review_step_id,'diagnosis');assert.equal(diagnosisDraft.previous_task_id,'evaluated-parent');
+assert.equal(diagnosisDraft.question_id,'original-inquiry');assert.equal(diagnosisDraft.source_step_id,'original-answer');
+diagnosisDraft.cases[1].candidate.terms.push('独立修改');assert.equal(diagnosisRecord.input.cases[1].candidate.terms.includes('独立修改'),false);
+assert.throws(()=>api.retrievalSuiteReplayDraft({...diagnosisRecord,previous:{task_id:'wrong-parent'}},null,diagnosisData,'diagnosis'),/实际回查/);
+assert.throws(()=>api.retrievalSuiteReplayDraft(diagnosisRecord,null,{...diagnosisData,results:[{...diagnosisRow,state:'abandoned'}]},'diagnosis'),/实际回查/);
+const diagnosisRecall=api.retrievalCaseRecall(diagnosisResult,diagnosisData.id,false,diagnosisData);
+assert.match(diagnosisRecall,/data-retrieval-case-rerun="diagnosis"/);assert.doesNotMatch(api.retrievalCaseRecall(diagnosisResult,diagnosisData.id,true,diagnosisData),/data-retrieval-case-rerun/);
+api.setup(diagnosisData);api.setSuite(diagnosisDraft);
+const diagnosisPanel=api.retrievalSuitePanel(diagnosisData);
+assert.match(diagnosisPanel,/这次继续验证承接哪轮讨论/);assert.match(diagnosisPanel,/原讨论当时追问的评估样例/);assert.match(diagnosisPanel,/仍缺新的观察 &lt;img&gt;/);
+const reloadedDiagnosis=api.retrievalSuiteReplayDraft({...diagnosisRecord,previous:{...diagnosisRecord.previous,review_step_id:'diagnosis',review_origin:{step_id:'diagnosis',source_case:diagnosedCase}}});
+assert.equal(reloadedDiagnosis.review_step_id,'diagnosis');assert.equal(reloadedDiagnosis.review_origin.source_case.input.question,fullCaseQuestion);
+console.log('A completed case diagnosis reopens its exact case for editing, retains the original discussion and inquiry, and never rewrites saved inputs.');
