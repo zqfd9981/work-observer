@@ -13,7 +13,7 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  await vm.runInContext('startResearchConversation("合成输入问题")',context);
  assert.equal(context.calls[0].path,"jobs?limit=20");
  const project=JSON.parse(context.calls.find(c=>c.path==="projects").options.body);
- assert.deepEqual(project.job_ids,["job-1"]);assert.equal(project.goal,"合成输入问题");assert.equal(project.max_calls,24);
+ assert.deepEqual(project.job_ids,["job-1"]);assert.equal(project.goal,"合成输入问题");assert.equal(project.max_calls,72);assert.equal(project.max_seconds,1080);
  const initial=JSON.parse(context.calls.find(c=>c.path.endsWith("/steps")).options.body);
  assert.equal(initial.question,"合成输入问题");assert.equal(initial.revision,3);assert.equal(initial.offline,true);
  assert.equal(initial.allow_public,false);assert.equal(initial.max_calls,10);assert.equal("approach" in initial,false);
@@ -178,7 +178,7 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(node("#research-output").innerHTML.includes('id="conversation-followup"'));
  assert.ok(node("#research-output").innerHTML.includes("只整理原文，不调用模型"));
  assert.ok(!node("#research-output").innerHTML.includes("继续未完成的调查"));
- assert.ok(node("div").innerHTML.includes("沿着这些疑问继续查"));
+ assert.ok(node("created-article").innerHTML.includes("可以继续问"));
  vm.runInContext('state.serviceContract={paths:{"/api/work-materials":{post:{}}}};conversationMaterialReceipts.delete("project-1")',context);
  node("#conversation-material-title").value="正在写的SOP标题";
  node("#conversation-material-source").value="明确出处";

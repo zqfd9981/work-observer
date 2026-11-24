@@ -54,6 +54,7 @@ def test_page_assets_headers_and_overview(web):
     assert page.headers["cache-control"] == "no-store"
     assert client.get("/assets/app.js").status_code == 200
     assert client.get("/assets/app.css").status_code == 200
+    assert client.get("/assets/chat.css").status_code == 200
     assert client.get("/assets/not-an-asset").status_code == 404
     data = client.get("/api/overview").json()
     assert data["jobs"] == data["details"] == 0 and data["model_configured"] is False

@@ -271,6 +271,7 @@ def create_app(
             "data-quality.js",
             "industry.js",
             "industry.css",
+            "chat.css",
             "updates.js",
             "workflows.js",
             "trials.js",

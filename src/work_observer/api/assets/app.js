@@ -1149,6 +1149,7 @@ function prepareNewResearch(clearQuestion=true) {
   sessionStorage.removeItem("wo-conversation");sessionStorage.removeItem("wo-pending-research");
   $("#research-output").innerHTML="";if(clearQuestion)$("#question").value="";
   $("#research-form").hidden=false;$(".research-layout")?.classList?.remove("research-focused");
+  document.body?.classList.remove("conversation-view");
   location.hash="research";setBusy(Boolean(state.activeRun));renderResearchProjects();
   $("#research-form").scrollIntoView({block:"start",behavior:"smooth"});$("#question").focus();
 }
@@ -1346,7 +1347,7 @@ async function startResearchConversation(question, options={}) {
         if(!hasArchived)throw new Error("当前范围还没有原文，请先粘贴工作资料、归档网页或补充岗位原文。");
         if(!publicOnly){$("#research-source-mode").value="public";updateResearchScope();updateResearchApproach();}
       }
-      receipt={intent:intent(),body:{title:question.slice(0,100),goal:question,job_ids:scope,...(selectedResearchDocuments.size?{public_document_ids:[...selectedResearchDocuments.keys()]}:{}),max_calls:24,max_seconds:720,max_rounds:6,max_public:allowPublic?4:0,source_key:"conversation:"+crypto.randomUUID()}};
+      receipt={intent:intent(),body:{title:question.slice(0,100),goal:question,job_ids:scope,...(selectedResearchDocuments.size?{public_document_ids:[...selectedResearchDocuments.keys()]}:{}),max_calls:72,max_seconds:1080,max_rounds:6,max_public:allowPublic?4:0,source_key:"conversation:"+crypto.randomUUID()}};
       sessionStorage.setItem("wo-pending-research",JSON.stringify(receipt));
     }
     const project = await api("projects",{method:"POST",body:JSON.stringify(receipt.body)});
@@ -1417,7 +1418,8 @@ function updateConversationAllocation(project) {
   const offline=$("#conversation-offline").checked;
   const allocation=conversationAllocation(project,offline,$("#conversation-allow-public").checked);
   $("#conversation-submit").disabled=project.worker_running||Boolean(allocation.issue);
-  $("#conversation-limit").textContent=allocation.issue||(offline?"本轮只整理原文，不调用模型。":`本轮最多使用 ${allocation.maxCalls} 次调用、${allocation.timeout} 秒。`)+"沿用本研究的资料范围；旧判断仍需核对，不会自动当成事实。";
+  $("#conversation-limit").textContent=project.worker_running?"":allocation.issue||(offline?"当前仅整理原文，不调用模型。":"");
+  const usage=$("#conversation-usage");if(usage)usage.textContent=`本轮最多 ${allocation.maxCalls} 次调用、${allocation.timeout} 秒。沿用当前资料范围。`;
 }
 
 const conversationSendKeys=new Map(),conversationSending=new Set();
@@ -1871,10 +1873,7 @@ function captureConversationDraft() {
   const id=conversation.renderedId;
   if(!id||!$("#conversation-question")||conversation.project?.id!==id)return;
   const value=selector=>$(selector)?.value||"";
-  const turns=$("#conversation-turns")?$$("[data-conversation-step]",$("#conversation-turns")):[];
   conversation.drafts.set(id,{
-    openTurns:turns.filter(turn=>turn.open).map(turn=>turn.dataset.conversationStep),
-    knownTurns:turns.map(turn=>turn.dataset.conversationStep),
     question:value("#conversation-question"),context:value("#conversation-context-content"),
     publicUrl:value("#conversation-public-url"),contextKind:value("#conversation-context [name=kind]")||"preference",
     contextOpen:$("#conversation-context")?.closest?.("details")?.open||false,
@@ -2003,7 +2002,84 @@ document.addEventListener("click",async event=>{
   } catch(error){if(conversation.id===id){draft.message=error.message;refreshConversationScope(draft);}}
 });
 
-async function openResearchConversation(id, navigate=true) {
+function chatViewportState() {
+  const viewport=$("#conversation-scroll");
+  return {top:viewport?.scrollTop||0,follow:!viewport||viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight<100};
+}
+
+function restoreChatViewport(position, force=false) {
+  const viewport=$("#conversation-scroll");if(!viewport)return;
+  viewport.scrollTop=force||position.follow?viewport.scrollHeight:position.top;
+  const latest=$("#conversation-latest");if(latest)latest.hidden=viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight<100;
+}
+
+function renderChatStep(step, project) {
+  const result=step.result?{...step.result,...(conversation.reports.get(step.run_id)||{})}:null;
+  const running=step.state==="running"||result?.status==="running";
+  const answer={innerHTML:""};
+  if(running){
+    const excerpts=result?.evidence?.length||0,calls=result?.model_calls||0;
+    answer.innerHTML=`<div class="chat-working" role="status"><span class="chat-working-dot" aria-hidden="true"></span><span>${excerpts?`已找到 ${excerpts} 处原文，正在分析…`:calls?"正在查阅岗位资料…":"正在理解问题、查找资料…"}</span></div>`;
+  }else if(result?.scope){
+    renderResult(result,answer,step.run_id,step.id);
+  }else{
+    answer.innerHTML=`<p class="chat-status">${e(({queued:"等待查阅资料…",interrupted:"这轮研究已暂停，进度已保留。",failed:"这轮未完成，可查看详情或继续调查。"})[step.state]||"资料与进度已保留。")}</p>`;
+  }
+  const questions=(result?.review?.next_questions||result?.gaps||[]).filter(text=>/[？?]|核实|补查/.test(text)).slice(0,3);
+  const extras=(questions.length?`<h4>可以继续问</h4>${questions.map(text=>`<button type="button" class="chat-suggestion" data-conversation-followup="${e(text)}" data-reply-step="${e(step.id)}">${e(text)} <span aria-hidden="true">↗</span></button>`).join("")}`:"")+renderInvestigationProposals(result||{},project,step,true)+(step.continuation?.available?renderStepContinuation(project,step):"");
+  return `<div class="chat-message chat-user"><div class="chat-user-bubble">${e(step.question)}</div></div><div class="chat-message chat-assistant"><div class="chat-assistant-label"><span class="chat-avatar" aria-hidden="true">W</span>Work Observer${step.offline?'<span class="chat-mode">原文整理</span>':""}</div><div class="chat-answer-content">${answer.innerHTML}${extras?`<details class="chat-message-tools"><summary>追问与更多操作</summary>${extras}</details>`:""}</div></div>`;
+}
+
+function renderConversationMessages(project, force=false) {
+  const turns=$("#conversation-turns");if(!turns)return;
+  const position=chatViewportState();
+  for(const step of project.steps){
+    let item=$$("[data-conversation-step]",turns).find(row=>row.dataset.conversationStep===step.id);
+    if(!item){item=document.createElement("article");item.className="chat-turn";item.dataset.conversationStep=step.id;turns.append(item);}
+    const signature=JSON.stringify([step,conversation.reports.get(step.run_id)||null]);
+    if(item.chatSignature===signature)continue;
+    item.dataset.conversationRun=step.run_id||"";
+    item.innerHTML=renderChatStep(step,project);item.chatSignature=signature;
+  }
+  restoreChatViewport(position,force);
+}
+
+function updateChatActivity(project) {
+  const status=$("#conversation-status");if(status)status.textContent=project.worker_running?"正在研究…":"基于已有岗位资料";
+  const controls=$("#conversation-run-control");
+  if(controls)controls.innerHTML=project.worker_running?'<button type="button" class="chat-stop" data-conversation-pause><span aria-hidden="true">■</span> 停止研究</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button type="button" class="chat-stop" data-conversation-resume>继续研究</button>':"";
+  updateConversationAllocation(project);
+}
+
+function scheduleConversationRefresh(project) {
+  if(project.worker_running)conversation.timer=setTimeout(()=>openResearchConversation(project.id,false,true).catch(error=>{setBusy(false);notify(error.message,true);}),2000);
+}
+
+function resizeChatInput(input) {
+  if(!input?.style)return;
+  input.style.height="auto";input.style.height=Math.min(input.scrollHeight,160)+"px";
+}
+
+document.addEventListener("input",event=>{
+  if(event.target.id==="conversation-question")resizeChatInput(event.target);
+});
+document.addEventListener("keydown",event=>{
+  if(event.target.id!=="conversation-question"||event.key!=="Enter"||event.shiftKey||event.isComposing||event.keyCode===229)return;
+  event.preventDefault();
+  if(!$("#conversation-submit").disabled&&event.target.value.trim())$("#conversation-followup").requestSubmit();
+});
+document.addEventListener("click",async event=>{
+  if(event.target.closest("[data-chat-settings]")){openDialog("conversation-settings");return;}
+  if(event.target.closest("[data-chat-latest]")){restoreChatViewport({top:0,follow:true},true);return;}
+  if(event.target.closest("[data-open-conversation]"))$("#conversation-history")?.close();
+  if(!event.target.closest("[data-chat-history]"))return;
+  openDialog("conversation-history");
+  const list=$("#chat-history-list");list.innerHTML='<p class="form-note">正在读取对话…</p>';
+  await loadResearchProjects();
+  list.innerHTML=researchProjects.filter(row=>row.state==="active").map(row=>`<button type="button" class="chat-history-item ${row.id===conversation.id?"is-current":""}" data-open-conversation="${e(row.id)}"><strong>${e(row.title||row.goal)}</strong><span>${row.step_count||0} 轮对话 · ${e(when(row.updated_at))}</span></button>`).join("")||'<p class="form-note">还没有其他对话。</p>';
+});
+
+async function openResearchConversation(id, navigate=true, progressOnly=false) {
   if(!navigate && conversation.id!==id)return;
   captureConversationDraft();
   clearTimeout(conversation.timer);
@@ -2011,6 +2087,11 @@ async function openResearchConversation(id, navigate=true) {
   if (navigate && state.page!=="research") location.hash="research";
   const project=await api("projects/"+encodeURIComponent(id));
   if (conversation.id!==id) return;
+  const previousStepCount=conversation.project?.id===id?conversation.project.steps.length:0;
+  if(progressOnly&&conversation.renderedId===id&&project.state!=="invalidated"){
+    conversation.project=project;renderConversationMessages(project);updateChatActivity(project);
+    setBusy(project.worker_running);scheduleConversationRefresh(project);return;
+  }
   if(conversation.notesFor!==id){
     const notes=await api("memories?project_id="+encodeURIComponent(id));
     if(conversation.id!==id)return;
@@ -2027,6 +2108,9 @@ async function openResearchConversation(id, navigate=true) {
     clearForgottenConversation([id]);setBusy(false);return;
   }
   $("#research-form").hidden=true;$(".research-layout")?.classList?.add("research-focused");
+  document.body?.classList.toggle("conversation-view",state.page==="research");
+  const chatPosition=chatViewportState();
+  const settingsOpen=Boolean($("#conversation-settings")?.open);
   const savedDraft=conversation.drafts.get(id)||{};
   conversation.project=project;
   conversation.replyToStepId=savedDraft.replyTo===undefined?defaultConversationReply(project):savedDraft.replyTo;
@@ -2049,7 +2133,7 @@ async function openResearchConversation(id, navigate=true) {
   const mapSupported=(state.serviceContract?.components?.schemas?.StepInput?.properties?.approach?.enum||[]).includes("work_map");
   const exhausted=Boolean(conversationAllocation(project,offline,allowPublic).issue);
   const taskList=$("#research-task-list");if(taskList)taskList.open=false;
-  root.innerHTML=`<article class="panel"><div class="conversation-heading"><h2>研究对话</h2><button type="button" class="text-button" data-new-research>＋ 新建研究</button></div><div class="conversation-task-controls">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}</div><details class="conversation-options"><summary>资料、背景与研究设置</summary><details class="conversation-title-editor"><summary>修改研究名称</summary><form id="conversation-title-form" data-project-id="${e(project.id)}"><input name="title" value="${e(project.title)}" maxlength="150" required aria-label="研究名称" ${project.worker_running?"disabled":""}><button class="secondary small" ${project.worker_running?"disabled":""}>保存名称</button></form></details><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions"><button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><div id="conversation-correction-target">${renderClaimCorrectionTarget(project.id)}</div><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}${renderActionFeedback(project)}${renderConversationScopePanel(project)}</details></article><details class="conversation-knowledge-summary"><summary>当前认识与修订记录</summary>${renderProjectUnderstanding(project,conversation.knowledge)}</details><div id="conversation-turns"></div><form id="conversation-followup" class="panel"><h3 class="sr-only">继续提问</h3><label for="conversation-question" class="sr-only">继续提问</label><textarea id="conversation-question" rows="2" maxlength="4000" required placeholder="继续提问，或告诉我需要调整什么…">${e(draft)}</textarea><details class="conversation-followup-settings"><summary>本轮选项</summary><p id="conversation-reply" class="form-note"></p>${renderResearchNextActions(project)}<label>这轮重点<select id="conversation-kind"><option value="investigate" ${investigationKind==="investigate"?"selected":""}>继续查证</option><option value="counterexample" ${investigationKind==="counterexample"?"selected":""}>寻找反例与其他解释</option><option value="synthesis" ${investigationKind==="synthesis"?"selected":""}>整理阶段成果</option></select></label>${mapSupported?`<label>本轮成果<select id="conversation-approach"><option value="standard" ${approach==="standard"?"selected":""}>简明研究回答</option><option value="work_map" ${approach==="work_map"?"selected":""}>工作地图与工作关系</option></select></label>`:""}<label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label></details><button id="conversation-submit" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>发送 ↑</button><p id="conversation-limit" class="form-note"></p></form>`;
+  root.innerHTML=`<header class="agent-chat-header"><div><h1>${e(project.title||project.goal||"岗位研究")}</h1><p id="conversation-status">基于已有岗位资料</p></div><div class="agent-chat-header-actions"><button type="button" class="chat-header-button" data-chat-history aria-label="查看历史对话" title="历史对话">历史对话</button><button type="button" class="chat-header-button" data-chat-settings aria-label="打开资料与设置" title="资料与设置">资料与设置</button><button type="button" class="chat-new-button" data-new-research>＋ 新对话</button></div></header><dialog id="conversation-settings" class="chat-settings-dialog" aria-labelledby="conversation-settings-title"><div class="chat-dialog-heading"><h2 id="conversation-settings-title">资料与设置</h2><button type="button" data-close="conversation-settings" class="icon-button" aria-label="关闭资料与设置">×</button></div><article class="panel"><div class="conversation-task-controls">${project.worker_running?'<button class="secondary" data-conversation-pause>暂停并保留进度</button>':project.steps.some(step=>["queued","interrupted"].includes(step.state))?'<button class="secondary" data-conversation-resume>继续未完成的调查</button>':""}</div><details class="conversation-options" open><summary>资料、背景与研究设置</summary><details class="conversation-title-editor"><summary>修改研究名称</summary><form id="conversation-title-form" data-project-id="${e(project.id)}"><input name="title" value="${e(project.title)}" maxlength="150" required aria-label="研究名称" ${project.worker_running?"disabled":""}><button class="secondary small" ${project.worker_running?"disabled":""}>保存名称</button></form></details><p class="form-note">已保存 ${project.steps.length} 轮调查 · 已调用 ${e(project.usage.calls)} / ${e(project.budget.max_calls)} 次${project.public_document_ids!=null?" · 限定 "+e(project.public_document_ids.length)+" 份归档原文":""}${project.worker_running?" · 正在查阅资料…":""}</p><div class="result-actions"><button class="secondary" data-conversation-import ${project.worker_running?"disabled":""}>补充岗位原文</button><button class="text-button" data-project-open="${e(project.id)}">查看全部调查记录</button></div>${materialWriteSupported?renderConversationMaterialForm(project,materialDraft):""}${publicReadSupported?`<details class="detail-section"><summary>补充公开技术文档或企业页面</summary><form id="conversation-public-document"><label>公开网页网址<input id="conversation-public-url" name="url" type="url" value="${e(publicDraft)}" required maxlength="3000" placeholder="https://官方文档或企业页面"></label><button class="secondary" ${project.worker_running?"disabled":""}>读取并归档网页</button><p class="form-note">只读取公开网页，不登录、不调用模型。正文归档到本机公开资料库，后续调查可检索；企业介绍和技术说明不能直接证明岗位个人责任。</p><div id="conversation-public-status"></div></form></details>`:""}<details class="detail-section"><summary>补充背景或纠正理解${conversation.notes.length?" · "+conversation.notes.length+"条已保存":""}</summary>${conversation.notes.slice(0,5).map(note=>`<p class="form-note"><strong>${note.kind==="correction"?"我的纠正":"我的背景/目标"}：</strong>${e(memoryText(note))}</p>`).join("")}<form id="conversation-context"><label>这段信息的用途<select name="kind"><option value="preference" ${contextKind==="preference"?"selected":""}>我的背景、目标或关注重点</option><option value="correction" ${contextKind==="correction"?"selected":""}>纠正当前研究的理解</option></select></label><div id="conversation-correction-target">${renderClaimCorrectionTarget(project.id)}</div><label>补充内容<textarea id="conversation-context-content" name="content" rows="3" maxlength="4000" required placeholder="例如：我有后端经验，想了解转向Agent应用研发要补什么；或指出哪条判断理解错了。">${e(contextDraft)}</textarea></label><button class="secondary" ${project.worker_running?"disabled":""}>保存到本研究</button><p class="form-note">仅用于这项研究；你的说明与招聘原文分开保存，不会冒充新的来源证据。</p></form></details>${renderConversationApplication(project,applicationDraft)}${renderActionFeedback(project)}${renderConversationScopePanel(project)}</details></article><details class="conversation-knowledge-summary"><summary>当前认识与修订记录</summary>${renderProjectUnderstanding(project,conversation.knowledge)}</details><details class="conversation-followup-settings"><summary>本轮选项</summary><p id="conversation-reply" class="form-note"></p>${renderResearchNextActions(project)}<label>这轮重点<select id="conversation-kind"><option value="investigate" ${investigationKind==="investigate"?"selected":""}>继续查证</option><option value="counterexample" ${investigationKind==="counterexample"?"selected":""}>寻找反例与其他解释</option><option value="synthesis" ${investigationKind==="synthesis"?"selected":""}>整理阶段成果</option></select></label>${mapSupported?`<label>本轮成果<select id="conversation-approach"><option value="standard" ${approach==="standard"?"selected":""}>简明研究回答</option><option value="work_map" ${approach==="work_map"?"selected":""}>工作地图与工作关系</option></select></label>`:""}<label class="checkbox-line"><input id="conversation-offline" type="checkbox" ${offline?"checked":""}>只整理原文，不调用模型</label><label class="checkbox-line"><input id="conversation-allow-public" type="checkbox" ${allowPublic?"checked":""}>允许本轮补查公开资料</label></details><p id="conversation-usage" class="form-note"></p></dialog><dialog id="conversation-history" class="chat-history-dialog" aria-labelledby="chat-history-title"><div class="chat-dialog-heading"><h2 id="chat-history-title">历史对话</h2><button type="button" data-close="conversation-history" class="icon-button" aria-label="关闭历史对话">×</button></div><div id="chat-history-list"></div></dialog><div class="chat-transcript-area"><div id="conversation-scroll" class="chat-scroll" role="region" aria-label="对话消息" tabindex="0"><div id="conversation-turns"></div></div><button type="button" id="conversation-latest" class="chat-latest" data-chat-latest hidden>↓ 回到最新消息</button></div><footer class="chat-composer-footer"><div id="conversation-run-control"></div><form id="conversation-followup" class="chat-composer"><h3 class="sr-only">继续提问</h3><label for="conversation-question" class="sr-only">继续提问</label><textarea id="conversation-question" rows="1" maxlength="4000" required placeholder="继续提问，或告诉我需要调整什么…">${e(draft)}</textarea><div class="chat-composer-actions"><span>Enter 发送 · Shift + Enter 换行</span><button id="conversation-submit" aria-label="发送消息" title="发送消息" type="submit" class="primary" ${project.worker_running||exhausted?"disabled":""}>↑</button></div><p id="conversation-limit" class="form-note"></p></form><p class="chat-footer-note">回答依据已归档资料，点击引用可查看原文。</p></footer>`;
   const contextPanel=$("#conversation-context")?.closest?.("details"),publicPanel=$("#conversation-public-document")?.closest?.("details");
   if(contextPanel)contextPanel.open=savedDraft.contextOpen||Boolean(conversation.correctionTarget);
   if(publicPanel)publicPanel.open=savedDraft.publicOpen||false;
@@ -2067,23 +2151,15 @@ async function openResearchConversation(id, navigate=true) {
   $("#conversation-offline").addEventListener("change",()=>updateConversationAllocation(project));
   $("#conversation-allow-public").addEventListener("change",()=>updateConversationAllocation(project));
   updateConversationAllocation(project);
-  const turns=$("#conversation-turns");
-  for(const step of project.steps){
-    const item=document.createElement("details");item.className="detail-section";
-    item.open=savedDraft.knownTurns?.includes(step.id)?savedDraft.openTurns.includes(step.id):step===project.steps.at(-1);
-    item.dataset.conversationStep=step.id;
-    item.dataset.conversationRun=step.run_id||"";
-    item.innerHTML=`<summary>${e(step.question)} <small>${step.origin==="agent"?"建议补查":""}</small></summary><div></div>`;turns.append(item);
-    const target=item.querySelector("div");
-    if(step.result?.scope){
-      renderResult({...step.result,...(conversation.reports.get(step.run_id)||{})},target,step.run_id,step.id);
-      const questions=(step.result.review?.next_questions || step.result.gaps || []).filter(text=>/[？?]|核实|补查/.test(text)).slice(0,3);
-      if(questions.length)target.insertAdjacentHTML("beforeend",`<div class="panel"><h4>沿着这些疑问继续查</h4>${questions.map(text=>`<button class="secondary small" data-conversation-followup="${e(text)}" data-reply-step="${e(step.id)}">${e(text)}</button>`).join(" ")}</div>`);
-    }
-    else target.innerHTML=`<p class="form-note">${({queued:"等待查阅资料",running:"正在调查…",interrupted:"已暂停，进度已保留",failed:"本轮未完成，可查看全部调查记录中的原因"})[step.state]||"资料与进度已保留"}</p>`;
-    if(step.evidence_needed)target.insertAdjacentHTML("afterbegin",`<section class="research-context"><p><strong>本轮完成条件：</strong>${e(step.completion)}</p><p><strong>本轮所需证据：</strong>${e(step.evidence_needed)}</p></section>`);
-    target.insertAdjacentHTML("beforeend",renderInvestigationProposals(step.result||{},project,step,true)+renderStepContinuation(project,step));
-  }
+  renderConversationMessages(project);
+  restoreChatViewport(chatPosition,!same||project.steps.length>previousStepCount);
+  updateChatActivity(project);
+  $("#conversation-scroll").addEventListener("scroll",()=>{
+    const viewport=$("#conversation-scroll");
+    $("#conversation-latest").hidden=viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight<100;
+  },{passive:true});
+  if(settingsOpen)openDialog("conversation-settings");
+  resizeChatInput($("#conversation-question"));
   renderConversationReply();
   if(active){const input=$("#"+active);input.focus();input.setSelectionRange(...selection);}
   setBusy(project.worker_running);
@@ -2092,7 +2168,7 @@ async function openResearchConversation(id, navigate=true) {
     job_count:project.job_ids?.length||0,document_count:project.public_document_ids?.length??null,
     last_question:project.steps.at(-1)?.question,last_state:project.steps.at(-1)?.state,worker_running:project.worker_running},...researchProjects.filter(row=>row.id!==project.id)];
   renderResearchProjects();
-  if(project.worker_running)conversation.timer=setTimeout(()=>openResearchConversation(id,false).catch(error=>{setBusy(false);notify(error.message,true);}),2000);
+  scheduleConversationRefresh(project);
 }
 
 document.addEventListener("submit",async event=>{
@@ -2282,6 +2358,7 @@ function prefillConversationFollowup(button) {
 document.addEventListener("click",event=>{
   if(event.target.closest("[data-conversation-new-topic]")){conversation.replyToStepId=null;if($("#conversation-kind"))$("#conversation-kind").value="investigate";renderConversationReply();return;}
   const button=event.target.closest("[data-conversation-followup], [data-conversation-claim]");if(!button)return;
+  $("#conversation-settings")?.close();
   prefillConversationFollowup(button);
 });
 
@@ -3217,6 +3294,7 @@ async function route() {
   updateDemoGuide();
   const page = location.hash.slice(1).split("/")[0] || (demoMode?"career":"industry");
   state.page = titles[page] ? page : "research";
+  document.body?.classList.toggle("conversation-view",state.page==="research"&&Boolean(conversation.renderedId));
   $$(".page").forEach(element=>{element.hidden = element.id !== "page-" + state.page;});
   $$("nav [data-page]").forEach(link=>{
     link.classList.toggle("active",link.dataset.page === state.page);
@@ -3233,6 +3311,7 @@ async function route() {
     updateResearchScope();await Promise.all([loadResearchProjects(),loadResearchHistory()]);
     const linked=location.hash.slice(1).split("/")[1];
     const saved=linked && /^[a-f0-9]{32}$/.test(linked) ? linked : conversation.id || sessionStorage.getItem("wo-conversation");
+    if(!saved&&!state.activeRun&&!$("#question").value.trim()&&!state.researchIds?.length&&!selectedResearchDocuments.size){location.hash="industry";return;}
     if(saved && !state.activeRun && !sessionStorage.getItem("wo-research")) {
       conversation.id=saved;await openResearchConversation(saved,false);
     }

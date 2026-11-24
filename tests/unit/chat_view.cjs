@@ -1,0 +1,26 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const nodes=new Map(),listeners=new Map();
+const node=key=>{if(!nodes.has(key))nodes.set(key,{value:'',checked:false,content:'test',dataset:{},innerHTML:'',addEventListener(){},querySelector:node,querySelectorAll:()=>[]});return nodes.get(key);};
+const ctx={document:{querySelector:node,querySelectorAll:()=>[],addEventListener:(name,fn)=>{if(!listeners.has(name))listeners.set(name,[]);listeners.get(name).push(fn);}},window:{addEventListener(){}},location:{hash:''},URL,URLSearchParams,Intl,console,setTimeout,clearTimeout};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),ctx);
+ctx.step={id:'step',question:'问题<script>\n第二行',state:'running',offline:false,result:{status:'running',model_calls:3,evidence:[{id:'ev'}]}};ctx.project={steps:[ctx.step]};
+const pending=vm.runInContext('renderChatStep(step,project)',ctx);
+assert.ok(pending.includes('chat-user-bubble')&&pending.includes('chat-assistant-label'));
+assert.ok(pending.includes('问题&lt;script&gt;\n第二行')&&!pending.includes('<script>'));
+assert.ok(pending.includes('已找到 1 处原文')&&!pending.includes('尚未形成回答'));
+assert.ok(!pending.includes('<summary>问题')); // User messages are never collapsed report sections.
+const viewport=node('#conversation-scroll');Object.assign(viewport,{scrollTop:100,scrollHeight:1400,clientHeight:500});
+ctx.position=vm.runInContext('chatViewportState()',ctx);assert.equal(ctx.position.follow,false);
+viewport.scrollHeight=1800;vm.runInContext('restoreChatViewport(position)',ctx);assert.equal(viewport.scrollTop,100);assert.equal(node('#conversation-latest').hidden,false);
+viewport.scrollTop=1300;ctx.position=vm.runInContext('chatViewportState()',ctx);assert.equal(ctx.position.follow,true);
+viewport.scrollHeight=2100;vm.runInContext('restoreChatViewport(position)',ctx);assert.equal(viewport.scrollTop,2100);
+let submissions=0,prevented=0;node('#conversation-followup').requestSubmit=()=>submissions++;
+const input=node('#conversation-question');input.id='conversation-question';input.value='继续提问';
+for(const extra of [{shiftKey:true},{isComposing:true},{keyCode:229}])for(const handler of listeners.get('keydown'))handler({target:input,key:'Enter',preventDefault:()=>prevented++,...extra});
+assert.equal(submissions,0);assert.equal(prevented,0);
+for(const handler of listeners.get('keydown'))handler({target:input,key:'Enter',preventDefault:()=>prevented++});
+assert.equal(submissions,1);assert.equal(prevented,1);
+node('#conversation-submit').disabled=true;
+for(const handler of listeners.get('keydown'))handler({target:input,key:'Enter',preventDefault(){}});
+assert.equal(submissions,1);
+console.log('Chat view: continuous roles, honest live progress, scroll anchoring, Enter/Shift+Enter and Chinese composition passed.');
