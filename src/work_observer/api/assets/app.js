@@ -1029,15 +1029,28 @@ document.addEventListener("change",event=>{
   }
 });
 
+function renderConversationClaimGroups(result,evidence,reference){
+  const indexed=result.claims.map((claim,index)=>({claim,index}));
+  const syntheses=indexed.filter(row=>row.claim.basis==="synthesis");
+  const summarized=new Set(syntheses.map(row=>row.claim.category));
+  const primary=indexed.filter(row=>row.claim.basis==="synthesis"||!summarized.has(row.claim.category));
+  const secondary=indexed.filter(row=>row.claim.basis!=="synthesis"&&summarized.has(row.claim.category));
+  const headings={task:"主要做什么",ability:"一般需要什么能力",deliverable:"交付什么",business:"业务背景",responsibility:"承担什么责任",tool:"使用什么工具"};
+  const shown=new Set();
+  const render=rows=>rows.map(({claim,index})=>`<section>${rows===primary&&!shown.has(claim.category)?(shown.add(claim.category),`<h3>${e(headings[claim.category]||"综合判断")}</h3>`):""}<p>${e(claim.text)}</p>${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}<div class="conversation-answer-references">${claim.requirement&&claim.requirement!=="unspecified"?`<span class="badge muted">${e(requirementLabels[claim.requirement]||"要求性质待核")}</span>`:""}<span class="conversation-answer-basis">${e(claimBasisLabel(claim))}</span>${(claim.evidence_ids||[]).filter(id=>evidence.has(id)).map(id=>reference(evidence.get(id),true)).join("")}</div></section>`).join("");
+  return render(primary)+(secondary.length?`<details class="conversation-answer-breakdown"><summary>逐岗位的详细分析 · ${secondary.length} 条</summary>${render(secondary)}</details>`:"");
+}
+
 function renderConversationReading(result,target,runId,replyStepId){
   const evidence=new Map((result.evidence||[]).map((ev,index)=>[ev.id,{...ev,label:`E${index+1}`}]))
   const full={innerHTML:""};renderResult(result,full,runId,replyStepId,true);
   const evidenceOnly=result.status==="evidence_only";
+  const running=result.status==="running";
   const hasAnswer=(result.claims||[]).length>0&&!evidenceOnly;
-  const heading=evidenceOnly?"原文已整理，分析回答尚未生成":hasAnswer?"研究回答":"本轮尚未形成回答";
-  const reference=ev=>ev.document_id?`<button type="button" class="cite" data-source="${e(ev.document_id)}">${e(ev.label)} · ${e(ev.title||"岗位原文")} ↗</button>`:ev.public_document_id?`<button type="button" class="cite" data-public-source="${e(ev.public_document_id)}">${e(ev.label)} · ${e(ev.title||"归档资料")} ↗</button>`:`<span class="badge muted">${e(ev.label)} · 原文暂不可直接打开</span>`;
+  const heading=running?"正在研究你的问题":evidenceOnly?"原文已整理，分析回答尚未生成":hasAnswer?"研究回答":"本轮尚未形成回答";
+  const reference=(ev,short=false)=>ev.document_id?`<button type="button" class="cite" data-source="${e(ev.document_id)}">${e(short?ev.label:ev.label+" · "+(ev.title||"岗位原文"))} ↗</button>`:ev.public_document_id?`<button type="button" class="cite" data-public-source="${e(ev.public_document_id)}">${e(short?ev.label:ev.label+" · "+(ev.title||"归档资料"))} ↗</button>`:`<span class="badge muted">${e(ev.label)} · 原文暂不可直接打开</span>`;
   const sample=result.scope?.counts||{};
-  target.innerHTML=`<article class="conversation-answer"><h2>${heading}</h2>${result.analysis_origin==="developer_sample"?'<p class="conversation-answer-notice">这是辅助分析样稿，非产品 Agent 自动生成的结果。</p>':""}${evidenceOnly?`<p class="conversation-answer-notice">当前使用原文证据模式，尚未启用模型分析。这一轮整理了已有资料，还没有回答你的研究问题。</p><p class="conversation-answer-scope">范围内有 ${sample.candidate_details||0} 份岗位正文；下方可按需查看原文。</p>`:hasAnswer?`${result.status!=="completed"?'<p class="conversation-answer-notice">以下是尚待核实的部分结果。</p>':""}<div class="conversation-answer-claims">${result.claims.map((claim,index)=>`<section><p>${e(claim.text)}</p>${renderClaimAnalysisNotes(result,index)}${renderClaimSentenceSupport(claim,evidence)}<div class="conversation-answer-references">${claim.requirement&&claim.requirement!=="unspecified"?`<span class="badge muted">${e(requirementLabels[claim.requirement]||"要求性质待核")}</span>`:""}<span class="conversation-answer-basis">${e(claimBasisLabel(claim))}</span>${(claim.evidence_ids||[]).filter(id=>evidence.has(id)).map(id=>reference(evidence.get(id))).join("")}</div></section>`).join("")}</div>`:`<p class="conversation-answer-notice">${e(reasonLabels[result.stop_reason]||"本轮没有形成可用的分析结论，已保留查过的资料。")}</p>`}${evidence.size?`<details class="conversation-answer-evidence"><summary>查看原文依据 · ${evidence.size} 处引用</summary>${[...evidence.values()].map(ev=>`<section><h3>${e(ev.title||"原文资料")}</h3><blockquote>${e(ev.quote||"")}</blockquote>${reference(ev)}</section>`).join("")}</details>`:""}<details class="conversation-answer-record"><summary>执行记录与更多操作</summary>${full.innerHTML}</details></article>`;
+  target.innerHTML=`<article class="conversation-answer"><h2>${heading}</h2>${result.analysis_origin==="developer_sample"?'<p class="conversation-answer-notice">这是辅助分析样稿，非产品 Agent 自动生成的结果。</p>':""}${running?`<p class="conversation-answer-notice">${evidence.size?`已读取 ${evidence.size} 处原文，正在分析和整理回答。`:"正在确认资料范围并查阅岗位原文。"}完成后会直接在这里显示回答。</p>`:evidenceOnly?`<p class="conversation-answer-notice">当前使用原文证据模式，尚未启用模型分析。这一轮整理了已有资料，还没有回答你的研究问题。</p><p class="conversation-answer-scope">范围内有 ${sample.candidate_details||0} 份岗位正文；下方可按需查看原文。</p>`:hasAnswer?`${result.status!=="completed"?'<p class="conversation-answer-notice">以下是尚待核实的部分结果。</p>':""}<div class="conversation-answer-claims">${renderConversationClaimGroups(result,evidence,reference)}</div>`:`<p class="conversation-answer-notice">${e(reasonLabels[result.stop_reason]||"本轮没有形成可用的分析结论，已保留查过的资料。")}</p>`}${evidence.size?`<details class="conversation-answer-evidence"><summary>查看原文依据 · ${evidence.size} 处引用</summary>${[...evidence.values()].map(ev=>`<section><h3>${e(ev.title||"原文资料")}</h3><blockquote>${e(ev.quote||"")}</blockquote>${reference(ev)}</section>`).join("")}</details>`:""}<details class="conversation-answer-record"><summary>执行记录与更多操作</summary>${full.innerHTML}</details></article>`;
 }
 
 function renderResult(result, target, runId = null, replyStepId = null, fullDetails = false) {
@@ -1145,7 +1158,7 @@ $("#refresh-research-projects").addEventListener("click",loadResearchProjects);
 document.addEventListener("click",event=>{
   const open=event.target.closest("[data-open-conversation]");
   if(open){const hash="#research/"+open.dataset.openConversation;if(location.hash===hash)openResearchConversation(open.dataset.openConversation);else location.hash=hash;return;}
-  if(event.target.closest("[data-new-research]")){prepareNewResearch();return;}
+  if(event.target.closest("[data-new-research]")){location.hash="industry";return;}
   if(event.target.closest("[data-expand-research-projects]")){researchProjectsExpanded=!researchProjectsExpanded;renderResearchProjects();}
 });
 
@@ -1257,6 +1270,7 @@ async function pollResearch(id) {
 }
 
 function pendingResearch(id) {
+  if(id.startsWith("project:")){openResearchConversation(id.slice(8)).catch(error=>notify(error.message,true));return;}
   state.activeRun = id;
   state.lastRun = id;
   sessionStorage.setItem("wo-research",id);
@@ -1347,13 +1361,13 @@ async function startResearchConversation(question, options={}) {
 async function startIndustryResearchTask(question, jobIds) {
   if(conversationStarting || state.activeRun)throw new Error("当前有研究正在执行，可在我的研究中查看进度。");
   const overview=state.overview || await loadOverview();
+  if(!overview.model_configured)throw new Error("研究模型尚未接通，暂时无法生成回答。请先连接研究服务。");
   state.researchIds=[...jobIds];
   state.filters={};
   selectedResearchDocuments.clear();
   $("#research-source-mode").value="jobs";
   $("#allow-public").checked=false;
-  $("#offline").checked=!overview.model_configured;
-  if(!overview.model_configured)notify("本轮使用原文证据模式：整理已有资料，不生成模型分析结论。");
+  $("#offline").checked=false;
   await startResearchConversation(question);
 }
 window.startIndustryResearchTask=startIndustryResearchTask;
@@ -1396,7 +1410,7 @@ function conversationAllocation(project, offline, allowPublic=false) {
     : !offline&&calls<2 ? "剩余调用额度已分配，记录已保留。可只整理原文，或开始新研究。"
     : !offline&&seconds<1 ? "本研究可分配的调查时间已用完。可只整理原文，或开始新研究。"
     : !offline&&allowPublic&&publicLeft<4 ? "公开补查额度不足。可先归档网页，再关闭公开补查继续调查。" : "";
-  return {maxCalls:Math.max(1,Math.min(10,calls)),timeout:offline?180:Math.max(1,Math.min(180,seconds)),allowPublic:allowPublic&&!offline,issue};
+  return {maxCalls:Math.max(1,Math.min(offline?10:12,calls)),timeout:offline?180:Math.max(1,Math.min(180,seconds)),allowPublic:allowPublic&&!offline,issue};
 }
 
 function updateConversationAllocation(project) {

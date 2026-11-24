@@ -11,6 +11,17 @@ assert.ok(answer.includes('研究回答&lt;script&gt;文本')&&!answer.includes(
 assert.ok(answer.includes('data-source="doc1"'));
 assert.ok(!answer.includes('研究计划与范围')&&!answer.includes('INTERNAL GAP TEXT')&&!answer.includes('<form'));
 assert.ok(ctx.target.innerHTML.includes('执行记录与更多操作')&&ctx.target.innerHTML.includes('INTERNAL GAP TEXT'));
+ctx.result={...ctx.result,claims:[{...ctx.result.claims[0],text:'综合概览',basis:'synthesis'},{...ctx.result.claims[0],text:'岗位具体例子',basis:'direct'}]};
+vm.runInContext('renderResult(result,target,"run","step")',ctx);
+const summary=ctx.target.innerHTML.split('<details class="conversation-answer-breakdown">')[0];
+assert.ok(summary.includes('综合概览')&&!summary.includes('岗位具体例子'));
+assert.ok(ctx.target.innerHTML.includes('岗位具体例子'));
+ctx.result={...ctx.result,claims:[...ctx.result.claims,{...ctx.result.claims[1],category:'ability',text:'尚无综合结论的能力要求'}]};
+vm.runInContext('renderResult(result,target,"run","step")',ctx);
+assert.ok(ctx.target.innerHTML.split('<details class="conversation-answer-breakdown">')[0].includes('尚无综合结论的能力要求'));
+ctx.result={...ctx.result,status:'running',claims:[]};
+vm.runInContext('renderResult(result,target,"run","step")',ctx);
+assert.ok(ctx.target.innerHTML.startsWith('<article class="conversation-answer"><h2>正在研究你的问题'));
 ctx.result={...ctx.result,status:'evidence_only',mode:'offline',claims:[]};
 vm.runInContext('renderResult(result,target,"run","step")',ctx);
 const packet=ctx.target.innerHTML.split('<details class="conversation-answer-record">')[0];
