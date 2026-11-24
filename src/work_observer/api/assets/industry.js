@@ -33,9 +33,13 @@ function industryDetailView(report,index){
   const basis={direct:"原文陈述",synthesis:"跨资料归纳",inference:"待验证解释"};
   return `<article class="industry-reader industry-detail"><a class="industry-back" href="#industry/${e(report.id)}">← 返回本期发现</a><header class="industry-detail-heading"><div><span class="industry-kicker">${e(industryFacets[row.facet])} · ${e(basis[row.basis]||"研究归纳")}</span><h2>${e(row.title)}</h2></div>${industryDecisionView(row)}</header><div class="industry-detail-layout"><div class="industry-detail-main"><section class="industry-current-reading" data-decision="${e(row.decision||"initial")}"><h3>当前判断</h3>${row.decision==="withdraw"?'<p class="industry-decision-notice">已撤回，不再作为当前结论。以下保留当时的判断供回看。</p>':row.decision==="unresolved"?'<p class="industry-decision-notice">这一判断仍有疑问，需要进一步核实。</p>':""}<p class="industry-interpretation">${e(row.interpretation)}</p><div class="industry-reading-boundary"><h4>适用范围</h4><p>${e(row.boundary)}</p></div></section><section class="industry-evidence-section"><div class="industry-section-heading"><h3>这条发现依据什么</h3><span>${count} 个岗位 · ${row.evidence.length} 段原文</span></div>${row.evidence.map(ev=>industryEvidenceView(ev,report)).join("")}</section>${industryHistoryView(row)}</div><aside class="industry-detail-aside"><section class="industry-ask"><span class="industry-kicker">沿着发现继续了解</span><h3>把问题带回岗位</h3><form data-industry-inquiry="${index}"><label>你想进一步弄清什么<textarea name="question" rows="4" maxlength="1500" required>${e(row.next_question||"这条观察在所选岗位中是否成立？请回读原文，寻找支持与反例。")}</textarea></label><button class="primary full">继续研究 ↗</button><p>使用这条发现引用的 ${count} 个岗位。</p></form></section>${industryReviewView(report,row,index)}<a class="industry-back subtle" href="#industry/${e(report.id)}">查看其他发现 →</a></aside></div></article>`;
 }
+const industryTaskExamples=[
+  {label:"比较工作分工",question:"请基于已有招聘JD，对比Agent应用开发与平台开发的工作内容、交付物和能力要求，给出原文依据，并说明哪些仍不能确定。"},
+  {label:"梳理招聘门槛",question:"请研究已有Agent岗位的经验与能力门槛，区分后端经验、AI经验、大模型应用经验，以及必备要求、可选方向和加分项，给出原文依据。"},
+  {label:"检查资料变化",question:"请检查已有归档能否支持Agent岗位工作要求发生变化的判断，区分岗位原文变化、样本差异和认识修订；证据不足时明确保留未知。"}
+];
 function industryStartView(report){
-  const topic=report.title.split(/[：:]/)[0];
-  return `<section class="industry-start"><header><span class="industry-kicker">工作观察 · 从真实岗位了解行业</span><h1>了解一个方向的实际工作<br>和能力要求。</h1><p>从已有招聘资料里，看岗位在做什么、交付什么、需要哪些经验。每条判断都能回到原文。</p></header><article class="industry-start-topic"><div><span class="industry-kicker">从一个具体问题开始</span><h2>${e(topic)}${/[？?]$/.test(topic)?"":"？"}</h2><p>${report.sample.jobs} 个已有岗位 · ${report.sample.readable_details} 份正文 · ${report.findings.length} 条有依据的发现</p></div><a class="primary" href="#industry/${e(report.id)}">查看工作与能力 <span aria-hidden="true">→</span></a><small>先读已有结果，无需配置或发起新研究。</small></article><section class="industry-start-outcomes" aria-label="看完后能弄清什么"><div><span>01</span><h3>实际在做什么</h3><p>区分业务开发、平台建设等工作，理解具体交付物。</p></div><div><span>02</span><h3>需要什么能力</h3><p>结合工作任务，读懂技术要求与经验门槛。</p></div><div><span>03</span><h3>判断有没有依据</h3><p>查阅岗位原文，继续追问，也能随新证据修正认识。</p></div></section><footer class="industry-start-footer"><p>这里只呈现已有资料支持的观察；${report.sample.missing_details} 个缺正文岗位仍保留未知。</p><div><a href="#jobs">直接查阅岗位资料 ↗</a><a href="#research">继续已有研究 ↗</a></div></footer></section>`;
+  return `<section class="industry-start industry-agent"><header><h1>你想研究什么行业或岗位？</h1><p>查阅已有招聘资料，研究实际工作、能力要求和招聘门槛。</p></header><form data-industry-agent><label class="sr-only" for="industry-agent-question">研究任务</label><textarea id="industry-agent-question" name="question" rows="4" maxlength="1500" required placeholder="例如：对比 Agent 应用开发与平台开发，需要哪些能力？请给出岗位原文依据。"></textarea><div class="industry-agent-actions"><button type="button" class="text-button" data-action="import">＋ 补充 JD</button><button type="submit" class="primary">开始研究 <span aria-hidden="true">↑</span></button></div></form><div class="industry-agent-examples" aria-label="研究任务示例">${industryTaskExamples.map((row,index)=>`<button type="button" data-industry-example="${index}">${e(row.label)} <span aria-hidden="true">↗</span></button>`).join("")}</div><p class="industry-agent-scope">使用当前观察范围内的 ${report.sample.jobs} 个岗位 · ${report.sample.readable_details} 份正文 <a href="#jobs">查看资料</a></p><a class="industry-agent-result" href="#industry/${e(report.id)}">查看已完成的行业观察 →</a></section>`;
 }
 function industryReportView(report,selectedIndex=industrySelectedFinding(report)){
   if(!location.hash.split("/")[1])return industryStartView(report);
@@ -125,3 +129,17 @@ document.addEventListener("click",async event=>{
 });
 
 if(location.hash.startsWith("#industry"))loadIndustry().catch(error=>notify(error.message,true));
+
+document.addEventListener("click",event=>{
+  const button=event.target.closest("[data-industry-example]");if(!button)return;
+  const example=industryTaskExamples[Number(button.dataset.industryExample)];if(!example)return;
+  const input=$("#industry-agent-question");input.value=example.question;input.focus();
+});
+document.addEventListener("submit",async event=>{
+  const form=event.target;if(!form.matches("[data-industry-agent]"))return;
+  event.preventDefault();const question=form.elements.question.value.trim();if(!question||!currentIndustryReport)return;
+  const button=event.submitter||form.querySelector('button[type="submit"]');button.disabled=true;button.textContent="正在开始…";
+  try{await window.startIndustryResearchTask(question,currentIndustryReport.sources.map(row=>row.job_id));}
+  catch(error){notify(error.message,true);}
+  finally{if(button.isConnected){button.disabled=false;button.innerHTML='开始研究 <span aria-hidden="true">↑</span>';}}
+});
