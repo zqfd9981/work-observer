@@ -1049,6 +1049,24 @@ function renderAggregationScope(result){
   return `<details class="aggregation-scope"><summary>聚合依据与样本范围 · ${layer.cited_jobs===layer.cited_sources?layer.cited_jobs:layer.cited_sources} ${layer.cited_jobs===layer.cited_sources?"个岗位":"份资料"}</summary>${layer.candidate_jobs?`<p>范围内 ${layer.candidate_jobs} 个岗位，${layer.available_details} 份正文可用；本轮已读取 ${layer.read_jobs} 个岗位的原文片段。${layer.missing_detail_ids.length?`另有 ${layer.missing_detail_ids.length} 个岗位缺少正文。`:""}${layer.unread_job_ids.length?`尚有 ${layer.unread_job_ids.length} 份可用正文未读。`:""}</p>`:""}${layer.groups.map(group=>`<div class="aggregation-sources"><strong>${e(aggregationLabels[group.kind]||"跨资料归纳")}</strong>${group.job_ids.map(id=>`<button type="button" class="text-button" data-job="${e(id)}">${e((jobs.get(id)?.title||"岗位原文")+(jobs.get(id)?.company?" · "+jobs.get(id).company:""))} ↗</button>`).join("")}</div>`).join("")}<p>${e(layer.notice)}</p></details>`;
 }
 
+function renderReaderAnswer(result,evidence,reference){
+  const paragraphs=result.reader_answer?.paragraphs;
+  if(!Array.isArray(paragraphs)||!paragraphs.length)return "";
+  const seen=new Set();
+  for(const paragraph of paragraphs){
+    if(!Array.isArray(paragraph.claim_indices)||!paragraph.claim_indices.length)return "";
+    for(const index of paragraph.claim_indices){
+      if(!Number.isInteger(index)||!result.claims[index]||seen.has(index))return "";
+      seen.add(index);
+    }
+  }
+  return paragraphs.map(paragraph=>{
+    const claims=paragraph.claim_indices.map(index=>result.claims[index]);
+    const heading=["overview","comparison"].includes(result.reader_answer.mode)?paragraph.heading:"";
+    return `<section>${heading?`<h3>${e(heading)}</h3>`:""}${claims.map(claim=>`<p>${e(claim.text)}${[...new Set(claim.evidence_ids||[])].filter(id=>evidence.has(id)).map(id=>reference(evidence.get(id))).join("")}</p>`).join("")}</section>`;
+  }).join("");
+}
+
 function renderConversationReading(result,target,runId,replyStepId){
   const evidence=new Map((result.evidence||[]).map((ev,index)=>[ev.id,{...ev,label:`E${index+1}`}]))
   const full={innerHTML:""};renderResult(result,full,runId,replyStepId,true);
@@ -1058,6 +1076,17 @@ function renderConversationReading(result,target,runId,replyStepId){
   const heading=running?"正在研究你的问题":evidenceOnly?"原文已整理，分析回答尚未生成":hasAnswer?"研究回答":"本轮尚未形成回答";
   const reference=(ev,short=false)=>ev.document_id?`<button type="button" class="cite" data-source="${e(ev.document_id)}">${e(short?ev.label:ev.label+" · "+(ev.title||"岗位原文"))} ↗</button>`:ev.public_document_id?`<button type="button" class="cite" data-public-source="${e(ev.public_document_id)}">${e(short?ev.label:ev.label+" · "+(ev.title||"归档资料"))} ↗</button>`:`<span class="badge muted">${e(ev.label)} · 原文暂不可直接打开</span>`;
   const sample=result.scope?.counts||{};
+  const inlineReference=ev=>{
+    const label=ev.label.slice(1),attribute=ev.document_id?`data-source="${e(ev.document_id)}"`:ev.public_document_id?`data-public-source="${e(ev.public_document_id)}"`:"";
+    return attribute?`<button type="button" class="answer-inline-cite" ${attribute} aria-label="查看引用 ${e(label)} 的原文" title="${e(ev.title||"查看原文")}">[${e(label)}]</button>`:`<span class="answer-inline-cite" title="原文暂不可直接打开">[${e(label)}]</span>`;
+  };
+  const prose=hasAnswer&&!running?renderReaderAnswer(result,evidence,inlineReference):"";
+  if(prose){
+    const readJobs=new Set([...evidence.values()].filter(ev=>ev.job_id&&ev.snapshot_id).map(ev=>ev.job_id)).size;
+    const scopeNote=readJobs&&result.reader_answer.mode!=="brief"?`<p class="answer-scope-note">本轮查阅了 ${readJobs} 个岗位的原文片段，以上结论限于当前样本。</p>`:"";
+    target.innerHTML=`<article class="conversation-answer">${result.analysis_origin==="developer_sample"?'<p class="conversation-answer-notice">这是辅助分析样稿，非产品 Agent 自动生成的结果。</p>':""}${result.status!=="completed"?'<p class="conversation-answer-notice">以下是尚待核实的部分结果。</p>':""}<div class="conversation-answer-prose">${prose}</div>${scopeNote}<details class="conversation-answer-record"><summary>查看依据与研究详情</summary>${renderAggregationScope(result)}${full.innerHTML}</details></article>`;
+    return;
+  }
   target.innerHTML=`<article class="conversation-answer"><h2>${heading}</h2>${result.analysis_origin==="developer_sample"?'<p class="conversation-answer-notice">这是辅助分析样稿，非产品 Agent 自动生成的结果。</p>':""}${running?`<p class="conversation-answer-notice">${evidence.size?`已读取 ${evidence.size} 处原文，正在分析和整理回答。`:"正在确认资料范围并查阅岗位原文。"}完成后会直接在这里显示回答。</p>`:evidenceOnly?`<p class="conversation-answer-notice">当前使用原文证据模式，尚未启用模型分析。这一轮整理了已有资料，还没有回答你的研究问题。</p><p class="conversation-answer-scope">范围内有 ${sample.candidate_details||0} 份岗位正文；下方可按需查看原文。</p>`:hasAnswer?`${result.status!=="completed"?'<p class="conversation-answer-notice">以下是尚待核实的部分结果。</p>':""}<div class="conversation-answer-claims">${renderConversationClaimGroups(result,evidence,reference)}</div>`:`<p class="conversation-answer-notice">${e(reasonLabels[result.stop_reason]||"本轮没有形成可用的分析结论，已保留查过的资料。")}</p>`}${hasAnswer?renderAggregationScope(result):""}${evidence.size?`<details class="conversation-answer-evidence"><summary>查看原文依据 · ${evidence.size} 处引用</summary>${[...evidence.values()].map(ev=>`<section><h3>${e(ev.title||"原文资料")}</h3><blockquote>${e(ev.quote||"")}</blockquote>${reference(ev)}</section>`).join("")}</details>`:""}<details class="conversation-answer-record"><summary>执行记录与更多操作</summary>${full.innerHTML}</details></article>`;
 }
 
@@ -1472,7 +1501,7 @@ async function sendResearchConversation(question, options={}) {
   const replyTo=conversation.replyToStepId===undefined ? defaultConversationReply(project) : conversation.replyToStepId;
   const key=pending||crypto.randomUUID();
   conversationSendKeys.set(project.id,key);sessionStorage.setItem(receiptKey,key);
-  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,kind,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:project.steps?.at(-1)?.coverage_mode||(project.job_ids?.length===0?"question":state.researchIds?.length?"all":"question")}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"回答本次问题，查阅适用范围原文，说明解释、未知及后续核实方向。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
+  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,kind,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:"question"}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"直接回答这次问题，查阅相关原文并选择合适的回答骨架；只展开必要解释，保留引用和影响结论的未知。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
   const acceptedStep=accepted.steps?.find(step=>step.key===key);
   if(acceptedStep&&(acceptedStep.question!==question.trim()||acceptedStep.offline!==offline||Boolean(acceptedStep.allow_public)!==allocation.allowPublic||(acceptedStep.approach||"standard")!==approach||(acceptedStep.kind||"investigate")!==kind))throw new Error("原问题已经保存且设置不同，请先查看原调查，未自动开始新调用。");
   await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});
@@ -2041,15 +2070,25 @@ function renderChatStep(step, project) {
 function renderConversationMessages(project, force=false) {
   const turns=$("#conversation-turns");if(!turns)return;
   const position=chatViewportState();
+  let newAnswer=null;
   for(const step of project.steps){
     let item=$$("[data-conversation-step]",turns).find(row=>row.dataset.conversationStep===step.id);
     if(!item){item=document.createElement("article");item.className="chat-turn";item.dataset.conversationStep=step.id;turns.append(item);}
     const signature=JSON.stringify([step,conversation.reports.get(step.run_id)||null]);
     if(item.chatSignature===signature)continue;
+    const answerState=step.state==="running"||step.result?.status==="running"?"running":step.result?.status||step.state;
+    const completedNow=item.dataset.answerState==="running"&&answerState==="completed";
     item.dataset.conversationRun=step.run_id||"";
+    item.dataset.answerState=answerState;
     item.innerHTML=renderChatStep(step,project);item.chatSignature=signature;
+    if(completedNow)newAnswer=item.querySelector(".chat-assistant");
   }
   restoreChatViewport(position,force);
+  if(newAnswer&&position.follow&&!force){
+    const viewport=$("#conversation-scroll");
+    viewport.scrollTop+=newAnswer.getBoundingClientRect().top-viewport.getBoundingClientRect().top-16;
+    $("#conversation-latest").hidden=viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight<100;
+  }
 }
 
 function updateChatActivity(project) {

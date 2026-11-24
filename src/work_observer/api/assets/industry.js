@@ -47,7 +47,12 @@ function industryReportView(report,selectedIndex=industrySelectedFinding(report)
   return selectedIndex===null?industryOverviewView(report):industryDetailView(report,selectedIndex);
 }
 function renderIndustryReport(report){
+  const input=$("#industry-agent-question"),draft=input?.value||"";
+  const editing=input&&document.activeElement===input;
+  const selection=editing?[input.selectionStart,input.selectionEnd]:null;
   $("#industry-report").innerHTML=industryReportView(report);
+  const next=$("#industry-agent-question");
+  if(next&&draft){next.value=draft;if(editing){next.focus();next.setSelectionRange(...selection);}}
   if(industryRenderedRoute!==location.hash){
     $("#page-industry")?.scrollIntoView?.({block:"start",behavior:"auto"});
     industryRenderedRoute=location.hash;

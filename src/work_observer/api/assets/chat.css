@@ -27,6 +27,14 @@ body.conversation-view{height:100dvh;overflow:hidden;background:#fff;color:#252b
 .chat-mode{font-size:10px;font-weight:400;color:#92998d}
 .chat-answer-content{padding-left:34px;font-size:15px;line-height:1.9;color:#2e352b}
 .chat-answer-content .conversation-answer{padding:0}
+.conversation-answer-prose>section{margin:0 0 21px}
+.conversation-answer-prose>section>p{font-size:15px;line-height:1.95;color:#30362d;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.conversation-answer-prose>section>p+p{margin-top:21px}
+.conversation-answer-prose>section>h3{font-size:15px;font-weight:600;line-height:1.7;margin:24px 0 9px;color:#263324;border:0;padding:0}
+.conversation-answer-prose>section:first-child>h3{margin-top:0}
+.answer-inline-cite{display:inline;font-size:10px;line-height:1;vertical-align:super;margin-left:3px;padding:2px;color:#6a825d;white-space:nowrap}
+.answer-inline-cite:hover{text-decoration:underline;color:#315c46}
+.answer-scope-note{font-size:10px;line-height:1.8;color:#909b86;margin:12px 0 0}
 .chat-answer-content .conversation-answer:has(.conversation-answer-claims)>h2{display:none}
 .chat-answer-content .conversation-answer-claims>section{margin:0 0 24px}
 .chat-answer-content .conversation-answer-claims>section>p{color:#30362d;font-size:15px;line-height:1.95;margin-bottom:8px}

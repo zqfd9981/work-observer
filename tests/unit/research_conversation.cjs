@@ -42,10 +42,11 @@ vm.runInContext('api=async(path,options)=>{calls.push({path,options});if(path.st
  assert.ok(node("#conversation-question").value.includes("合成明确纠正")); // Adding sources preserves an existing question.
  assert.equal(context.calls.filter(c=>c.path.endsWith("/run")).length,2);
 
- vm.runInContext('state.serviceContract={components:{schemas:{StepInput:{properties:{reply_to_step_id:{}}}}}};conversation.replyToStepId=undefined;api=async(path,options)=>{calls.push({path,options});return options?{}:{id:"project-1",revision:5,worker_running:false,steps:[{id:"a".repeat(32),state:"waiting_review"},{id:"b".repeat(32),state:"queued",offline:true}]};}',context);
+ vm.runInContext('state.serviceContract={components:{schemas:{StepInput:{properties:{reply_to_step_id:{},coverage_mode:{enum:["all","question"]}}}}}};conversation.replyToStepId=undefined;api=async(path,options)=>{calls.push({path,options});return options?{}:{id:"project-1",revision:5,worker_running:false,steps:[{id:"a".repeat(32),state:"waiting_review",coverage_mode:"all"},{id:"b".repeat(32),state:"queued",offline:true,coverage_mode:"all"}]};}',context);
  await vm.runInContext('askResearchConversation("为什么？")',context);
  let reply=JSON.parse(context.calls.filter(c=>c.path.endsWith("/steps")).at(-1).options.body);
  assert.equal(reply.reply_to_step_id,"a".repeat(32)); // Pending planned work is not the reply target.
+ assert.equal(reply.coverage_mode,"question"); // Focused follow-ups do not inherit whole-corpus coverage.
  const runsBefore=context.calls.filter(c=>c.path.endsWith("/run")).length;
  vm.runInContext('prefillConversationFollowup({dataset:{replyStep:"c".repeat(32),conversationClaim:"合成待核实判断"}})',context);
  assert.ok(node("#conversation-question").value.includes("合成待核实判断"));
