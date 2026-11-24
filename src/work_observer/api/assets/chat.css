@@ -38,6 +38,16 @@ body.conversation-view{height:100dvh;overflow:hidden;background:#fff;color:#252b
 .chat-answer-content .cite:hover{background:#e8efdf;border-color:#becfb0}
 .chat-answer-content .conversation-answer-evidence,.chat-answer-content .conversation-answer-record,.chat-answer-content .conversation-answer-breakdown,.chat-message-tools{margin:16px 0 0;border:0;padding:0;font-size:12px;color:#89917f}
 .chat-answer-content summary{cursor:pointer;line-height:1.8}
+.aggregation-label{display:flex;gap:10px;align-items:center;font-size:11px;font-weight:500;color:#628052;margin:0 0 7px}
+.aggregation-label>span{font-size:10px;font-weight:400;color:#a0a693}
+.aggregation-label[data-aggregation-kind="calibration"]{color:#315c46;font-weight:600}
+.aggregation-label[data-aggregation-kind="exception"]{color:#9b783f}
+.aggregation-scope{margin:18px 0 0;font-size:11px;color:#89917f}
+.aggregation-scope>summary{cursor:pointer}
+.aggregation-scope>p{font-size:11px;line-height:1.9;margin:12px 0;color:#929b87}
+.aggregation-sources{margin:12px 0;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
+.aggregation-sources>strong{font-size:11px;font-weight:500}
+.aggregation-sources>.text-button{white-space:normal;text-align:left;padding:3px;font-size:10px}
 .chat-message-tools>summary{font-size:11px;color:#92998d}
 .chat-message-tools h4{font-size:12px;margin:16px 0 8px;color:#78846e}
 .chat-suggestion{display:block;white-space:normal;text-align:left;font-size:12px;color:#637b54;padding:9px 0;border-bottom:1px solid #eef1e9;width:100%}
