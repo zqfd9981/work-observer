@@ -1053,17 +1053,31 @@ function renderReaderAnswer(result,evidence,reference){
   const paragraphs=result.reader_answer?.paragraphs;
   if(!Array.isArray(paragraphs)||!paragraphs.length)return "";
   const seen=new Set();
-  for(const paragraph of paragraphs){
-    if(!Array.isArray(paragraph.claim_indices)||!paragraph.claim_indices.length)return "";
-    for(const index of paragraph.claim_indices){
+  for(const block of paragraphs){
+    const kind=block.kind||"paragraph",columns=block.columns||[],rows=block.rows||[];
+    if(!["paragraph","bullets","numbered","table"].includes(kind)||!Array.isArray(block.claim_indices)||!Array.isArray(columns)||!Array.isArray(rows))return "";
+    if(kind==="table"){
+      if(block.claim_indices.length||columns.length<2||columns.length>4||!rows.length||columns.some(column=>typeof column!=="string"||!column.trim())||rows.some(row=>!Array.isArray(row)||row.length!==columns.length))return "";
+    }else if(!block.claim_indices.length||columns.length||rows.length)return "";
+    for(const index of kind==="table"?rows.flat():block.claim_indices){
       if(!Number.isInteger(index)||!result.claims[index]||seen.has(index))return "";
       seen.add(index);
     }
   }
-  return paragraphs.map(paragraph=>{
-    const claims=paragraph.claim_indices.map(index=>result.claims[index]);
-    const heading=["overview","comparison"].includes(result.reader_answer.mode)?paragraph.heading:"";
-    return `<section>${heading?`<h3>${e(heading)}</h3>`:""}${claims.map(claim=>`<p>${e(claim.text)}${[...new Set(claim.evidence_ids||[])].filter(id=>evidence.has(id)).map(id=>reference(evidence.get(id))).join("")}</p>`).join("")}</section>`;
+  // Escape first: model/JD text never becomes raw HTML. Only emphasis is supported inline.
+  const body=index=>{
+    const claim=result.claims[index];
+    return e(claim.text).replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>")+[...new Set(claim.evidence_ids||[])].filter(id=>evidence.has(id)).map(id=>reference(evidence.get(id))).join("");
+  };
+  return paragraphs.map(block=>{
+    const kind=block.kind||"paragraph",heading=result.reader_answer.mode==="brief"?"":block.heading;
+    let content;
+    if(kind==="table")content=`<div class="answer-table-scroll" role="region" aria-label="${e(heading||"研究对照表")}" tabindex="0"><table class="answer-table"><thead><tr>${block.columns.map(column=>`<th scope="col">${e(column)}</th>`).join("")}</tr></thead><tbody>${block.rows.map(row=>`<tr>${row.map(index=>`<td>${body(index)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    else if(kind==="bullets"||kind==="numbered"){
+      const tag=kind==="bullets"?"ul":"ol";
+      content=`<${tag}>${block.claim_indices.map(index=>`<li>${body(index)}</li>`).join("")}</${tag}>`;
+    }else content=block.claim_indices.map(index=>`<p>${body(index)}</p>`).join("");
+    return `<section>${heading?`<h3>${e(heading)}</h3>`:""}${content}</section>`;
   }).join("");
 }
 
@@ -1501,7 +1515,7 @@ async function sendResearchConversation(question, options={}) {
   const replyTo=conversation.replyToStepId===undefined ? defaultConversationReply(project) : conversation.replyToStepId;
   const key=pending||crypto.randomUUID();
   conversationSendKeys.set(project.id,key);sessionStorage.setItem(receiptKey,key);
-  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,kind,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:"question"}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"直接回答这次问题，查阅相关原文并选择合适的回答骨架；只展开必要解释，保留引用和影响结论的未知。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
+  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,kind,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:"question"}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"充分回答这次问题：先给结论，再解释证据与含义；比较时用表格，建议具体可行，保留引用和关键范围限制。用户明确要求简短时才压缩。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
   const acceptedStep=accepted.steps?.find(step=>step.key===key);
   if(acceptedStep&&(acceptedStep.question!==question.trim()||acceptedStep.offline!==offline||Boolean(acceptedStep.allow_public)!==allocation.allowPublic||(acceptedStep.approach||"standard")!==approach||(acceptedStep.kind||"investigate")!==kind))throw new Error("原问题已经保存且设置不同，请先查看原调查，未自动开始新调用。");
   await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});

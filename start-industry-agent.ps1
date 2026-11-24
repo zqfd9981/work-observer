@@ -1,7 +1,7 @@
 param(
     [ValidateRange(1024,65535)]
-    [int]$Port=19076,
-    [string]$DataDirectory='data/reader-answer-preview'
+    [int]$Port=19078,
+    [string]$DataDirectory='data/rich-research-preview'
 )
 $ErrorActionPreference='Stop'
 $agentPython=Join-Path $PSScriptRoot '.venv/Scripts/python.exe'

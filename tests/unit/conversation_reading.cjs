@@ -32,14 +32,27 @@ const prose=ctx.target.innerHTML.split('<details class="conversation-answer-reco
 assert.ok(prose.includes('conversation-answer-prose')&&prose.indexOf('尚无综合结论的能力要求')<prose.indexOf('综合概览'));
 assert.ok(prose.includes('data-source="doc1"')&&prose.includes('[1]'));
 assert.ok(!prose.includes('岗位具体例子')&&!prose.includes('主要做什么')&&!prose.includes('原文明示')&&!prose.includes('calibration'));
-assert.ok(!prose.includes('<h3>为什么'));
+assert.ok(prose.includes('<h3>为什么'));
 assert.ok(ctx.target.innerHTML.includes('查看依据与研究详情')&&ctx.target.innerHTML.includes('INTERNAL GAP TEXT'));
 ctx.result.reader_answer.mode='comparison';
 vm.runInContext('renderResult(result,target,"run","step")',ctx);
 assert.ok(ctx.target.innerHTML.includes('<h3>为什么'));
-ctx.result.reader_answer={mode:'brief',paragraphs:[{heading:'',claim_indices:[0,2]}]};
+ctx.result.reader_answer={mode:'overview',paragraphs:[{heading:'',claim_indices:[0,2]}]};
 vm.runInContext('renderResult(result,target,"run","step")',ctx);
 assert.equal((ctx.target.innerHTML.split('<details class="conversation-answer-record">')[0].match(/<p>/g)||[]).length,2);
+ctx.result.claims[0].text='**关键任务**<script>内容';
+ctx.result.reader_answer={mode:'calibration',paragraphs:[
+  {kind:'table',heading:'任务与能力',claim_indices:[],columns:['任务','能力<script>'],rows:[[0,1]]},
+  {kind:'numbered',heading:'准备建议',claim_indices:[2],columns:[],rows:[]}
+]};
+vm.runInContext('renderResult(result,target,"run","step")',ctx);
+const rich=ctx.target.innerHTML.split('<details class="conversation-answer-record">')[0];
+assert.ok(rich.includes('<table class="answer-table">')&&rich.includes('<th scope="col">能力&lt;script&gt;</th>'));
+assert.ok(rich.includes('<td><strong>关键任务</strong>&lt;script&gt;内容<button')&&!rich.includes('<script>'));
+assert.ok(rich.includes('<ol><li>尚无综合结论的能力要求')&&rich.includes('data-source="doc1"'));
+ctx.result.reader_answer.paragraphs[0].rows=[[0]];
+vm.runInContext('renderResult(result,target,"run","step")',ctx);
+assert.ok(!ctx.target.innerHTML.includes('conversation-answer-prose'));
 ctx.result.reader_answer={mode:'brief',paragraphs:[{heading:'',claim_indices:[99]}]};
 vm.runInContext('renderResult(result,target,"run","step")',ctx);
 assert.ok(!ctx.target.innerHTML.includes('conversation-answer-prose'));

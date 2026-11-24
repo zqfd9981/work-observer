@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from work_observer.connectors.mcp_probe import ProbeError
+from work_observer.research.answering import ReaderAnswer, checked_reader_answer
 
 CLAIM_BASIS_LABELS = {"direct": "原文明示", "synthesis": "研究归纳", "inference": "研究推断"}
 
@@ -247,6 +248,44 @@ def _render_source_findings(result, labels):
     return lines
 
 
+def render_reader_answer(result):
+    """Keep the downloaded answer's tables, lists and source anchors readable."""
+    try:
+        layout = ReaderAnswer.model_validate(result.get("reader_answer"))
+        checked_reader_answer(layout, result.get("claims", []))
+    except ValueError:
+        return []
+    labels = {item["id"]: f"E{index}" for index, item in enumerate(result.get("evidence", []), 1)}
+
+    def body(index, table=False):
+        claim = result["claims"][index]
+        value = escape(claim["text"])
+        if table:
+            value = value.replace("|", "&#124;").replace("\n", "<br>")
+        refs = " ".join(f"[{labels[key]}](#{labels[key].lower()})"
+                        for key in dict.fromkeys(claim.get("evidence_ids", [])) if key in labels)
+        return value + (" " + refs if refs else "")
+
+    lines = ["## 回答", ""]
+    for block in layout.paragraphs:
+        if block.heading and layout.mode != "brief":
+            lines.extend(["### " + escape(block.heading), ""])
+        if block.kind == "table":
+            columns = [escape(column).replace("|", "&#124;").replace("\n", " ")
+                       for column in block.columns]
+            lines.extend(["| " + " | ".join(columns) + " |",
+                          "| " + " | ".join("---" for _ in columns) + " |"])
+            lines.extend("| " + " | ".join(body(index, True) for index in row) + " |"
+                         for row in block.rows)
+            lines.append("")
+        else:
+            for number, index in enumerate(block.claim_indices, 1):
+                prefix = "- " if block.kind == "bullets" else (
+                    f"{number}. " if block.kind == "numbered" else "")
+                lines.extend([prefix + body(index), ""])
+    return lines
+
+
 def render(result):
     counts = result["scope"]["counts"]
     lines = [
@@ -257,6 +296,7 @@ def render(result):
         f"条件未知 {counts['unknown']} 个；候选完整正文 {counts['candidate_details']} 个。",
         "",
     ]
+    lines.extend(render_reader_answer(result))
     if result["status"] == "completed":
         review = result.get("business_review") or {}
         labels = {"approved": "通过", "rejected": "未通过", "pending": "待继续核对"}

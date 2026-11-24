@@ -53,8 +53,40 @@ def test_standard_and_followup_finish_tools_expose_strict_reader_layouts():
         ]
         assert "reader_answer" in schema["required"]
         assert "default" not in schema["properties"]["reader_answer"]
-        assert schema["$defs"]["ReaderParagraph"]["required"] == ["heading", "claim_indices"]
+        assert schema["$defs"]["ReaderParagraph"]["required"] == [
+            "kind", "heading", "claim_indices", "columns", "rows"]
         assert schema["$defs"]["ReaderParagraph"]["additionalProperties"] is False
     answer = Answer.model_validate({"claims": [{"category": "task", "text": "合成事实",
         "requirement": "unspecified", "evidence_ids": ["E1"]}], "gaps": []})
     assert answer.reader_answer is None
+
+
+def test_rich_answer_uses_grounded_cells_and_rejects_malformed_tables():
+    from work_observer.reports.results import render_reader_answer
+
+    claims = [{"text": "**工作**<script>|内容", "evidence_ids": ["E1"]},
+              {"text": "能力依据", "evidence_ids": ["E1"]},
+              {"text": "据此推导的建议", "evidence_ids": ["E1"]}]
+    table = {"kind": "table", "heading": "任务与能力", "claim_indices": [],
+             "columns": ["工作", "能力"], "rows": [[0, 1]]}
+    layout = ReaderAnswer.model_validate({"mode": "calibration", "paragraphs": [table,
+        {"kind": "numbered", "heading": "准备建议", "claim_indices": [2]}]})
+    value = checked_reader_answer(layout, claims)
+    markdown = "\n".join(render_reader_answer({"reader_answer": value, "claims": claims,
+                                             "evidence": [{"id": "E1"}]}))
+    assert "| 工作 | 能力 |" in markdown and "| --- | --- |" in markdown
+    assert "**工作**&lt;script&gt;&#124;内容 [E1](#e1)" in markdown
+    assert "1. 据此推导的建议" in markdown
+    for update in [{"rows": [[0]]}, {"rows": [[0, 4]]}, {"rows": [[0, 0]]},
+                   {"columns": ["工作", ""]}, {"claim_indices": [2]}]:
+        invalid = ReaderAnswer.model_validate(
+            {"mode": "comparison", "paragraphs": [table | update]})
+        with pytest.raises(ValueError):
+            checked_reader_answer(invalid, claims)
+
+
+def test_prose_blocks_do_not_silently_drop_table_fields():
+    layout = ReaderAnswer.model_validate({"mode": "overview", "paragraphs": [
+        {"heading": "", "claim_indices": [0], "rows": [[0, 1]], "columns": ["A", "B"]}]})
+    with pytest.raises(ValueError):
+        checked_reader_answer(layout, [{"text": "A"}])

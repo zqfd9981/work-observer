@@ -18,7 +18,7 @@ from work_observer.connectors.mcp_probe import ProbeError
 from work_observer.evidence import redact
 from work_observer.research import requirements as qualification
 from work_observer.research.answering import POLICY as ANSWER_POLICY
-from work_observer.research.answering import ReaderAnswer, checked_reader_answer
+from work_observer.research.answering import ReaderAnswer, checked_reader_answer, strict_schema
 from work_observer.research.cohort_experiment import CohortProbeInput, run_cohort_experiment
 from work_observer.research.context_experiment import ContextProbeInput, run_context_experiment
 from work_observer.research.retry_experiment import RetryProbeInput, run_retry_experiment
@@ -170,12 +170,7 @@ TOOLS = [
 ]
 # Pydantic 的引用定义随 finish 工具一起发送。
 TOOLS[-1]["parameters"]["$defs"] = Answer.model_json_schema()["$defs"]
-TOOLS[-1]["parameters"]["$defs"]["Claim"]["required"] = list(
-    TOOLS[-1]["parameters"]["$defs"]["Claim"]["properties"]
-)
-TOOLS[-1]["parameters"]["$defs"]["Claim"]["properties"]["basis"].pop("default", None)
-TOOLS[-1]["parameters"]["$defs"]["Claim"]["properties"]["aggregation"].pop("default", None)
-TOOLS[-1]["parameters"]["properties"]["reader_answer"].pop("default", None)
+strict_schema(TOOLS[-1]["parameters"])
 
 BATCH_JOB_TOOL = tool(
     "read_jobs",
@@ -874,14 +869,14 @@ class ModelClient:
             "tools": self.tools,
             "tool_choice": "required",
             "parallel_tool_calls": False,
-            "max_output_tokens": 4000,
+            "max_output_tokens": 8000,
             "store": False,
         }
         if settings.model_api == "responses":
             payload["input"] = history
             endpoint = "/responses"
             if settings.model_name.startswith(("gpt-5", "gpt-6")):
-                payload["reasoning"] = {"effort": "low"}
+                payload["reasoning"] = {"effort": "medium"}
         else:
             endpoint = "/chat/completions"
             payload = {
@@ -896,7 +891,7 @@ class ModelClient:
                 ],
                 "tool_choice": "required",
                 "parallel_tool_calls": False,
-                "max_completion_tokens": 4000,
+                "max_completion_tokens": 8000,
             }
         async with httpx.AsyncClient(timeout=55, follow_redirects=False) as client:
             response = await client.post(
