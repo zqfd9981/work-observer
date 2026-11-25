@@ -22,6 +22,7 @@ def submission_feedback(claims, validation, evidence):
         ("work_map_error", "map", "工作地图与支撑判断的对应未通过检查。"),
         ("revision_error", "revision", "旧判断与本轮修订的对应未通过检查。"),
         ("application_error", "application", "行动建议与背景或原文的对应未通过检查。"),
+        ("reader_answer_error", "answer", "回答的组织或对照表仍需调整。"),
     ):
         if validation.get(key):
             reasons.append(

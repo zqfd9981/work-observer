@@ -54,7 +54,7 @@ def test_standard_and_followup_finish_tools_expose_strict_reader_layouts():
         assert "reader_answer" in schema["required"]
         assert "default" not in schema["properties"]["reader_answer"]
         assert schema["$defs"]["ReaderParagraph"]["required"] == [
-            "kind", "heading", "claim_indices", "columns", "rows"]
+            "purpose", "kind", "heading", "claim_indices", "columns", "rows"]
         assert schema["$defs"]["ReaderParagraph"]["additionalProperties"] is False
     answer = Answer.model_validate({"claims": [{"category": "task", "text": "合成事实",
         "requirement": "unspecified", "evidence_ids": ["E1"]}], "gaps": []})
@@ -90,3 +90,66 @@ def test_prose_blocks_do_not_silently_drop_table_fields():
         {"heading": "", "claim_indices": [0], "rows": [[0, 1]], "columns": ["A", "B"]}]})
     with pytest.raises(ValueError):
         checked_reader_answer(layout, [{"text": "A"}])
+
+
+def industry_case():
+    claims = [{"text": text, "basis": basis, "aggregation": aggregation,
+               "evidence_ids": refs} for text, basis, aggregation, refs in [
+        ("合成样本支持一个工作结构判断", "synthesis", "common", ["E1", "E2"]),
+        ("共性一：系统集成", "synthesis", "common", ["E1", "E2"]),
+        ("共性二：效果验证", "synthesis", "common", ["E1", "E2"]),
+        ("交付对象", "synthesis", "difference", ["E1", "E2"]),
+        ("业务流程", "direct", "none", ["E1"]),
+        ("复用平台", "direct", "none", ["E2"]),
+        ("保留原看法中成立的部分，补上缺失环节", "inference", "calibration", ["E1", "E2"]),
+        ("先选目标方向，用一条可运行流程验证", "inference", "none", ["E1"]),
+        ("再用错误案例证明效果定位能力", "inference", "none", ["E2"]),
+    ]]
+    blocks = [
+        {"purpose": "judgment", "kind": "paragraph", "heading": "行业判断", "claim_indices": [0]},
+        {"purpose": "common", "kind": "bullets", "heading": "共性", "claim_indices": [1, 2]},
+        {"purpose": "difference", "kind": "table", "heading": "分化", "claim_indices": [],
+         "columns": ["维度", "应用", "平台"], "rows": [[3, 4, 5]]},
+        {"purpose": "calibration", "kind": "paragraph", "heading": "认识校准",
+         "claim_indices": [6]},
+        {"purpose": "preparation", "kind": "numbered", "heading": "准备影响",
+         "claim_indices": [7, 8]},
+    ]
+    evidence = {"E1": {"job_id": "a"}, "E2": {"job_id": "b"}, "E3": {"job_id": "a"}}
+    return {"mode": "industry", "paragraphs": blocks}, claims, evidence
+
+
+def test_industry_answer_leads_with_synthesis_and_keeps_the_cognitive_flow():
+    value, claims, evidence = industry_case()
+    checked = checked_reader_answer(ReaderAnswer.model_validate(value), claims, evidence)
+    assert [block["purpose"] for block in checked["paragraphs"]] == [
+        "judgment", "common", "difference", "calibration", "preparation"]
+    value["paragraphs"][1:3] = reversed(value["paragraphs"][1:3])
+    with pytest.raises(ValueError, match="先给判断"):
+        checked_reader_answer(ReaderAnswer.model_validate(value), claims, evidence)
+
+
+def test_common_ground_cannot_count_fragments_of_one_job_as_different_jobs():
+    value, claims, evidence = industry_case()
+    claims[1]["evidence_ids"] = ["E1", "E3"]
+    with pytest.raises(ValueError, match="同岗多个片段"):
+        checked_reader_answer(ReaderAnswer.model_validate(value), claims, evidence)
+
+
+def test_industry_differences_are_compared_on_short_dimensions():
+    value, claims, evidence = industry_case()
+    claims[3]["text"] = "岗位的长职责摘要" * 4
+    with pytest.raises(ValueError, match="比较维度"):
+        checked_reader_answer(ReaderAnswer.model_validate(value), claims, evidence)
+
+
+def test_industry_tables_reject_long_jd_paragraphs_instead_of_truncating_them():
+    value, claims, evidence = industry_case()
+    claims[4]["text"] = "长段JD" * 21
+    with pytest.raises(ValueError, match="最多80"):
+        checked_reader_answer(ReaderAnswer.model_validate(value), claims, evidence)
+    # Existing saved rich answers remain readable with their original content.
+    value["mode"] = "comparison"
+    assert checked_reader_answer(ReaderAnswer.model_validate(value), claims)
+    with pytest.raises(ValueError, match="最多80"):
+        checked_reader_answer(ReaderAnswer.model_validate(value), claims, evidence)

@@ -486,7 +486,7 @@ investigation_kind=counterexample时主动查找相反或不支持的材料，�
 即使另一侧已在上轮读过，也必须本轮重读并引用，单侧材料不能支持完整的对照断言。
 可分析 business业务背景、task任务、deliverable交付物、responsibility责任、ability能力、tool工具；
 只分析对本轮问题有用的维度，这些是内部分类，不是每次回答都要填满的目录。
-回答先给用户所问各方面的简明结论，再列逐岗位例子；如同时问工作内容和能力，两方面均须直接回答。
+回答先给有依据的归纳判断，再解释共同模式、分化条件和求职含义；岗位例子只作支撑，不作主线。
 有跨岗位原文支持时，分别用对应category的synthesis给出归纳；不能归纳时据实回答个别岗位并说明范围。
 多份资料的问题先在研究中做聚合：按本题需要比较共同模式和业务/任务/资历条件下的差异；
 只寻找与本题判断直接相关的限定或反例，保留不能从样本确定的内容，不逐份罗列摘要。
@@ -3096,17 +3096,17 @@ async def _research(
                         answer = InvestigationAnswer.model_validate(arguments)
                     else:
                         answer = Answer.model_validate(arguments)
-                    reader_answer, reader_error = None, None
-                    try:
-                        reader_answer = checked_reader_answer(
-                            getattr(answer, "reader_answer", None), answer.claims,
-                        )
-                    except ValueError as exc:
-                        reader_error = str(exc)
                     for claim in answer.claims:
                         claim.evidence_ids = [
                             citation_ids.get(key, key) for key in claim.evidence_ids
                         ]
+                    reader_answer, reader_error = None, None
+                    try:
+                        reader_answer = checked_reader_answer(
+                            getattr(answer, "reader_answer", None), answer.claims, evidence,
+                        )
+                    except ValueError as exc:
+                        reader_error = str(exc)
                     if approach == "work_map" or dialogue_enabled:
                         for revision in answer.revisions:
                             revision.evidence_ids = [

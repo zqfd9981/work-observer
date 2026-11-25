@@ -1072,12 +1072,12 @@ function renderReaderAnswer(result,evidence,reference){
   return paragraphs.map(block=>{
     const kind=block.kind||"paragraph",heading=result.reader_answer.mode==="brief"?"":block.heading;
     let content;
-    if(kind==="table")content=`<div class="answer-table-scroll" role="region" aria-label="${e(heading||"研究对照表")}" tabindex="0"><table class="answer-table"><thead><tr>${block.columns.map(column=>`<th scope="col">${e(column)}</th>`).join("")}</tr></thead><tbody>${block.rows.map(row=>`<tr>${row.map(index=>`<td>${body(index)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    if(kind==="table")content=`<div class="answer-table-scroll" role="region" aria-label="${e(heading||"研究对照表")}" tabindex="0"><table class="answer-table${result.reader_answer.mode==="industry"&&block.purpose==="difference"?" answer-table-comparison":""}"><thead><tr>${block.columns.map(column=>`<th scope="col">${e(column)}</th>`).join("")}</tr></thead><tbody>${block.rows.map(row=>`<tr>${row.map(index=>`<td>${body(index)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
     else if(kind==="bullets"||kind==="numbered"){
       const tag=kind==="bullets"?"ul":"ol";
       content=`<${tag}>${block.claim_indices.map(index=>`<li>${body(index)}</li>`).join("")}</${tag}>`;
     }else content=block.claim_indices.map(index=>`<p>${body(index)}</p>`).join("");
-    return `<section>${heading?`<h3>${e(heading)}</h3>`:""}${content}</section>`;
+    return `<section data-answer-purpose="${e(block.purpose||"other")}">${heading?`<h3>${e(heading)}</h3>`:""}${content}</section>`;
   }).join("");
 }
 
@@ -1515,7 +1515,7 @@ async function sendResearchConversation(question, options={}) {
   const replyTo=conversation.replyToStepId===undefined ? defaultConversationReply(project) : conversation.replyToStepId;
   const key=pending||crypto.randomUUID();
   conversationSendKeys.set(project.id,key);sessionStorage.setItem(receiptKey,key);
-  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,kind,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:"question"}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"充分回答这次问题：先给结论，再解释证据与含义；比较时用表格，建议具体可行，保留引用和关键范围限制。用户明确要求简短时才压缩。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
+  const accepted=await api("projects/"+project.id+"/steps",{method:"POST",body:JSON.stringify({revision:project.revision,question,kind,...(supportsReplies ? {reply_to_step_id:replyTo}:{}),...(supportsQuestionScope ? {coverage_mode:"question"}:{}),...(approach!=="standard"?{approach}:{}),completion:approach==="work_map"?"形成有引用、边界和未知的工作地图与业务/任务/交付物/责任/能力/工具关系；相关旧认识用修订记录说明。":"充分回答当前问题。行业观察先给跨资料判断，再解释共性、差异、认知偏差与求职影响；表格只放短结论。聚焦追问沿问题深入，不重复整套报告，保留引用和关键范围。",offline,allow_public:allocation.allowPublic,max_calls:allocation.maxCalls,timeout:allocation.timeout,key})});
   const acceptedStep=accepted.steps?.find(step=>step.key===key);
   if(acceptedStep&&(acceptedStep.question!==question.trim()||acceptedStep.offline!==offline||Boolean(acceptedStep.allow_public)!==allocation.allowPublic||(acceptedStep.approach||"standard")!==approach||(acceptedStep.kind||"investigate")!==kind))throw new Error("原问题已经保存且设置不同，请先查看原调查，未自动开始新调用。");
   await api("projects/"+project.id+"/run",{method:"POST",body:"{}"});

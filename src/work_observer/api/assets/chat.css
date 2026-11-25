@@ -33,13 +33,16 @@ body.conversation-view{height:100dvh;overflow:hidden;background:#fff;color:#252b
 .conversation-answer-prose>section>h3{font-size:17px;font-weight:650;line-height:1.6;margin:28px 0 12px;color:#263324;border:0;padding:0}
 .conversation-answer-prose>section:first-child>h3{margin-top:0}
 .conversation-answer-prose strong{font-weight:650;color:#202d25}
+.conversation-answer-prose>section[data-answer-purpose="judgment"]>p{font-size:17px;line-height:1.85;color:#253b2c;font-weight:500}
 .conversation-answer-prose ul,.conversation-answer-prose ol{margin:0;padding-left:23px;font-size:15px;line-height:1.9;color:#30362d}
 .conversation-answer-prose li{padding-left:3px;margin:0 0 12px;white-space:pre-wrap;overflow-wrap:anywhere}
 .conversation-answer-prose li::marker{color:#64816b}
 .answer-table-scroll{max-width:100%;overflow-x:auto;border:1px solid #dde4df;border-radius:10px;margin:14px 0 6px;scrollbar-width:thin}
 .answer-table-scroll:focus-visible{outline:2px solid #8ca582;outline-offset:2px}
-.answer-table{width:100%;min-width:440px;border-collapse:collapse;table-layout:fixed;font-size:13px;line-height:1.8;color:#354239}
+.answer-table{width:100%;min-width:440px;border-collapse:collapse;table-layout:fixed;font-size:14px;line-height:1.8;color:#354239}
 .answer-table th{background:#f1f5f2;text-align:left;font-weight:650;color:#304b3a;padding:12px 14px;border-bottom:1px solid #dde4df;vertical-align:top}
+.answer-table-comparison th:first-child{width:22%}
+.answer-table-comparison td:first-child{font-weight:600;color:#304b3a}
 .answer-table td{padding:13px 14px;border-bottom:1px solid #e6ebe7;vertical-align:top;white-space:pre-wrap;overflow-wrap:anywhere}
 .answer-table th+th,.answer-table td+td{border-left:1px solid #e6ebe7}
 .answer-table tbody tr:last-child td{border-bottom:0}
